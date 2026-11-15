@@ -10,6 +10,7 @@ The firmware is versioned with the whole product ([SemVer 2.0](https://semver.or
 
 | Version | Change |
 |---|---|
+| 0.3.0 | Version bump only (no firmware changes) |
 | 0.2.0 | LogicTracer identity line, program name and USB strings; SemVer from `VERSION` |
 | 0.1.0 | Completion/cancel polling every 10 ms (was 2 × 1 s), shorter USB pre-transfer delays: ~15 ms turnaround (identified then as `LOGIC_ANALYZER_<BOARD>_V6_6`) |
 

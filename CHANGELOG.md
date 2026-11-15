@@ -3,7 +3,7 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-15
 
 ### Added
 - `IDevice` device interface with `createDevice(port)`; front-ends no longer depend on the serial
@@ -52,3 +52,7 @@ First public release, migrated from a private prototype.
 - `logictracer-mcp`: MCP server with device calls routed through the open GUI.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
+
+[0.3.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.3.0
+[0.2.0]: https://github.com/nick-fedchik/LogicTracer/tree/v0.2.0
+[0.1.0]: https://github.com/nick-fedchik/LogicTracer/tree/f423041
