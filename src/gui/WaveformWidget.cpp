@@ -21,6 +21,7 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <vector>
 
@@ -173,6 +174,7 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     m_cursorA.reset();
     m_cursorB.reset();
     m_annotations.clear();  // annotation times are relative to the trigger of the capture they were made on
+    m_anomalies.clear();  // the owner supplies them (setAnomalies) once the analysis options are known
     m_view.setTotalSamples(m_buffer.size());
     updateViewWidth();
     m_view.fitAll();
@@ -288,6 +290,47 @@ void WaveformWidget::centerOn(std::size_t sample)
     m_view.showRange(std::max(0.0, centre - half), std::min(static_cast<double>(m_buffer.size()), centre + half));
     update();
     Q_EMIT viewChanged();
+}
+
+void WaveformWidget::showSampleRange(double first, double end)
+{
+    if (!hasCapture())
+        return;
+    m_view.showRange(first, end);
+    update();
+    Q_EMIT viewChanged();
+}
+
+void WaveformWidget::setAnomalies(std::vector<lt::AnomalyIncident> anomalies)
+{
+    m_anomalies = std::move(anomalies);
+    update();
+}
+
+void WaveformWidget::setShowAnomalyMarkers(bool show)
+{
+    if (m_showAnomalies == show)
+        return;
+    m_showAnomalies = show;
+    update();
+}
+
+void WaveformWidget::drawAnomalyMarkers(QPainter& p, const QRectF& plot) const
+{
+    if (!m_showAnomalies || m_anomalies.empty())
+        return;
+    p.save();
+    p.setClipRect(QRectF(plot.left(), kPlotTop - 8, plot.width(), 10));
+    p.setPen(Qt::NoPen);
+    for (const auto& a : m_anomalies) {
+        const double x = xOfSample(static_cast<double>(a.sample));
+        if (x < plot.left() - 6 || x > plot.right() + 6)
+            continue;
+        p.setBrush(a.severity >= 3 ? QColor(235, 80, 70) : a.severity == 2 ? QColor(240, 170, 50) : QColor(230, 215, 90));
+        const QPointF tri[3] = {{x - 4, kPlotTop - 8}, {x + 4, kPlotTop - 8}, {x, kPlotTop - 1}};
+        p.drawPolygon(tri, 3);
+    }
+    p.restore();
 }
 
 void WaveformWidget::setSnapToEdges(bool enabled)
@@ -583,6 +626,7 @@ void WaveformWidget::paintEvent(QPaintEvent*)
     drawOverview(p);
     drawRuler(p, plot);
     drawAnnotations(p, plot);
+    drawAnomalyMarkers(p, plot);
     drawCursors(p, plot);
 
     if (m_displayState != DisplayState::Live) {
@@ -978,7 +1022,8 @@ QString WaveformWidget::hintAt(const QPointF& pos) const
     if (cursorNear(pos.x()))
         return tr("Drag to move this cursor (hold Alt to bypass edge snap).");
     if (pos.y() < kPlotTop)
-        return tr("Time ruler relative to the trigger.\nCtrl+wheel zooms around the pointer.");
+        return tr("Time ruler relative to the trigger.\nCtrl+wheel zooms around the pointer.\n"
+                  "Triangles mark automatic anomalies (F3 jumps to the next one).");
     return tr("Ctrl+wheel: zoom at pointer  |  Wheel: scroll  |  Drag: pan\n"
               "Shift+wheel: scroll channels  |  Ctrl+Shift+wheel: row height\n"
               "Click: Cursor A  |  Shift+click: Cursor B  |  Drag a cursor line: move it\n"

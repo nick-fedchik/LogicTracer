@@ -1106,11 +1106,90 @@ int cmdView(const QStringList& args, Output o)
         {"ai-mode", "Report detail: full, brief, or cursors (default: GUI's selected mode).", "mode"},
         {"note", "Override the Context/Question header in the report.", "text"},
         {"copy", "Copy the report (or JSON with --json) to the system clipboard."},
+        {"fit", "Steer the GUI: show the whole capture."},
+        {"start", "Steer the GUI: window start relative to the trigger (e.g. -2ms); use with --end.", "time"},
+        {"end", "Steer the GUI: window end relative to the trigger (e.g. 5ms); use with --start.", "time"},
+        {"center", "Steer the GUI: window centre relative to the trigger; use with --span.", "time"},
+        {"span", "Steer the GUI: window width; use with --center.", "time"},
+        {"cursor-a", "Steer the GUI: place Cursor A at this time relative to the trigger.", "time"},
+        {"cursor-b", "Steer the GUI: place Cursor B at this time relative to the trigger.", "time"},
+        {"clear-cursors", "Steer the GUI: remove both cursors first."},
+        {"hide-inactive", "Steer the GUI: hide channels without transitions (display only)."},
+        {"show-inactive", "Steer the GUI: show all channels again."},
+        {"capture-id", "Refuse (StaleCapture) unless this capture id is the one on screen.", "N"},
+        {"anomalies", "List the anomalies found in the capture on screen."},
+        {"latency", "With --anomalies: STIM..REACT spec, e.g. 1..2.", "spec"},
+        {"max-count", "With --anomalies: maximum incidents (default 20).", "N"},
         {"socket", "Session socket (default: $LOGICTRACER_SOCKET or the per-user default).", "path"},
     });
     if (auto rc = parse(p, args, o))
         return *rc;
     std::string error;
+    {
+        json params = json::object();
+        const auto timeUs = [&](const char* flag, const char* key, std::string& err) {
+            if (!p.isSet(flag))
+                return true;
+            const auto sec = lt::cli::parseTimeSeconds(str(p.value(flag)));
+            if (!sec) {
+                err = std::string("invalid --") + flag + " '" + str(p.value(flag)) + "' (expected e.g. 250us, -2ms, 1.5s)";
+                return false;
+            }
+            params[key] = *sec * 1e6;
+            return true;
+        };
+        std::string err;
+        const bool ok = timeUs("start", "start_us", err) && timeUs("end", "end_us", err) &&
+                        timeUs("center", "center_us", err) && timeUs("span", "span_us", err) &&
+                        timeUs("cursor-a", "cursor_a_us", err) && timeUs("cursor-b", "cursor_b_us", err);
+        if (!ok)
+            return report(o, ExitUsage, err);
+        if (p.isSet("capture-id")) {
+            bool parsed = false;
+            const auto id = p.value("capture-id").toULongLong(&parsed);
+            if (!parsed || id == 0)
+                return report(o, ExitUsage, "invalid --capture-id '" + str(p.value("capture-id")) + "' (expected a positive integer)");
+            params["capture_id"] = id;
+        }
+        if (p.isSet("anomalies")) {
+            if (p.isSet("latency"))
+                params["latency"] = str(p.value("latency"));
+            if (p.isSet("max-count")) {
+                bool parsed = false;
+                const auto n = p.value("max-count").toULongLong(&parsed);
+                if (!parsed || n == 0)
+                    return report(o, ExitUsage, "invalid --max-count (expected a positive integer)");
+                params["max_count"] = n;
+            }
+            return finishSessionCall(o, lt::session::call(socketPathFrom(p), "get_anomalies", params), [](const json& r) {
+                std::cout << "Capture #" << r.value("capture_id", uint64_t{0}) << " [" << r.value("display_state", std::string("live"))
+                          << "]: " << r["incidents"].size() << " of " << r.value("total", std::size_t{0}) << " anomaly(ies)\n";
+                for (const auto& a : r["incidents"])
+                    std::cout << "  sev " << a["severity"].get<int>() << "  " << lt::formatTime(a["time_us"].get<double>() * 1e-6)
+                              << "  " << a["kind"].get<std::string>() << ": " << a["detail"].get<std::string>() << "\n";
+            });
+        }
+        const bool steer = p.isSet("fit") || p.isSet("start") || p.isSet("end") || p.isSet("center") || p.isSet("span") ||
+                           p.isSet("cursor-a") || p.isSet("cursor-b") || p.isSet("clear-cursors") ||
+                           p.isSet("hide-inactive") || p.isSet("show-inactive");
+        if (steer) {
+            if (p.isSet("hide-inactive") && p.isSet("show-inactive"))
+                return report(o, ExitUsage, "--hide-inactive and --show-inactive are mutually exclusive");
+            if (p.isSet("fit"))
+                params["fit"] = true;
+            if (p.isSet("clear-cursors"))
+                params["clear_cursors"] = true;
+            if (p.isSet("hide-inactive") || p.isSet("show-inactive"))
+                params["hide_inactive"] = p.isSet("hide-inactive");
+            return finishSessionCall(o, lt::session::call(socketPathFrom(p), "set_view", params), [](const json& r) {
+                std::cout << "View updated";
+                if (r.contains("visible") && !r["visible"]["start_us"].is_null())
+                    std::cout << ": " << lt::formatTime(r["visible"]["start_us"].get<double>() * 1e-6) << " .. "
+                              << lt::formatTime(r["visible"]["end_us"].get<double>() * 1e-6);
+                std::cout << " (capture #" << r.value("capture_id", uint64_t{0}) << ")\n";
+            });
+        }
+    }
     if (p.isSet("ai-mode")) {
         if (!lt::parseCopyMode(str(p.value("ai-mode"))))
             return report(o, ExitUsage, "invalid --ai-mode '" + str(p.value("ai-mode")) + "' (expected brief, cursors, or full)");

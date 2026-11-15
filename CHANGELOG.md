@@ -16,6 +16,16 @@ All notable changes are documented here. The format follows
 - Waveform: overview strip, `CHx (GPx) Name` gutter with activity dot, `H` hides inactive channels,
   draggable cursors, right-click context menu (Set Cursor A/B, annotations).
 
+- Guided onboarding: empty-state card, `File -> Load Demo Capture` (`Ctrl+D`), and non-blocking visual
+  builders for the Channels, Trigger and Latency fields (the fields stay editable by hand).
+- `Setup Metadata...` editor (`Edit` menu and `Setup (N)` button); vertical channel scroll
+  (`Shift+wheel`) with pinned ruler, row height (`Ctrl+Shift+wheel`, `View` actions); `Repeat` capture
+  toggle that stops on Cancel, timeout, error or disconnect.
+- Two-way AI steering: session `set_view` / `get_anomalies`, MCP `lt_set_view` / `lt_get_anomalies`,
+  CLI `view --fit/--start/--end/--center/--span/--cursor-a/--cursor-b/--clear-cursors/--hide-inactive`
+  and `view --anomalies` (all accept `capture_id` and refuse stale targets with `StaleCapture`).
+- `View -> Show Anomaly Markers`: automatic markers on the ruler, separate from annotations.
+
 ### Changed
 - Right click no longer places Cursor B; it opens the context menu. Shift+click sets Cursor B.
 

@@ -329,6 +329,11 @@ void MainWindow::buildMenus()
     auto* fitRows = view->addAction(tr("&Fit Rows to Window"), m_waveform, [this] { m_waveform->setRowHeight(0); });
     fitRows->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_0));
     taller->setToolTip(tr("Make channel rows taller (Ctrl+Shift+wheel); Shift+wheel scrolls the channels"));
+    auto* markers = view->addAction(tr("Show Anomaly &Markers"));
+    markers->setCheckable(true);
+    markers->setChecked(true);
+    markers->setToolTip(tr("Draw automatic anomaly markers on the ruler (F3 jumps between them)"));
+    connect(markers, &QAction::toggled, m_waveform, &WaveformWidget::setShowAnomalyMarkers);
     m_snapAction = view->addAction(tr("&Snap cursors to edges"));
     m_snapAction->setCheckable(true);
     m_snapAction->setChecked(m_waveform->snapToEdges());
@@ -1064,6 +1069,14 @@ QString MainWindow::aiReport() const
 void MainWindow::updateReport()
 {
     m_reportTimer->stop();
+    if (m_waveform->hasCapture()) {
+        auto options = buildReportOptions(lt::CopyMode::Full);
+        options.first = 0;
+        options.last = std::numeric_limits<std::size_t>::max();
+        m_waveform->setAnomalies(lt::findAnomalies(m_waveform->capture(), options));
+    } else {
+        m_waveform->setAnomalies({});
+    }
     const QString text = aiReport();
     m_report->setPlainText(text);
     if (m_reportSize) {
@@ -1344,7 +1357,9 @@ json MainWindow::stateJson() const
               {"capture_id", m_currentCaptureId},
               {"display_state", displayStateName(m_waveform->displayState())},
               {"history_size", m_history.size()},
-              {"annotation_count", m_waveform->annotations().size()}};
+              {"annotation_count", m_waveform->annotations().size()},
+              {"anomaly_count", m_waveform->anomalies().size()},
+              {"hide_inactive", m_hideInactiveAction && m_hideInactiveAction->isChecked()}};
     if (m_device.isConnected())
         j["device"] = lt::toJson(m_device.info());
     if (m_waveform->hasCapture()) {
@@ -1423,6 +1438,10 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
         metadata["display_state"] = displayStateName(m_waveform->displayState());
         metadata["viewing_history"] = m_viewIndex + 1 < m_history.size();
         reply.ok({{"report", lt::copyForAi(m_waveform->capture(), options)}, {"metadata", metadata}});
+    } else if (method == "set_view") {
+        sessionSetView(params, std::move(reply));
+    } else if (method == "get_anomalies") {
+        sessionGetAnomalies(params, std::move(reply));
     } else if (method == "annotate") {
         sessionAnnotate(params, std::move(reply));
     } else if (method == "list_annotations") {
@@ -1444,24 +1463,172 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
     }
 }
 
-void MainWindow::sessionAnnotate(const json& p, sess::Responder reply)
+bool MainWindow::checkCaptureId(const json& p, sess::Responder& reply)
 {
-    if (p.contains("capture_id")) {
-        if (!p["capture_id"].is_number_unsigned()) {
-            reply.fail(sess::error::InvalidParams, "capture_id must be a positive integer");
+    if (!p.contains("capture_id"))
+        return true;
+    if (!p["capture_id"].is_number_unsigned()) {
+        reply.fail(sess::error::InvalidParams, "capture_id must be a positive integer");
+        return false;
+    }
+    const auto wanted = p["capture_id"].get<uint64_t>();
+    if (wanted != m_currentCaptureId || !m_waveform->hasCapture()) {
+        reply.fail(sess::error::StaleCapture,
+                   "capture #" + std::to_string(wanted) + " is not on screen; the current capture is #" +
+                       std::to_string(m_waveform->hasCapture() ? m_currentCaptureId : 0) +
+                       ". Re-read the view (lt_get_view) and retry.",
+                   {{"requested_capture_id", wanted},
+                    {"current_capture_id", m_waveform->hasCapture() ? m_currentCaptureId : 0}});
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::sessionSetView(const json& p, sess::Responder reply)
+{
+    if (!checkCaptureId(p, reply))
+        return;
+    if (!m_waveform->hasCapture()) {
+        reply.fail(sess::error::NoCapture, "no capture is shown in the GUI");
+        return;
+    }
+    const auto& buf = m_waveform->capture();
+    const double rate = static_cast<double>(buf.frequency());
+    const auto number = [&p](const char* key) -> std::optional<double> {
+        return p.contains(key) && p[key].is_number() ? std::optional<double>(p[key].get<double>()) : std::nullopt;
+    };
+    for (const char* key : {"start_us", "end_us", "center_us", "span_us", "cursor_a_us", "cursor_b_us"})
+        if (p.contains(key) && !p[key].is_number()) {
+            reply.fail(sess::error::InvalidParams, std::string(key) + " must be a number");
             return;
         }
-        const auto wanted = p["capture_id"].get<uint64_t>();
-        if (wanted != m_currentCaptureId || !m_waveform->hasCapture()) {
-            reply.fail(sess::error::StaleCapture,
-                       "capture #" + std::to_string(wanted) + " is not on screen; the current capture is #" +
-                           std::to_string(m_waveform->hasCapture() ? m_currentCaptureId : 0) +
-                           ". Re-read the view (lt_get_view) and retry.",
-                       {{"requested_capture_id", wanted},
-                        {"current_capture_id", m_waveform->hasCapture() ? m_currentCaptureId : 0}});
+    for (const char* key : {"fit", "clear_cursors", "hide_inactive"})
+        if (p.contains(key) && !p[key].is_boolean()) {
+            reply.fail(sess::error::InvalidParams, std::string(key) + " must be a boolean");
             return;
+        }
+    const auto sampleAt = [&](double us) { return static_cast<double>(buf.triggerIndex()) + us * 1e-6 * rate; };
+    const auto inCapture = [&](double sample) { return sample >= 0 && sample <= static_cast<double>(buf.size() - 1); };
+
+    const bool fit = p.contains("fit") && p["fit"].get<bool>();
+    const auto start = number("start_us"), end = number("end_us"), center = number("center_us"), span = number("span_us");
+    if ((start.has_value() != end.has_value()) || (center.has_value() != span.has_value())) {
+        reply.fail(sess::error::InvalidParams, "start_us/end_us and center_us/span_us must be given in pairs");
+        return;
+    }
+    if ((fit ? 1 : 0) + (start ? 1 : 0) + (center ? 1 : 0) > 1) {
+        reply.fail(sess::error::InvalidParams, "use only one of fit, start_us/end_us or center_us/span_us");
+        return;
+    }
+    std::optional<std::pair<double, double>> range;  // samples
+    if (start && end) {
+        if (*end <= *start) {
+            reply.fail(sess::error::InvalidParams, "end_us must be greater than start_us");
+            return;
+        }
+        range = {sampleAt(*start), sampleAt(*end)};
+    } else if (center && span) {
+        if (*span <= 0) {
+            reply.fail(sess::error::InvalidParams, "span_us must be positive");
+            return;
+        }
+        range = {sampleAt(*center - *span / 2), sampleAt(*center + *span / 2)};
+    }
+    if (range && (range->second < 0 || range->first > static_cast<double>(buf.size()))) {
+        reply.fail(sess::error::InvalidParams, "the requested window is outside the capture");
+        return;
+    }
+    std::optional<std::size_t> cursorA, cursorB;
+    for (const auto& [key, out] : {std::pair<const char*, std::optional<std::size_t>*>{"cursor_a_us", &cursorA},
+                                   std::pair<const char*, std::optional<std::size_t>*>{"cursor_b_us", &cursorB}}) {
+        if (const auto us = number(key)) {
+            const double sample = std::round(sampleAt(*us));
+            if (!inCapture(sample)) {
+                reply.fail(sess::error::InvalidParams, std::string(key) + " is outside the capture");
+                return;
+            }
+            *out = static_cast<std::size_t>(sample);
         }
     }
+
+    if (p.contains("hide_inactive"))
+        m_hideInactiveAction->setChecked(p["hide_inactive"].get<bool>());
+    if (p.contains("clear_cursors") && p["clear_cursors"].get<bool>())
+        m_waveform->clearCursors();
+    if (cursorA)
+        m_waveform->setCursorA(*cursorA);
+    if (cursorB)
+        m_waveform->setCursorB(*cursorB);
+    if (fit)
+        m_waveform->fitAll();
+    else if (range)
+        m_waveform->showSampleRange(std::max(0.0, range->first), std::min(static_cast<double>(buf.size()), range->second));
+    updateReport();
+    reply.ok(stateJson());
+}
+
+void MainWindow::sessionGetAnomalies(const json& p, sess::Responder reply)
+{
+    if (!checkCaptureId(p, reply))
+        return;
+    if (!m_waveform->hasCapture()) {
+        reply.fail(sess::error::NoCapture, "no capture is shown in the GUI");
+        return;
+    }
+    std::size_t maxCount = 20;
+    if (p.contains("max_count")) {
+        if (!p["max_count"].is_number_unsigned() || p["max_count"].get<std::size_t>() == 0 ||
+            p["max_count"].get<std::size_t>() > 1000) {
+            reply.fail(sess::error::InvalidParams, "max_count must be an integer in 1..1000");
+            return;
+        }
+        maxCount = p["max_count"].get<std::size_t>();
+    }
+    auto options = buildReportOptions(lt::CopyMode::Full);
+    options.first = 0;
+    options.last = std::numeric_limits<std::size_t>::max();
+    if (p.contains("latency") && p["latency"].is_string() && !p["latency"].get<std::string>().empty()) {
+        std::string err;
+        const auto parsed = lt::cli::parseLatencyArg(p["latency"].get<std::string>(), kMaxProtocolChannels, &err);
+        if (!parsed) {
+            reply.fail(sess::error::InvalidParams, err);
+            return;
+        }
+        const auto& chs = m_waveform->capture().channels();
+        std::optional<std::size_t> sIdx, rIdx;
+        for (std::size_t i = 0; i < chs.size(); ++i) {
+            if (chs[i].number == parsed->stimChannel)
+                sIdx = i;
+            if (chs[i].number == parsed->reactChannel)
+                rIdx = i;
+        }
+        if (!sIdx || !rIdx) {
+            reply.fail(sess::error::InvalidParams, "latency channels are not present in the current capture");
+            return;
+        }
+        options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
+    }
+    auto list = lt::findAnomalies(m_waveform->capture(), options);  // most severe first
+    const auto total = list.size();
+    if (list.size() > maxCount)
+        list.resize(maxCount);
+    auto incidents = json::array();
+    for (const auto& a : list)
+        incidents.push_back({{"sample", a.sample},
+                             {"time_us", m_waveform->capture().timeOfSample(a.sample) * 1e6},
+                             {"severity", a.severity},
+                             {"kind", a.kind},
+                             {"detail", a.detail}});
+    reply.ok({{"capture_id", m_currentCaptureId},
+              {"display_state", displayStateName(m_waveform->displayState())},
+              {"total", total},
+              {"incidents", incidents}});
+}
+
+void MainWindow::sessionAnnotate(const json& p, sess::Responder reply)
+{
+    if (!checkCaptureId(p, reply))
+        return;
     if (!m_waveform->hasCapture()) {
         reply.fail(sess::error::NoCapture, "no capture is shown in the GUI; annotations are relative to its trigger");
         return;

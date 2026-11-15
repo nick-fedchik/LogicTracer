@@ -782,6 +782,55 @@ private Q_SLOTS:
         QVERIFY(latency->styleSheet().isEmpty());
     }
 
+    void anomalyMarkersAreSeparateFromAnnotationsAndTogglable()
+    {
+        MainWindow win;
+        win.resize(1200, 600);
+        win.show();
+        std::vector<uint32_t> s(1000 * 500 + 100, 0u);
+        for (std::size_t k = 0; k < 1000; ++k) {
+            const std::size_t t0 = 50 + k * 500;
+            for (std::size_t i = 0; i < 200; ++i)
+                s[t0 + i] |= 1u;
+            if (k == 910)
+                continue;  // stimulus without a reaction
+            for (std::size_t i = 0; i < 200; ++i)
+                s[t0 + 2 + i] |= 2u;
+        }
+        auto* w = win.waveform();
+        w->setCapture(lt::CaptureBuffer({{0, "STIM"}, {1, "REACT"}}, 100'000'000, 50, s));
+        field(win, "latencySpec")->setText("1..2");
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        QTRY_VERIFY(!w->anomalies().empty());  // debounced report refresh computes the incidents
+        QVERIFY(w->showAnomalyMarkers());
+        QVERIFY(w->annotations().empty());
+
+        const auto markerPixels = [&] {
+            const QImage img = win.grab().toImage();
+            const QPoint origin = w->mapTo(&win, QPoint(0, 0));
+            int count = 0;
+            for (int y = origin.y() + WaveformWidget::kPlotTop - 8; y < origin.y() + WaveformWidget::kPlotTop; ++y)
+                for (int x = origin.x() + kGutter; x < origin.x() + w->width(); ++x) {
+                    const QColor c = img.pixelColor(x, y);
+                    count += (c.red() > 200 && c.green() < 100 && c.blue() < 100) ||
+                             (c.red() > 220 && c.green() > 150 && c.green() < 190 && c.blue() < 70);
+                }
+            return count;
+        };
+        QTest::qWait(100);
+        QVERIFY(markerPixels() > 0);
+        QAction* toggle = nullptr;
+        for (auto* act : win.findChildren<QAction*>())
+            if (act->text().contains("Anomaly"))
+                toggle = act;
+        QVERIFY(toggle && toggle->isChecked());
+        toggle->setChecked(false);
+        QVERIFY(!w->showAnomalyMarkers());
+        QTest::qWait(100);
+        QCOMPARE(markerPixels(), 0);
+        QVERIFY(w->annotations().empty());
+    }
+
     void setupEditorSyncsWithSetupAndReport()
     {
         MainWindow win;

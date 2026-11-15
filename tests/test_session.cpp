@@ -184,6 +184,50 @@ private Q_SLOTS:
         QCOMPARE(runCli({"annotate", "--time", "5us", "--label", "x", "--capture-id", "0", "--json"}, s).exitCode, 64);
     }
 
+    void viewCanBeSteeredAndAnomaliesListed()
+    {
+        lt::gui::MainWindow win;
+        win.show();
+        win.loadDemo();
+        QVERIFY(win.startSession(socket("steer.sock")));
+        const QString s = socket("steer.sock");
+        const auto id = runCli({"view", "--json"}, s).doc["capture_id"].get<std::uint64_t>();
+
+        auto r = runCli({"view", "--start", "100us", "--end", "500us", "--cursor-a", "150us", "--cursor-b", "250us",
+                         "--capture-id", QString::number(id), "--json"}, s);
+        QVERIFY2(r.exitCode == 0, qPrintable(r.out));
+        QCOMPARE(win.waveform()->visibleFirst(), std::size_t{300});
+        QCOMPARE(win.waveform()->visibleEnd(), std::size_t{700});
+        QCOMPARE(win.waveform()->cursorA().value(), std::size_t{350});
+        QCOMPARE(win.waveform()->cursorB().value(), std::size_t{450});
+        QCOMPARE(r.doc["cursors"]["a"]["us"].get<double>(), 150.0);
+
+        r = runCli({"view", "--hide-inactive", "--clear-cursors", "--json"}, s);
+        QVERIFY(r.doc["hide_inactive"].get<bool>());
+        QVERIFY(!win.waveform()->cursorA());
+        QVERIFY(win.waveform()->visibleChannels().size() < 4);
+        r = runCli({"view", "--show-inactive", "--fit", "--json"}, s);
+        QVERIFY(!r.doc["hide_inactive"].get<bool>());
+        QCOMPARE(win.waveform()->visibleFirst(), std::size_t{0});
+
+        r = runCli({"view", "--fit", "--capture-id", QString::number(id + 3), "--json"}, s);
+        QVERIFY(r.exitCode != 0);
+        QCOMPARE(r.doc["error_kind"].get<std::string>(), std::string("StaleCapture"));
+        QCOMPARE(runCli({"view", "--start", "1ms", "--json"}, s).exitCode, 64);  // unpaired
+        QVERIFY(runCli({"view", "--cursor-a", "9s", "--json"}, s).exitCode != 0);  // outside the capture
+
+        r = runCli({"view", "--anomalies", "--max-count", "3", "--capture-id", QString::number(id), "--json"}, s);
+        QVERIFY2(r.exitCode == 0, qPrintable(r.out));
+        QCOMPARE(r.doc["capture_id"].get<std::uint64_t>(), id);
+        QVERIFY(r.doc.contains("display_state"));
+        QVERIFY(r.doc["incidents"].size() <= 3);
+        for (const auto& i : r.doc["incidents"])
+            for (const char* key : {"sample", "time_us", "severity", "kind", "detail"})
+                QVERIFY(i.contains(key));
+        QCOMPARE(runCli({"view", "--anomalies", "--capture-id", QString::number(id + 3), "--json"}, s).doc["error_kind"].get<std::string>(),
+                 std::string("StaleCapture"));
+    }
+
     void invalidAnnotationsAreRejected()
     {
         lt::gui::MainWindow win;

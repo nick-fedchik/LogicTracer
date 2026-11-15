@@ -138,6 +138,10 @@ private:
     [[nodiscard]] QString failureReport() const;
     void handleSession(const std::string& method, const nlohmann::json& params, lt::session::Responder reply);
     void sessionAnnotate(const nlohmann::json& params, lt::session::Responder reply);
+    void sessionSetView(const nlohmann::json& params, lt::session::Responder reply);
+    void sessionGetAnomalies(const nlohmann::json& params, lt::session::Responder reply);
+    // Validates the optional "capture_id"; replies with InvalidParams/StaleCapture and returns false on mismatch.
+    bool checkCaptureId(const nlohmann::json& params, lt::session::Responder& reply);
     void sessionCapture(const nlohmann::json& params, lt::session::Responder reply);
     void sessionProbe(const nlohmann::json& params, lt::session::Responder reply);
     [[nodiscard]] nlohmann::json stateJson() const;

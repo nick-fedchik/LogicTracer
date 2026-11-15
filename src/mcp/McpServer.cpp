@@ -159,6 +159,29 @@ json McpServer::toolList()
              schema({{"report", prop("boolean", "Include the report for the visible range (default true).")},
                      {"mode", prop("string", "Report detail: 'brief' (compact, no raw JSON), 'cursors' (A..B only), or 'full'.")},
                      {"latency", prop("string", "Optional cross-channel STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")}})),
+        tool("lt_set_view",
+             "Steer the engineer's GUI view so they see what you describe: zoom to a window, fit the whole capture, "
+             "place cursors A/B, toggle hiding of inactive channels. Times are microseconds relative to the trigger. "
+             "Pass capture_id from lt_get_view; the call is refused with StaleCapture if another capture is on "
+             "screen. Returns the updated view state.",
+             schema({{"capture_id", prop("integer", "Capture id from lt_get_view; refused with StaleCapture on mismatch.")},
+                     {"fit", prop("boolean", "Show the whole capture.")},
+                     {"start_us", prop("number", "Window start (use with end_us).")},
+                     {"end_us", prop("number", "Window end (use with start_us).")},
+                     {"center_us", prop("number", "Window centre (use with span_us).")},
+                     {"span_us", prop("number", "Window width (use with center_us).")},
+                     {"cursor_a_us", prop("number", "Place Cursor A at this time.")},
+                     {"cursor_b_us", prop("number", "Place Cursor B at this time.")},
+                     {"clear_cursors", prop("boolean", "Remove both cursors first.")},
+                     {"hide_inactive", prop("boolean", "Hide channels without transitions (display only).")}})),
+        tool("lt_get_anomalies",
+             "List the anomalies the analyzer found in the capture on screen (drops, spurious reactions, timing "
+             "outliers, irregular periods), most severe first. Each incident has sample, time_us, severity "
+             "(3 functional, 2 timing, 1 signal quality), kind and detail. Use lt_set_view / lt_add_annotation to "
+             "show them to the engineer.",
+             schema({{"capture_id", prop("integer", "Capture id from lt_get_view; refused with StaleCapture on mismatch.")},
+                     {"latency", prop("string", "Optional STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")},
+                     {"max_count", prop("integer", "Maximum incidents to return (default 20, max 1000).")}})),
         tool("lt_clear_annotations", "Remove every annotation from the GUI timeline.", schema(json::object())),
     });
 }
@@ -328,6 +351,14 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
             if (args.contains(key))
                 params[key] = args[key];
         return sessionOrError("get_report", params);
+    }
+    if (name == "lt_set_view" || name == "lt_get_anomalies") {
+        json params = json::object();
+        for (const char* key : {"capture_id", "fit", "start_us", "end_us", "center_us", "span_us", "cursor_a_us",
+                                "cursor_b_us", "clear_cursors", "hide_inactive", "latency", "max_count"})
+            if (args.contains(key))
+                params[key] = args[key];
+        return sessionOrError(name == "lt_set_view" ? "set_view" : "get_anomalies", params);
     }
     if (name == "lt_clear_annotations")
         return sessionOrError("clear_annotations", json::object());

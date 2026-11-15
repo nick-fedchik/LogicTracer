@@ -125,7 +125,8 @@ private Q_SLOTS:
             QVERIFY(!t["description"].get<std::string>().empty());
         }
         const std::set<std::string> expected{"lt_detect_devices", "lt_probe_inputs", "lt_configure_and_capture",
-                                             "lt_add_annotation", "lt_get_view", "lt_clear_annotations"};
+                                             "lt_add_annotation", "lt_get_view", "lt_clear_annotations", "lt_set_view",
+                                             "lt_get_anomalies"};
         QVERIFY(names == expected);
     }
 
@@ -240,6 +241,19 @@ private Q_SLOTS:
         const auto stale = client.tool("lt_add_annotation", {{"time_us", 5}, {"text", "x"}, {"capture_id", id + 1}});
         QVERIFY(stale["result"]["isError"].get<bool>());
         QVERIFY(stale.dump().find("StaleCapture") != std::string::npos);
+        const auto steered = client.tool("lt_set_view", {{"capture_id", id}, {"center_us", 300}, {"span_us", 200}, {"cursor_a_us", 250}});
+        QVERIFY2(!steered["result"]["isError"].get<bool>(), steered.dump().c_str());
+        QCOMPARE(steered["result"]["structuredContent"]["capture_id"].get<std::uint64_t>(), id);
+        QVERIFY(win.waveform()->visibleEnd() - win.waveform()->visibleFirst() <= 201);
+        QVERIFY(win.waveform()->cursorA().has_value());
+        const auto staleSteer = client.tool("lt_set_view", {{"capture_id", id + 1}, {"fit", true}});
+        QVERIFY(staleSteer["result"]["isError"].get<bool>());
+        QVERIFY(staleSteer.dump().find("StaleCapture") != std::string::npos);
+        const auto anomalies = client.tool("lt_get_anomalies", {{"capture_id", id}, {"max_count", 5}});
+        QVERIFY2(!anomalies["result"]["isError"].get<bool>(), anomalies.dump().c_str());
+        QCOMPARE(anomalies["result"]["structuredContent"]["capture_id"].get<std::uint64_t>(), id);
+        QVERIFY(anomalies["result"]["structuredContent"]["incidents"].is_array());
+        QVERIFY(client.tool("lt_get_anomalies", {{"capture_id", id + 1}}).dump().find("StaleCapture") != std::string::npos);
         const auto fresh = client.tool("lt_add_annotation", {{"time_us", 5}, {"text", "y"}, {"capture_id", id}});
         QVERIFY2(!fresh["result"]["isError"].get<bool>(), fresh.dump().c_str());
         QCOMPARE(win.waveform()->annotations().size(), std::size_t{2});
