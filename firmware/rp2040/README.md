@@ -1,18 +1,23 @@
 # LogicTracer firmware (RP2040 / RP2350)
 
-This directory is the **LogicAnalyzer V2 firmware** by Agustín Gimenez Bernad
-(<https://github.com/gusmanb/logicanalyzer>, `Firmware/LogicAnalyzer_V2`), **GPL-3.0**, with the
-LogicTracer changes listed in [`../../NOTICE.md`](../../NOTICE.md).
+LogicTracer firmware, derived from the **LogicAnalyzer V2 firmware** by Agustín Gimenez Bernad
+(<https://github.com/gusmanb/logicanalyzer>, `Firmware/LogicAnalyzer_V2`, V6_5), **GPL-3.0**. The
+changes are listed in [`../../NOTICE.md`](../../NOTICE.md).
+
+The firmware is versioned with the whole product ([SemVer 2.0](https://semver.org/), repository
+`VERSION` file) and answers the identify command with `LOGICTRACER_<BOARD>_<version>`, e.g.
+`LOGICTRACER_PICO_0.2.0`.
 
 | Version | Change |
 |---|---|
-| V6_6 | Completion/cancel polling every 10 ms (was 2 × 1 s), shorter USB pre-transfer delays: ~15 ms turnaround |
+| 0.2.0 | LogicTracer identity line, program name and USB strings; SemVer from `VERSION` |
+| 0.1.0 | Completion/cancel polling every 10 ms (was 2 × 1 s), shorter USB pre-transfer delays: ~15 ms turnaround (identified then as `LOGIC_ANALYZER_<BOARD>_V6_6`) |
 
 ## Build
 
 ```bash
 # From the repository root; needs Pico SDK 2.x ($PICO_SDK_PATH) and arm-none-eabi-gcc.
-scripts/build_firmware.sh            # -> build/firmware/*.uf2 (100 MHz and 200 MHz Turbo images)
+scripts/build_firmware.sh            # -> build/firmware/LogicTracer-firmware-<version>-pico-{100mhz,200mhz-turbo}.uf2
 scripts/build_firmware.sh --flash    # also reboots the device into BOOTSEL and flashes the 100 MHz image
 ```
 

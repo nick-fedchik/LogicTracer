@@ -185,9 +185,11 @@ private:
     std::vector<Request> m_requests;
 };
 
+// `version` is an upstream "V6_5" or a LogicTracer SemVer such as "0.2.0".
 inline std::string idReply(const std::string& version, bool extended)
 {
-    std::string s = "LOGIC_ANALYZER_PICO_" + version + "\n";
+    const bool upstream = !version.empty() && version.front() == 'V';
+    std::string s = (upstream ? "LOGIC_ANALYZER_PICO_" : "LOGICTRACER_PICO_") + version + "\n";
     if (extended)
         s += "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nCHANNELS:24\n";
     return s;

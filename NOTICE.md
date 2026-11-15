@@ -26,13 +26,19 @@ Modified files carry a notice at the top. Changes, 2026, by Mykola Fedchyk:
 1. `LogicAnalyzer.c`: the capture loop checks for completion/cancel every 10 ms (previously
    2 × 1 s, LED blink rate preserved) and the pre-transfer USB delays were shortened from 200 ms to
    7 ms. Turnaround drops from ~2.2 s to ~15 ms.
-2. `CMakeLists.txt`: firmware version `V6_6`.
+2. `CMakeLists.txt` and `LogicAnalyzer.c`: LogicTracer identity. The firmware reports
+   `LOGICTRACER_<BOARD>_<version>` (SemVer 2.0, version taken from the repository `VERSION` file)
+   instead of `LOGIC_ANALYZER_<BOARD>_V<major>_<minor>`, the program name is `LogicTracer`, and the
+   USB manufacturer/product strings are `LogicTracer` / `LogicTracer capture device`.
 3. `LogicAnalyzer_Build_Settings.cmake`: `BOARD_TYPE` and `TURBO_MODE` can be set with `-D`;
    `TURBO_MODE` defaults to `0` (no 400 MHz overclock unless requested).
 4. Removed upstream IDE/publishing files (`.vscode/`, `publish.ps1`).
 
-The version string `LOGIC_ANALYZER_PICO_V6_6` keeps the upstream format so that both LogicTracer and
-the upstream host software recognise the device.
+LogicTracer firmware uses its own name and version numbers so it cannot be mistaken for an upstream
+release. The wire protocol is unchanged (upstream V6_5 command set and 56-byte capture request), but
+the upstream host software does not recognise the new identity line. The USB VID:PID `1209:3020`
+(pid.codes, allocated to LogicAnalyzer) is still used for driver-free compatibility; a dedicated PID
+for LogicTracer is planned.
 
 ## Third-party dependencies (not bundled)
 

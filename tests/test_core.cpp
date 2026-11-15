@@ -150,6 +150,23 @@ private Q_SLOTS:
         QVERIFY(!lt::parseVersionLine("CAPTURE_STARTED"));
         QVERIFY(lt::requestLayoutFor(*v) == lt::ProtocolGeneration::V6);
         QVERIFY(lt::requestLayoutFor(*lt::parseVersionLine("LOGIC_ANALYZER_PICO_V6_0")) == lt::ProtocolGeneration::V5);
+
+        // LogicTracer firmware: SemVer 2.0 identity, always the 56-byte V6 request.
+        const auto t = lt::parseVersionLine("LOGICTRACER_PICO_2_1.4.0-rc.1+g1a2b3c");
+        QVERIFY(t);
+        QVERIFY(t->family == lt::FirmwareFamily::LogicTracer);
+        QCOMPARE(t->board, std::string("PICO_2"));
+        QCOMPARE(t->major, 1);
+        QCOMPARE(t->minor, 4);
+        QCOMPARE(t->patch, 0);
+        QCOMPARE(t->preRelease, std::string("rc.1"));
+        QCOMPARE(t->buildMetadata, std::string("g1a2b3c"));
+        QCOMPARE(t->versionString(), std::string("1.4.0-rc.1+g1a2b3c"));
+        QVERIFY(lt::requestLayoutFor(*lt::parseVersionLine("LOGICTRACER_PICO_0.0.1")) == lt::ProtocolGeneration::V6);
+        QCOMPARE(lt::parseVersionLine("LOGIC_ANALYZER_PICO_V6_5")->versionString(), std::string("6.5"));
+        for (const char* bad : {"LOGICTRACER_PICO_1.2", "LOGICTRACER_PICO_01.2.3", "LOGICTRACER_PICO_1.2.3-",
+                                "LOGICTRACER_PICO_1.2.3-01", "LOGICTRACER__1.2.3"})
+            QVERIFY2(!lt::parseVersionLine(bad), bad);
         QCOMPARE(lt::parseKeyValue("FREQ:100000000", "FREQ").value_or(0), 100000000u);
         QVERIFY(!lt::parseKeyValue("BLASTFREQ:200000000", "FREQ"));
         QVERIFY(!lt::parseKeyValue("FREQ:12x", "FREQ"));
@@ -322,10 +339,12 @@ private Q_SLOTS:
         QVERIFY(!lt::gpioForChannel("UNKNOWN_BOARD", 0));
 
         const auto v65 = lt::parseVersionLine("LOGIC_ANALYZER_PICO_V6_5");
-        const auto v66 = lt::parseVersionLine("LOGIC_ANALYZER_PICO_V6_6");
-        QVERIFY(v65 && v66);
+        const auto v66 = lt::parseVersionLine("LOGIC_ANALYZER_PICO_V6_6");  // a future upstream release
+        const auto lt020 = lt::parseVersionLine("LOGICTRACER_PICO_0.2.0");
+        QVERIFY(v65 && v66 && lt020);
         QCOMPARE(lt::defaultPollLatencyFor(*v65).count(), 2200);
-        QCOMPARE(lt::defaultPollLatencyFor(*v66).count(), 150);
+        QCOMPARE(lt::defaultPollLatencyFor(*v66).count(), 2200);
+        QCOMPARE(lt::defaultPollLatencyFor(*lt020).count(), 150);
     }
 
     void crossChannelLatencyAndExpectations()
@@ -699,7 +718,7 @@ private Q_SLOTS:
 
         lt::ReportOptions o;
         o.mode = lt::CopyMode::Brief;
-        o.deviceVersion = "LOGIC_ANALYZER_PICO_V6_6";
+        o.deviceVersion = "LOGICTRACER_PICO_0.2.0";
         o.userNote = "J501 DO1 -> GP28 via 4.7k pull-up; verify 20 ns delay";
         o.triggerDescription = "CH1 rising";
         o.latency = lt::LatencyPairSpec{0, false, 1, true, std::nullopt};  // STIM rising -> DO1 falling
@@ -847,7 +866,7 @@ private Q_SLOTS:
             {"samples", 10000},
             {"sample_rate_hz", 1000000.0},
             {"elapsed_ms", 81},
-            {"device", {{"version", "LOGIC_ANALYZER_PICO_V6_6"}, {"board", "PICO"}}},
+            {"device", {{"version", "LOGICTRACER_PICO_0.2.0"}, {"board", "PICO"}}},
             {"channels",
              nlohmann::json::array({{{"channel", 24},
                                      {"name", "DO1"},

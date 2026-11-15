@@ -126,13 +126,15 @@ std::string_view toString(CaptureMode mode) noexcept
 
 ProtocolGeneration requestLayoutFor(const FirmwareVersion& v)
 {
+    if (v.family == FirmwareFamily::LogicTracer)
+        return ProtocolGeneration::V6;
     return (v.major > 6 || (v.major == 6 && v.minor >= 5)) ? ProtocolGeneration::V6 : ProtocolGeneration::V5;
 }
 
 std::chrono::milliseconds defaultPollLatencyFor(const FirmwareVersion& v) noexcept
 {
     using namespace std::chrono_literals;
-    return (v.major > 6 || (v.major == 6 && v.minor >= 6)) ? 150ms : 2200ms;
+    return v.family == FirmwareFamily::LogicTracer ? 150ms : 2200ms;
 }
 
 std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) noexcept
@@ -166,21 +168,55 @@ std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) n
 
 std::optional<FirmwareVersion> parseVersionLine(std::string_view line)
 {
-    static const std::regex re(R"(^LOGIC_ANALYZER_(.*)_V([0-9]+)_([0-9]+)$)");
-    std::string s(line);
-    std::smatch m;
-    if (!std::regex_match(s, m, re))
-        return std::nullopt;
     auto toInt = [](const std::ssub_match& sm, int& out) {
         const auto [ptr, ec] = std::from_chars(&*sm.first, &*sm.first + sm.length(), out);
         return ec == std::errc{} && ptr == &*sm.first + sm.length();
     };
+    const std::string s(line);
+    std::smatch m;
     FirmwareVersion v;
     v.raw = s;
+
+    // SemVer 2.0: numeric identifiers without leading zeros, optional -pre.release and +build.
+    static const std::regex lt(
+        R"(^LOGICTRACER_([A-Z0-9_]+)_(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))"
+        R"((?:-((?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*))?)"
+        R"((?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$)");
+    if (std::regex_match(s, m, lt)) {
+        v.family = FirmwareFamily::LogicTracer;
+        v.board = m[1].str();
+        if (!toInt(m[2], v.major) || !toInt(m[3], v.minor) || !toInt(m[4], v.patch))
+            return std::nullopt;
+        v.preRelease = m[5].str();
+        v.buildMetadata = m[6].str();
+        return v;
+    }
+
+    static const std::regex upstream(R"(^LOGIC_ANALYZER_(.*)_V([0-9]+)_([0-9]+)$)");
+    if (!std::regex_match(s, m, upstream))
+        return std::nullopt;
+    v.family = FirmwareFamily::Upstream;
     v.board = m[1].str();
     if (!toInt(m[2], v.major) || !toInt(m[3], v.minor))
         return std::nullopt;
     return v;
+}
+
+std::string FirmwareVersion::versionString() const
+{
+    if (family == FirmwareFamily::Upstream)
+        return std::to_string(major) + "." + std::to_string(minor);
+    std::string out = std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
+    if (!preRelease.empty())
+        out += "-" + preRelease;
+    if (!buildMetadata.empty())
+        out += "+" + buildMetadata;
+    return out;
+}
+
+std::string_view toString(FirmwareFamily family) noexcept
+{
+    return family == FirmwareFamily::LogicTracer ? "logictracer" : "upstream";
 }
 
 std::optional<uint32_t> parseKeyValue(std::string_view line, std::string_view key)

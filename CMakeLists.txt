@@ -3,8 +3,11 @@
 
 cmake_minimum_required(VERSION 3.24)
 
+# Single source of truth for the product version (SemVer 2.0), shared with the firmware.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" LOGICTRACER_VERSION LIMIT_COUNT 1)
+
 project(LogicTracer
-    VERSION 0.1.0
+    VERSION ${LOGICTRACER_VERSION}
     DESCRIPTION "Evidence-grade logic analysis for humans and AI agents (C++20 / Qt 6)"
     LANGUAGES CXX)
 

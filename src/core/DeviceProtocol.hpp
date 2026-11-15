@@ -26,7 +26,7 @@ namespace lt {
 
 // Firmware generations differ in the CAPTURE_REQUEST layout:
 //   V5 (V5_x and V6_0..V6_4): channels[24], uint8_t loopCount  -> 48 bytes
-//   V6 (V6_5+):               channels[32], uint16_t loopCount -> 56 bytes
+//   V6 (V6_5+, LogicTracer):  channels[32], uint16_t loopCount -> 56 bytes
 // The firmware casts the payload onto a non-packed struct compiled for ARM EABI,
 // so natural alignment padding is part of the wire format.
 enum class ProtocolGeneration { V5, V6 };
@@ -82,17 +82,32 @@ struct CaptureRequestPacket {
 [[nodiscard]] CaptureMode captureModeFor(std::span<const uint8_t> channels) noexcept;
 [[nodiscard]] std::string_view toString(CaptureMode mode) noexcept;
 
+// Firmware families speaking the same wire protocol:
+//   Upstream     gusmanb LogicAnalyzer, identifies as  LOGIC_ANALYZER_<BOARD>_V<major>_<minor>
+//   LogicTracer  this project's firmware, identifies as LOGICTRACER_<BOARD>_<SemVer 2.0>
+//                (e.g. LOGICTRACER_PICO_0.2.0); built on the upstream V6_5 protocol with fast polling.
+enum class FirmwareFamily { Upstream, LogicTracer };
+
 struct FirmwareVersion {
-    std::string raw;    // e.g. "LOGIC_ANALYZER_PICO_V6_5"
-    std::string board;  // e.g. "PICO"
+    std::string raw;    // full identification line, e.g. "LOGICTRACER_PICO_0.2.0"
+    std::string board;  // e.g. "PICO", "PICO_2"
+    FirmwareFamily family = FirmwareFamily::Upstream;
     int major = 0;
     int minor = 0;
+    int patch = 0;             // LogicTracer only
+    std::string preRelease;    // SemVer pre-release, e.g. "rc.1" (LogicTracer only)
+    std::string buildMetadata; // SemVer build metadata (LogicTracer only)
+
+    // "6.5" for upstream, the SemVer string for LogicTracer.
+    [[nodiscard]] std::string versionString() const;
 };
 
+[[nodiscard]] std::string_view toString(FirmwareFamily family) noexcept;
+
 [[nodiscard]] std::optional<FirmwareVersion> parseVersionLine(std::string_view line);
-// Request layout accepted by the given firmware version (the 56-byte layout appeared in V6_5).
+// Request layout accepted by the firmware (upstream: 56 bytes since V6_5; LogicTracer: always 56 bytes).
 [[nodiscard]] ProtocolGeneration requestLayoutFor(const FirmwareVersion& v);
-// Worst-case completion-poll latency of the firmware main loop (2200 ms on stock <= V6_5, 150 ms on fast-poll V6_6+).
+// Worst-case completion-poll latency of the firmware main loop (upstream ~2 s; LogicTracer 10 ms ticks -> 150 ms).
 [[nodiscard]] std::chrono::milliseconds defaultPollLatencyFor(const FirmwareVersion& v) noexcept;
 // Maps a 0-based channel (or external trigger slot == channels) to the physical RP2040/RP2350 GPIO number.
 [[nodiscard]] std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) noexcept;

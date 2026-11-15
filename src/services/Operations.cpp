@@ -464,8 +464,8 @@ ProbeDocument probeDocument(const DeviceInfo& info, const ProbeResult& r, uint32
          {"The firmware cannot configure pull resistors; RP2040 inputs keep their default weak "
           "pull-down, so a floating (High-Z) line usually reads LOW.",
           defaultPollLatencyFor(info.version).count() < 500
-              ? "Fast-poll firmware (V6_6+): ~10 ms completion polling (~80 ms probe)."
-              : "Legacy firmware (<= V6_5): ~2 s polling cycles; probe takes 2-8 s."}},
+              ? "LogicTracer firmware: ~10 ms completion polling (~80 ms probe)."
+              : "Upstream LogicAnalyzer firmware: ~2 s polling cycles; probe takes 2-8 s."}},
     };
     return out;
 }

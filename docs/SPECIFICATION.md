@@ -76,13 +76,16 @@ Limits (as in the upstream driver): `total = BUFFER / bytesPerSample`, `pre ∈ 
 
 ### 2.3. Handshake
 The host sends command `0`. The device answers with ASCII lines (`\n`):
-1. `LOGIC_ANALYZER_<BOARD>_V<major>_<minor>` (e.g. `LOGIC_ANALYZER_PICO_V6_6`)
+1. Identity line, one of:
+   * LogicTracer firmware: `LOGICTRACER_<BOARD>_<SemVer 2.0>` (e.g. `LOGICTRACER_PICO_0.2.0`);
+   * upstream firmware: `LOGIC_ANALYZER_<BOARD>_V<major>_<minor>` (e.g. `LOGIC_ANALYZER_PICO_V6_5`).
 2. `FREQ:<uint32>` (maximum sample rate)
 3. `BLASTFREQ:<uint32>`
 4. `BUFFER:<uint32>` (capture memory in bytes)
 5. `CHANNELS:<uint8>`
 
-The request layout is chosen by version (§2.2), not by the presence of `FREQ:` lines: V6_0 already
+LogicTracer firmware always uses the 56-byte request and fast polling. For upstream firmware the
+request layout is chosen by version (§2.2), not by the presence of `FREQ:` lines: V6_0 already
 sends them but still expects the 48-byte request. V5 firmware sends only the version line; defaults
 are then used (100 MHz, 131072 bytes, 24 channels).
 
@@ -100,8 +103,8 @@ are then used (100 MHz, 131072 bytes, 24 channels).
   `trigger_already_active` warning and, before signalling readiness (`WaitingForTrigger`,
   `--ready-file`, `--on-armed`), waits for the circular pre-trigger buffer to fill.
 * Upstream firmware (≤ V6_5) checks for completion every ~2 s (`sleep 1 s` × 2), so the host adds
-  ~2200 ms to the timeout. LogicTracer firmware **V6_6** polls every 10 ms (~15 ms turnaround); the
-  host recognises it by version (`defaultPollLatencyFor` = 150 ms).
+  ~2200 ms to the timeout. LogicTracer firmware polls every 10 ms (~15 ms turnaround); the host
+  recognises it by its identity line (`defaultPollLatencyFor` = 150 ms).
 * Any byte received during a capture cancels it without a reply (the host sends `0xFF` and drains
   the input). Command `4` (`logictracer-cli bootloader --yes`) reboots the RP2040 into the `RPI-RP2`
   UF2 bootloader.
@@ -169,7 +172,7 @@ redirection), with optional edges: `24:falling..2:rising`.
 logictracer/
 ├── CMakeLists.txt, CMakePresets.json, cmake/LogicTracerOptions.cmake
 ├── docs/            # SPECIFICATION.md (this document), BACKLOG.md
-├── firmware/rp2040/ # LogicAnalyzer V2 firmware with the V6_6 changes (GPL-3.0)
+├── firmware/rp2040/ # LogicTracer firmware, derived from LogicAnalyzer V2 (GPL-3.0)
 ├── packaging/       # desktop entry
 ├── scripts/         # firmware build, HIL scenarios
 ├── src/
@@ -273,7 +276,15 @@ duration; they are cleared by a new capture.
 
 ---
 
-## 5. Implementation status
+## 5. Versioning
+
+LogicTracer follows [Semantic Versioning 2.0](https://semver.org/). The single source of truth is the
+`VERSION` file at the repository root; it sets the CMake project version (`LT_VERSION`, shown by
+`--version` and in MCP `serverInfo`) and the firmware version (`FIRMWARE_VERSION`, identity line
+`LOGICTRACER_<BOARD>_<version>`, `picotool info`). Host and firmware are released together under one
+version; firmware images are named `LogicTracer-firmware-<version>-<board>-<variant>.uf2`.
+
+## 6. Implementation status
 
 * **Core and CLI:** protocol V5/V6, `gpio_map`, `--ready-file` / `--on-armed` HIL hooks, latency
   analysis with bounds and histogram, `--expect` with exit code `3`, `logictracer-capture-v1`,
@@ -282,7 +293,7 @@ duration; they are cleared by a new capture.
   `AsyncDevice` worker thread.
 * **Session and MCP:** IPC session with transparent proxying of `detect` / `probe` / `capture`
   through an open GUI, AI annotations (`annotate`, `view`), MCP server with output sandboxing.
-* **Firmware V6_6** (`firmware/rp2040`): completion polling reduced from ~2.2 s to 10 ms (~15 ms
+* **LogicTracer firmware** (`firmware/rp2040`, SemVer from `VERSION`): completion polling reduced from ~2.2 s to 10 ms (~15 ms
   turnaround); 100 MHz and 200 MHz Turbo UF2 images via `scripts/build_firmware.sh`.
 * **Hardware validation:** verified live with an RP2040 against a Digilent PYNQ-Z1 (100-transaction
   burst, stimulus → reaction latency, `--expect` PASS). Pending: NVIDIA Jetson AGX Orin `DO1` →

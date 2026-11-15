@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # Original work: LogicAnalyzer firmware, Copyright (C) Agustin Gimenez Bernad (gusmanb/logicanalyzer), GPL-3.0.
-# Modified 2026 by Mykola Fedchyk for LogicTracer: firmware version V6_6. See firmware/rp2040/README.md.
+# Modified 2026 by Mykola Fedchyk for LogicTracer: LogicTracer identity and SemVer version from ../../VERSION,
+# LogicTracer USB strings. See firmware/rp2040/README.md.
 
 # Generated Cmake Pico project file
 
@@ -97,9 +98,11 @@ pico_generate_pio_header(${PROJECT_NAME}
         ${CMAKE_CURRENT_LIST_DIR}/LogicAnalyzer.pio
 )
 
-pico_set_program_name(LogicAnalyzer "LogicAnalyzer")
-pico_set_program_version(LogicAnalyzer "6.6")
-add_compile_definitions(FIRMWARE_VERSION="V6_6")
+# LogicTracer product version (SemVer 2.0), shared with the host software.
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../VERSION" LOGICTRACER_VERSION LIMIT_COUNT 1)
+pico_set_program_name(LogicAnalyzer "LogicTracer")
+pico_set_program_version(LogicAnalyzer "${LOGICTRACER_VERSION}")
+add_compile_definitions(FIRMWARE_VERSION="${LOGICTRACER_VERSION}")
 
 pico_enable_stdio_uart(LogicAnalyzer 0)
 pico_enable_stdio_usb(LogicAnalyzer 1)
@@ -167,4 +170,4 @@ pico_add_extra_outputs(LogicAnalyzer)
 
 target_include_directories(LogicAnalyzer PRIVATE ${CMAKE_CURRENT_LIST_DIR} )
 
-target_compile_definitions(LogicAnalyzer PUBLIC USBD_MANUFACTURER="Dr. Gusman" USBD_PRODUCT="LogicAnalyzer" USBD_VID=0x1209 USBD_PID=0x3020)
+target_compile_definitions(LogicAnalyzer PUBLIC USBD_MANUFACTURER="LogicTracer" USBD_PRODUCT="LogicTracer capture device" USBD_VID=0x1209 USBD_PID=0x3020)

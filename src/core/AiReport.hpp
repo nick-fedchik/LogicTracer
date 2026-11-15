@@ -56,7 +56,7 @@ struct ReportOptions {
     CopyMode mode = CopyMode::Full;
     std::string title = "LogicTracer capture";
     std::string triggerDescription;           // e.g. "CH24 falling"; empty = unknown/immediate
-    std::string deviceVersion;                // e.g. "LOGIC_ANALYZER_PICO_V6_6"
+    std::string deviceVersion;                // e.g. "LOGICTRACER_PICO_0.2.0"
     std::string board;                        // e.g. "PICO" (inferred from deviceVersion when empty)
     SetupInfo setup;                          // test setup recorded with the capture (DUT, bitstream, wiring)
     std::string userNote;                     // optional engineer context / question to AI

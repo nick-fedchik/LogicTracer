@@ -3,7 +3,15 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-15
+
+### Changed
+- Firmware has its own identity and version: it reports `LOGICTRACER_<BOARD>_<SemVer>` (e.g.
+  `LOGICTRACER_PICO_0.2.0`), program name and USB strings `LogicTracer`. One `VERSION` file drives
+  host and firmware versions. UF2 images are named `LogicTracer-firmware-<version>-<board>-<variant>.uf2`.
+- The host no longer treats upstream-format `LOGIC_ANALYZER_*_V6_6` as fast-polling firmware; only
+  LogicTracer firmware is. Prototype boards still running "V6_6" must be reflashed.
+- Device JSON: `firmware_family` and `firmware_version` replace `firmware_major` / `firmware_minor`.
 
 ### Added
 - `--meta key=value` on `capture` and `analyze` (and `meta` in the session/MCP capture call):
@@ -31,4 +39,5 @@ First public release, migrated from a private prototype.
   HIL hooks, clipboard export (Wayland/X11).
 - `logictracer-gui` (Qt Widgets): zoom/pan, snap-to-edge cursors, AI grounding bar, IPC session.
 - `logictracer-mcp`: MCP server with device calls routed through the open GUI.
-- Firmware V6_6 (fast completion polling) derived from LogicAnalyzer V6_5.
+- Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
+  `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).

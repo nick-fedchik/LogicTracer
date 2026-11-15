@@ -51,7 +51,7 @@ struct CaptureConfig {
     // nullopt => immediate capture (auto-selects the trigger level of the first channel).
     std::optional<EdgeTrigger> trigger;
     // Max time to wait for the trigger. The firmware reports completion only on its poll tick
-    // (~150 ms for V6_6+, ~2.2 s before), so the device driver adds that latency on top.
+    // (~150 ms for LogicTracer firmware, ~2.2 s for upstream), so the device driver adds that latency on top.
     std::chrono::milliseconds timeout = 5000ms;
     // On TIMEOUT, run probe() on the same channels to report the current line state.
     bool probeOnTimeout = true;

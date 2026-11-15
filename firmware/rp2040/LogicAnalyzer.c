@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Original work: LogicAnalyzer firmware, Copyright (C) Agustin Gimenez Bernad (gusmanb/logicanalyzer), GPL-3.0.
-// Modified 2026 by Mykola Fedchyk for LogicTracer: V6_6 fast completion/cancel polling (10 ms instead of
-// 2 x 1 s) and shorter pre-transfer USB delays. See firmware/rp2040/README.md.
+// Modified 2026 by Mykola Fedchyk for LogicTracer: fast completion/cancel polling (10 ms instead of
+// 2 x 1 s), shorter pre-transfer USB delays, LogicTracer identity line. See firmware/rp2040/README.md.
 
 #include "LogicAnalyzer_Board_Settings.h"
 
@@ -285,7 +285,7 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             sendResponse("ERR_UNKNOWN_MSG\n", fromWiFi);
                         else
                         {
-                            sendResponse("LOGIC_ANALYZER_"BOARD_NAME"_"FIRMWARE_VERSION"\n", fromWiFi);
+                            sendResponse("LOGICTRACER_"BOARD_NAME"_"FIRMWARE_VERSION"\n", fromWiFi);
 
                             char msg[64];
                             

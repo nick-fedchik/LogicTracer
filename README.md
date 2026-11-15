@@ -19,7 +19,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | **Honest metrology** | Stimulus→reaction latency with a Δs histogram, nearest-rank percentiles, ±1-sample bounds, a constant-delay consistency test, burst-aware frequency, censored/spurious/dropped event accounting. |
 | **Automated verdicts** | `--expect "p99_ub_ns<=60,drops==0"` with guaranteed bounds; exit codes for CI and HIL scripts. |
 | **Anomaly spotlight** | Repeating edge motifs are compressed to one line; deviations are reported as incidents with a ±4-transition window. |
-| **Fast turnaround** | Fast-poll firmware V6_6: ~80 ms probe/capture round trip instead of ~2–8 s. |
+| **Fast turnaround** | LogicTracer firmware: ~40–80 ms probe/capture round trip instead of ~2–8 s. |
 | **Open formats** | Lossless compact JSON (`logictracer-capture-v1`), VCD, CSV, event CSV; imports legacy `.lac`. |
 
 ## Components
@@ -32,7 +32,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `annotate`, `view`, `bootloader` |
 | `src/gui` | `logictracer-gui`: waveform viewer with cursors, snap-to-edge and the AI grounding bar |
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
-| `firmware/rp2040` | Modified LogicAnalyzer firmware V6_6 (GPL-3.0) |
+| `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
 | `docs/` | Specification and backlog |
 
 ## Platform support
@@ -148,10 +148,15 @@ through it so the engineer sees what the agent requested.
 
 ## Firmware
 
-`firmware/rp2040` holds the LogicAnalyzer V2 firmware with LogicTracer changes (V6_6 fast polling).
-Build and flash with `scripts/build_firmware.sh` (needs the Pico SDK 2.x and `arm-none-eabi-gcc`).
-The host also works with unmodified upstream firmware (V5_x, V6_0–V6_5); it then waits ~2 s longer
-per capture.
+`firmware/rp2040` holds the LogicTracer firmware, derived from the LogicAnalyzer V2 firmware (fast
+completion polling). It identifies itself as `LOGICTRACER_<BOARD>_<version>`. Build and flash with
+`scripts/build_firmware.sh` (needs the Pico SDK 2.x and `arm-none-eabi-gcc`). The host also works
+with unmodified upstream firmware (V5_x, V6_0–V6_5); it then waits ~2 s longer per capture.
+
+## Versioning
+
+[Semantic Versioning 2.0](https://semver.org/). Host and firmware share one version, defined in the
+[`VERSION`](VERSION) file; see [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

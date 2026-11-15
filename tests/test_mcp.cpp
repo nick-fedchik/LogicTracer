@@ -73,7 +73,7 @@ fake::Device::Handler emulatedDevice()
 {
     return [](fake::Device& d, const std::vector<uint8_t>& payload) {
         if (payload[0] == 0) {
-            d.send(fake::idReply("V6_5", true));
+            d.send(fake::idReply("0.2.0", true));
         } else if (payload[0] == 1) {
             const auto r = fake::parseRequest(payload);
             d.recordRequest(r);
