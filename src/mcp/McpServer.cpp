@@ -194,11 +194,12 @@ json McpServer::runDeviceTool(const std::string& tool, const json& args)
                 return errorResult(r.error);
             return textResult(r.result, isFailure(r.result));
         }
-        PicoConnection conn;
         std::string error;
         const std::string port = requestedPort.empty() ? m_options.defaultPort : requestedPort;
-        if (!openDevice(conn, port, std::chrono::milliseconds(3000), error))
+        auto device = openDevice(port, std::chrono::milliseconds(3000), error);
+        if (!device)
             return errorResult(error);
+        IDevice& conn = *device;
         auto params = probeParamsFromJson(args, conn.info().channels, error);
         if (!params)
             return errorResult(error);
@@ -251,10 +252,11 @@ json McpServer::runDeviceTool(const std::string& tool, const json& args)
         return textResult(r.result, isFailure(r.result) || expectFailed);
     }
 
-    PicoConnection conn;
     const std::string port = requestedPort.empty() ? m_options.defaultPort : requestedPort;
-    if (!openDevice(conn, port, std::chrono::milliseconds(3000), error))
+    auto device = openDevice(port, std::chrono::milliseconds(3000), error);
+    if (!device)
         return errorResult(error);
+    IDevice& conn = *device;
     auto spec = captureSpecFromJson(args, conn.info().channels, error);
     if (!spec)
         return errorResult(error);

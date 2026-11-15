@@ -46,8 +46,8 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [ ] Compact report for idle captures (merge identical constant channels, skip the ASCII timeline).
 
 ## B-05. Device abstraction and PYNQ-Z1 capture backend
-- [ ] `IDevice` interface (`detect`, `probe`, `capture → CaptureBuffer`) so that other capture
-      hardware can plug in next to `PicoConnection`.
+- [x] B1: `IDevice` interface + `createDevice(port)`; `ReplayDevice` (`replay:<file>`) for tests,
+      demos and offline review; CLI, GUI (`AsyncDevice`) and MCP use the interface.
 - [ ] PYNQ-Z1 as a capture device, synchronous to the DUT clock: see
       [design/pynq-capture-backend.md](design/pynq-capture-backend.md).
 

@@ -3,7 +3,9 @@
 
 add_library(logictracer_device STATIC
     AsyncDevice.cpp AsyncDevice.hpp
+    IDevice.cpp IDevice.hpp
     PicoConnection.cpp PicoConnection.hpp
+    ReplayDevice.cpp ReplayDevice.hpp
 )
 add_library(LogicTracer::Device ALIAS logictracer_device)
 set_target_properties(logictracer_device PROPERTIES POSITION_INDEPENDENT_CODE ON)

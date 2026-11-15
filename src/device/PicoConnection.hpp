@@ -5,6 +5,7 @@
 
 #include "core/CaptureTypes.hpp"
 #include "core/DeviceProtocol.hpp"
+#include "device/IDevice.hpp"
 
 #include <QByteArray>
 
@@ -24,7 +25,8 @@ namespace lt {
 
 using namespace std::chrono_literals;
 
-class PicoConnection {
+// RP2040/RP2350 running the LogicTracer or upstream LogicAnalyzer firmware, over USB CDC serial.
+class PicoConnection final : public IDevice {
 public:
     static constexpr uint16_t kVendorId = 0x1209;
     static constexpr uint16_t kProductId = 0x3020;
@@ -32,28 +34,25 @@ public:
     static constexpr std::chrono::milliseconds kFirmwarePollLatency = 2200ms;
 
     PicoConnection();
-    ~PicoConnection();
-    PicoConnection(const PicoConnection&) = delete;
-    PicoConnection& operator=(const PicoConnection&) = delete;
+    ~PicoConnection() override;
 
     // Opens the port and performs the ID handshake (VERSION, FREQ, BLASTFREQ, BUFFER, CHANNELS).
-    bool open(const std::string& port, std::chrono::milliseconds handshakeTimeout = 3000ms);
-    void close();
-    [[nodiscard]] bool isOpen() const noexcept;
-    [[nodiscard]] const DeviceInfo& info() const noexcept { return m_info; }
-    [[nodiscard]] const std::string& lastError() const noexcept { return m_error; }
+    bool open(const std::string& port, std::chrono::milliseconds handshakeTimeout = 3000ms) override;
+    void close() override;
+    [[nodiscard]] bool isOpen() const noexcept override;
+    [[nodiscard]] const DeviceInfo& info() const noexcept override { return m_info; }
+    [[nodiscard]] const std::string& lastError() const noexcept override { return m_error; }
 
     // Asks the running capture()/probe() to stop; safe to call from any thread. A capture that is
     // waiting for its trigger is aborted on the device and finishes with CaptureStatus::Cancelled.
     // The request stays pending until the operation ends, so call it only while one is running.
-    void requestCancel() noexcept { m_cancelRequested = true; }
+    void requestCancel() noexcept override { m_cancelRequested = true; }
 
-    using ProgressCallback = std::function<void(CaptureStage)>;
-    void setProgressCallback(ProgressCallback callback) { m_progress = std::move(callback); }
+    void setProgressCallback(ProgressCallback callback) override { m_progress = std::move(callback); }
 
     // Firmware completion-poll period used for all timeouts (default auto-detected from firmware version).
     // Adjustable for emulators / non-USB transports.
-    void setPollLatency(std::chrono::milliseconds latency) noexcept
+    void setPollLatency(std::chrono::milliseconds latency) noexcept override
     {
         m_pollLatency = latency;
         m_pollLatencyOverridden = true;
@@ -61,14 +60,14 @@ public:
     [[nodiscard]] std::chrono::milliseconds pollLatency() const noexcept { return m_pollLatency; }
 
     // Reboots the RP2040 into USB UF2 bootloader mode (RPI-RP2 mass storage) via protocol command 4.
-    bool enterBootloader();
+    bool enterBootloader() override;
 
-    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config) const;
-    [[nodiscard]] CaptureResult capture(const CaptureConfig& config);
+    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config) const override;
+    [[nodiscard]] CaptureResult capture(const CaptureConfig& config) override;
 
     // Short untriggered snapshot (default 10 ms @ 1 MHz) of the current pin levels.
     [[nodiscard]] ProbeResult probe(const std::vector<ChannelInfo>& channels,
-                                    std::chrono::milliseconds window = 10ms, uint32_t frequency = 1'000'000);
+                                    std::chrono::milliseconds window = 10ms, uint32_t frequency = 1'000'000) override;
 
     // Lists serial ports with the capture-device VID/PID (and, optionally, every ttyACM*).
     [[nodiscard]] static std::vector<DetectedPort> enumerate(bool includeAllAcm = false);

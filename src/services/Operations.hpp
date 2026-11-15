@@ -7,6 +7,7 @@
 // all go through these, so every front-end produces the same JSON for the same request.
 
 #include "core/ArgParsing.hpp"
+#include "device/IDevice.hpp"
 #include "device/PicoConnection.hpp"
 #include "core/SignalAnalyzer.hpp"
 
@@ -93,7 +94,7 @@ struct CaptureOutcome {
 };
 
 // Validates, runs the capture on an open connection and describes it.
-CaptureOutcome performCapture(PicoConnection& connection, const CaptureRequestSpec& spec,
+CaptureOutcome performCapture(IDevice& connection, const CaptureRequestSpec& spec,
                               const DocumentOptions& options, std::vector<std::string> warnings = {});
 
 struct ProbeDocument {
@@ -105,7 +106,7 @@ struct ProbeDocument {
 // are compared with what the device could do and reported as warnings.
 ProbeDocument probeDocument(const DeviceInfo& info, const ProbeResult& result, uint32_t requestedRate,
                             std::chrono::milliseconds requestedWindow);
-ProbeDocument performProbe(PicoConnection& connection, const std::vector<ChannelInfo>& channels,
+ProbeDocument performProbe(IDevice& connection, const std::vector<ChannelInfo>& channels,
                            std::chrono::milliseconds window, uint32_t rate);
 
 // JSON request parameters (MCP tools, GUI session). Numbers may also be given as strings with SI
@@ -130,8 +131,9 @@ struct ProbeParams {
 // Keys: channels, window_ms, rate.
 std::optional<ProbeParams> probeParamsFromJson(const nlohmann::json& params, int deviceChannels, std::string& error);
 
-// Opens `port`, or the first capture device found when empty. Fills `error` on failure.
-bool openDevice(PicoConnection& connection, const std::string& port, std::chrono::milliseconds timeout,
-                std::string& error);
+// Opens `port` (a serial port or "replay:<file>"), or the first capture device found when empty.
+// Returns nullptr and fills `error` on failure.
+[[nodiscard]] std::unique_ptr<IDevice> openDevice(const std::string& port, std::chrono::milliseconds timeout,
+                                                  std::string& error);
 
 }  // namespace lt

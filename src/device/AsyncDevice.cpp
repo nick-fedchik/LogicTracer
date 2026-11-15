@@ -35,7 +35,7 @@ public:
         bool ok = false;
         {
             std::lock_guard lock(m_mutex);
-            m_conn = std::make_unique<PicoConnection>();
+            m_conn = createDevice(port.toStdString());
             if (pollLatencyOverride)
                 m_conn->setPollLatency(*pollLatencyOverride);
             m_conn->setProgressCallback([this](CaptureStage s) { Q_EMIT progress(static_cast<int>(s)); });
@@ -50,7 +50,7 @@ public:
 
     void doClose()
     {
-        std::unique_ptr<PicoConnection> dying;
+        std::unique_ptr<IDevice> dying;
         {
             std::lock_guard lock(m_mutex);
             dying = std::move(m_conn);
@@ -88,7 +88,7 @@ Q_SIGNALS:
 
 private:
     std::mutex m_mutex;
-    std::unique_ptr<PicoConnection> m_conn;
+    std::unique_ptr<IDevice> m_conn;
 };
 
 AsyncDevice::AsyncDevice(QObject* parent) : QObject(parent)

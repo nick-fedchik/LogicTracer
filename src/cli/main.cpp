@@ -86,11 +86,11 @@ std::optional<std::chrono::milliseconds> parseMs(const QString& text)
     return std::chrono::milliseconds(v);
 }
 
-// Opens --port, or the first device with the capture-device VID/PID.
-bool openDevice(lt::PicoConnection& conn, const QCommandLineParser& p, std::chrono::milliseconds timeout,
-                std::string& error)
+// Opens --port (serial port or replay:<file>), or the first device with the capture-device VID/PID.
+std::unique_ptr<lt::IDevice> openDevice(const QCommandLineParser& p, std::chrono::milliseconds timeout,
+                                        std::string& error)
 {
-    return lt::openDevice(conn, p.isSet("port") ? str(p.value("port")) : std::string(), timeout, error);
+    return lt::openDevice(p.isSet("port") ? str(p.value("port")) : std::string(), timeout, error);
 }
 
 void printDiagnosisTable(const std::vector<lt::ChannelStats>& stats)
@@ -427,9 +427,10 @@ int cmdProbe(const QStringList& args, Output o)
         return status == "OK" ? ExitOk : status == "TIMEOUT" ? ExitTimeout : ExitError;
     }
 
-    lt::PicoConnection conn;
-    if (!openDevice(conn, p, *timeout, error))
+    auto device = openDevice(p, *timeout, error);
+    if (!device)
         return report(o, ExitError, error);
+    lt::IDevice& conn = *device;
     if (!channels) {
         channels.emplace();
         for (uint8_t i = 0; i < conn.info().channels; ++i)
@@ -650,9 +651,10 @@ int cmdCapture(const QStringList& args, Output o)
         return rc;
     }
 
-    lt::PicoConnection conn;
-    if (!openDevice(conn, p, *connectTimeout, error))
+    auto device = openDevice(p, *connectTimeout, error);
+    if (!device)
         return report(o, ExitError, error);
+    lt::IDevice& conn = *device;
 
     bool armedHookFired = false;
     if (hasArmedHook) {
@@ -984,9 +986,10 @@ int cmdBootloader(const QStringList& args, Output o)
         return report(o, ExitUsage, "invalid --timeout");
 
     std::string error;
-    lt::PicoConnection conn;
-    if (!openDevice(conn, p, *timeout, error))
+    auto device = openDevice(p, *timeout, error);
+    if (!device)
         return report(o, ExitError, error);
+    lt::IDevice& conn = *device;
     const std::string port = conn.info().port;
     const std::string ver = conn.info().version.raw;
     if (!conn.enterBootloader())

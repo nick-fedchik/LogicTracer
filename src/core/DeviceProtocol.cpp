@@ -126,7 +126,7 @@ std::string_view toString(CaptureMode mode) noexcept
 
 ProtocolGeneration requestLayoutFor(const FirmwareVersion& v)
 {
-    if (v.family == FirmwareFamily::LogicTracer)
+    if (v.family != FirmwareFamily::Upstream)
         return ProtocolGeneration::V6;
     return (v.major > 6 || (v.major == 6 && v.minor >= 5)) ? ProtocolGeneration::V6 : ProtocolGeneration::V5;
 }
@@ -134,7 +134,12 @@ ProtocolGeneration requestLayoutFor(const FirmwareVersion& v)
 std::chrono::milliseconds defaultPollLatencyFor(const FirmwareVersion& v) noexcept
 {
     using namespace std::chrono_literals;
-    return v.family == FirmwareFamily::LogicTracer ? 150ms : 2200ms;
+    switch (v.family) {
+    case FirmwareFamily::LogicTracer: return 150ms;
+    case FirmwareFamily::Replay: return 0ms;
+    case FirmwareFamily::Upstream: break;
+    }
+    return 2200ms;
 }
 
 std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) noexcept
@@ -204,6 +209,8 @@ std::optional<FirmwareVersion> parseVersionLine(std::string_view line)
 
 std::string FirmwareVersion::versionString() const
 {
+    if (family == FirmwareFamily::Replay)
+        return {};
     if (family == FirmwareFamily::Upstream)
         return std::to_string(major) + "." + std::to_string(minor);
     std::string out = std::to_string(major) + "." + std::to_string(minor) + "." + std::to_string(patch);
@@ -216,7 +223,12 @@ std::string FirmwareVersion::versionString() const
 
 std::string_view toString(FirmwareFamily family) noexcept
 {
-    return family == FirmwareFamily::LogicTracer ? "logictracer" : "upstream";
+    switch (family) {
+    case FirmwareFamily::LogicTracer: return "logictracer";
+    case FirmwareFamily::Replay: return "replay";
+    case FirmwareFamily::Upstream: break;
+    }
+    return "upstream";
 }
 
 std::optional<uint32_t> parseKeyValue(std::string_view line, std::string_view key)

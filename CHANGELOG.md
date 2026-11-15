@@ -3,6 +3,14 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `IDevice` device interface with `createDevice(port)`; front-ends no longer depend on the serial
+  driver.
+- Replay device: `--port replay:<file>` plays a saved capture back as a device (edge-triggered,
+  consecutive events, integer rate decimation) in the CLI, GUI and MCP.
+
 ## [0.2.0] - 2026-11-15
 
 ### Changed

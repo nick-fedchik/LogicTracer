@@ -194,7 +194,12 @@ front-ends.
 ## 4. Subsystems
 
 ### 4.1. Core and device libraries
-1. **Device access** (`PicoConnection`, `AsyncDevice`):
+1. **Device access** (`IDevice`, `PicoConnection`, `ReplayDevice`, `AsyncDevice`):
+   * `IDevice` is the interface every front-end uses; `createDevice(port)` picks the
+     implementation: `replay:<file>` → `ReplayDevice`, anything else → `PicoConnection`.
+   * `ReplayDevice` presents a recorded capture as a device: channels, rate and depth come from the
+     recording; integer decimation of the rate is supported; a triggered capture returns the window
+     around the next real edge after the previous capture (TIMEOUT when none is left).
    * Discovery of serial ports by VID/PID (optionally every `ttyACM*`) and handshake.
    * Blocking driver on `QSerialPort`, run on a worker thread by `AsyncDevice` for the GUI.
    * **`probe()`**: a short (~10 ms) untriggered observation of the current pin levels, classified

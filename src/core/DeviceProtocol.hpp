@@ -86,7 +86,8 @@ struct CaptureRequestPacket {
 //   Upstream     gusmanb LogicAnalyzer, identifies as  LOGIC_ANALYZER_<BOARD>_V<major>_<minor>
 //   LogicTracer  this project's firmware, identifies as LOGICTRACER_<BOARD>_<SemVer 2.0>
 //                (e.g. LOGICTRACER_PICO_0.2.0); built on the upstream V6_5 protocol with fast polling.
-enum class FirmwareFamily { Upstream, LogicTracer };
+//   Replay       a recorded capture played back by the host (no firmware involved).
+enum class FirmwareFamily { Upstream, LogicTracer, Replay };
 
 struct FirmwareVersion {
     std::string raw;    // full identification line, e.g. "LOGICTRACER_PICO_0.2.0"

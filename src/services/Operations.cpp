@@ -162,22 +162,23 @@ json detectDocument(bool includeAllAcm, bool handshake, std::chrono::millisecond
             {"devices", devices}};
 }
 
-bool openDevice(PicoConnection& conn, const std::string& port, std::chrono::milliseconds timeout, std::string& error)
+std::unique_ptr<IDevice> openDevice(const std::string& port, std::chrono::milliseconds timeout, std::string& error)
 {
     std::string target = port;
     if (target.empty()) {
         const auto ports = PicoConnection::enumerate(false);
         if (ports.empty()) {
             error = "no capture device found (USB 1209:3020); connect one or pass a port";
-            return false;
+            return nullptr;
         }
         target = ports.front().port;
     }
-    if (!conn.open(target, timeout)) {
-        error = conn.lastError();
-        return false;
+    auto device = createDevice(target);
+    if (!device->open(target, timeout)) {
+        error = device->lastError();
+        return nullptr;
     }
-    return true;
+    return device;
 }
 
 std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const CaptureRequestSpec& spec,
@@ -390,7 +391,7 @@ void writeCaptureOutputs(json& doc, const CaptureResult& result, const std::opti
     writeCaptureOutputs(doc, result, d, OutputPaths{vcdPath, jsonPath, {}, {}});
 }
 
-CaptureOutcome performCapture(PicoConnection& conn, const CaptureRequestSpec& spec, const DocumentOptions& options,
+CaptureOutcome performCapture(IDevice& conn, const CaptureRequestSpec& spec, const DocumentOptions& options,
                               std::vector<std::string> warnings)
 {
     CaptureOutcome out;
@@ -470,7 +471,7 @@ ProbeDocument probeDocument(const DeviceInfo& info, const ProbeResult& r, uint32
     return out;
 }
 
-ProbeDocument performProbe(PicoConnection& conn, const std::vector<ChannelInfo>& channels,
+ProbeDocument performProbe(IDevice& conn, const std::vector<ChannelInfo>& channels,
                            std::chrono::milliseconds window, uint32_t rate)
 {
     for (const auto& ch : channels) {

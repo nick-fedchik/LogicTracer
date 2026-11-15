@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "device/PicoConnection.hpp"
+#include "device/IDevice.hpp"
 
 #include <QObject>
 #include <QString>
@@ -17,7 +17,8 @@ namespace lt {
 
 class AsyncWorker;  // defined in AsyncDevice.cpp
 
-// Event-loop friendly front-end for PicoConnection, shared by the GUI, daemon and MCP server.
+// Event-loop friendly front-end for any IDevice (serial RP2040 or replay), shared by the GUI, daemon
+// and MCP server.
 //
 // The blocking serial work runs on a private worker thread (the QSerialPort is created there);
 // results come back as queued signals on the thread that owns this object. One operation runs at
@@ -34,7 +35,7 @@ public:
     // Handshake data of the connected device (valid while isConnected()).
     [[nodiscard]] const DeviceInfo& info() const noexcept { return m_info; }
 
-    // Applies to connections opened afterwards (see PicoConnection::setPollLatency).
+    // Applies to connections opened afterwards (see IDevice::setPollLatency).
     void setPollLatency(std::chrono::milliseconds latency) noexcept { m_pollLatencyOverride = latency; }
 
 public Q_SLOTS:

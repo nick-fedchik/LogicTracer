@@ -120,6 +120,10 @@ build/src/gui/logictracer-gui --port /dev/ttyACM0
 
 Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` failed, `64` usage error.
 
+`--port replay:<file>` plays a saved capture (`.json`, `.vcd`, `.lac`) back as if it were a device:
+triggered captures find the next real edge in the recording, so the CLI, GUI, MCP and HIL scripts
+can be developed and demonstrated without hardware.
+
 `--meta key=value` (repeatable) records the test setup with the result — device under test,
 bitstream hash, wiring, switch positions. It is stored in the capture JSON, kept by `analyze` and
 shown in AI reports, so every verdict can be traced back to exactly what was connected.

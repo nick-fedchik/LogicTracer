@@ -5,6 +5,8 @@
 #include "device/AsyncDevice.hpp"
 #include "FakeDevice.hpp"
 #include "device/PicoConnection.hpp"
+#include "device/ReplayDevice.hpp"
+#include "core/Exporters.hpp"
 
 #include <QElapsedTimer>
 #include <QFile>
@@ -308,6 +310,26 @@ private Q_SLOTS:
     }
 };
 
+
+// A 1 MHz recording: CH1 (STIM) pulses at samples 100, 300, 500 (20 samples wide); CH3 (REACT)
+// follows each pulse 2 samples later. Saved as lossless JSON for the replay device.
+QString writeRecording(const QTemporaryDir& dir)
+{
+    std::vector<uint32_t> s(700, 0u);
+    for (std::size_t t0 : {100u, 300u, 500u})
+        for (std::size_t w = 0; w < 20; ++w) {
+            s[t0 + w] |= 1u;
+            s[t0 + 2 + w] |= 2u;
+        }
+    const lt::CaptureBuffer buf({{0, "STIM"}, {2, "REACT"}}, 1'000'000, 0, s);
+    lt::SignalAnalyzer::Options opts;
+    opts.collectEdges = true;
+    const QString path = dir.filePath("rec.json");
+    if (!lt::writeJsonFile(path.toStdString(), lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true)))
+        return {};
+    return path;
+}
+
 class AsyncTests : public QObject {
     Q_OBJECT
 
@@ -392,6 +414,77 @@ private Q_SLOTS:
         QVERIFY(finished.wait(5000));
         const auto r = finished.first().at(0).value<lt::ProbeResult>();
         QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+    }
+
+    void replayDeviceReplaysConsecutiveEvents()
+    {
+        QTemporaryDir dir;
+        const QString rec = writeRecording(dir);
+        QVERIFY(!rec.isEmpty());
+        const std::string port = "replay:" + rec.toStdString();
+        QVERIFY(lt::isReplayPort(port));
+
+        auto dev = lt::createDevice(port);
+        QVERIFY2(dev->open(port, 100ms), dev->lastError().c_str());
+        QVERIFY(dev->info().version.family == lt::FirmwareFamily::Replay);
+        QCOMPARE(int(dev->info().channels), 3);  // highest recorded channel is CH3
+        QCOMPARE(dev->info().maxFrequency, 1'000'000u);
+
+        lt::CaptureConfig c;
+        c.channels = {{0, {}}, {2, {}}};
+        c.frequency = 1'000'000;
+        c.preSamples = 10;
+        c.postSamples = 40;
+        c.trigger = lt::EdgeTrigger{0, false};
+        for (int event = 0; event < 3; ++event) {  // pulses at 100, 300, 500: one per capture, in order
+            const auto r = dev->capture(c);
+            QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+            QCOMPARE(r.buffer->size(), std::size_t{50});
+            QCOMPARE(r.buffer->triggerIndex(), int64_t{10});
+            QVERIFY(!r.buffer->bit(9, 0) && r.buffer->bit(10, 0));  // edge exactly at the trigger index
+            QVERIFY(!r.buffer->bit(11, 1) && r.buffer->bit(12, 1));  // REACT 2 samples later
+            QCOMPARE(r.buffer->channels()[1].name, std::string("REACT"));  // names come from the recording
+        }
+        const auto end = dev->capture(c);
+        QVERIFY(end.status == lt::CaptureStatus::Timeout);
+        QVERIFY(end.lineDump);
+
+        // Integer decimation is supported, other rates and missing channels are rejected up front.
+        c.trigger.reset();
+        c.frequency = 500'000;
+        QVERIFY(!dev->validate(c));
+        QCOMPARE(dev->capture(c).buffer->frequency(), 500'000u);
+        c.frequency = 300'000;
+        QVERIFY(dev->validate(c));
+        c.frequency = 1'000'000;
+        c.channels = {{1, {}}};
+        QVERIFY(dev->validate(c)->find("not in the recording") != std::string::npos);
+        QVERIFY(!dev->enterBootloader());
+
+        lt::ReplayDevice bad;
+        QVERIFY(!bad.open("replay:/does/not/exist.json", 100ms));
+    }
+
+    void asyncDeviceDrivesAReplay()
+    {
+        QTemporaryDir dir;
+        const QString rec = writeRecording(dir);
+        lt::AsyncDevice ad;
+        QSignalSpy opened(&ad, &lt::AsyncDevice::opened);
+        QVERIFY(ad.open("replay:" + rec));
+        QVERIFY(opened.wait(5000));
+        QVERIFY(opened.first().at(0).toBool());
+        QSignalSpy finished(&ad, &lt::AsyncDevice::captureFinished);
+        lt::CaptureConfig c;
+        c.channels = {{0, {}}, {2, {}}};
+        c.preSamples = 5;
+        c.postSamples = 30;
+        c.trigger = lt::EdgeTrigger{2, true};  // REACT falling
+        QVERIFY(ad.startCapture(c));
+        QVERIFY(finished.wait(5000));
+        const auto r = finished.first().at(0).value<lt::CaptureResult>();
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(r.buffer->bit(4, 1) && !r.buffer->bit(5, 1));
     }
 
     void failedOpenIsReported()
@@ -492,6 +585,21 @@ private Q_SLOTS:
         QCOMPARE(rc, 64);
         QVERIFY(j["error"].get<std::string>().find("65534") != std::string::npos);
         QVERIFY(dev.requests().empty());
+    }
+
+    void captureFromReplayPort()
+    {
+        QTemporaryDir dir;
+        const QString rec = writeRecording(dir);
+        nlohmann::json j;
+        QString raw;
+        const int rc = run({"capture", "--port", "replay:" + rec, "--no-session", "--freq", "1M", "--samples", "60",
+                            "--channels", "1:STIM,3:REACT", "--trigger", "1:rising", "--measure-latency", "1..3",
+                            "--expect", "events==1,p50_ns==2000", "--json"},
+                           &j, &raw);
+        QVERIFY2(rc == 0, qPrintable(raw));
+        QCOMPARE(j["device"]["firmware_family"].get<std::string>(), std::string("replay"));
+        QVERIFY(j["assertions"]["passed"].get<bool>());
     }
 
     void armedHookLatencyAndExpectExitCode()
