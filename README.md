@@ -120,6 +120,22 @@ build/src/gui/logictracer-gui --port /dev/ttyACM0
 
 Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` failed, `64` usage error.
 
+`--meta key=value` (repeatable) records the test setup with the result — device under test,
+bitstream hash, wiring, switch positions. It is stored in the capture JSON, kept by `analyze` and
+shown in AI reports, so every verdict can be traced back to exactly what was connected.
+
+### HIL rigs
+
+`scripts/rigs/` holds ready-made runs for concrete benches. `scripts/rigs/pynq-z1/pynq-burst-hil.sh`
+programs a bitstream into a Digilent PYNQ-Z1 over SSH (recording its SHA-256), checks that the lines
+are idle, arms the capture, tells the operator when to start the stimulus, and saves JSON, VCD,
+events CSV and an AI report with the verdict:
+
+```bash
+scripts/rigs/pynq-z1/pynq-burst-hil.sh --bitstream /home/xilinx/my_design.bit \
+    --switches "SW0=1,SW1=1" --start "press BTN1"
+```
+
 ### MCP
 
 ```json

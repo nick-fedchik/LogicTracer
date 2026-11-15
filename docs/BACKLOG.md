@@ -43,9 +43,18 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [ ] GUI: automatic anomaly annotations, `F3` / `Shift+F3` navigation; MCP `lt_get_anomalies`.
 - [ ] Compact report for idle captures (merge identical constant channels, skip the ASCII timeline).
 
-## B-05. Device abstraction
+## B-05. Device abstraction and PYNQ-Z1 capture backend
 - [ ] `IDevice` interface (`detect`, `probe`, `capture → CaptureBuffer`) so that other capture
-      hardware (sigrok-compatible analyzers, FPGA-side capture) can plug in next to `PicoConnection`.
+      hardware can plug in next to `PicoConnection`.
+- [ ] PYNQ-Z1 as a capture device, synchronous to the DUT clock: see
+      [design/pynq-capture-backend.md](design/pynq-capture-backend.md).
+
+## B-08. PYNQ-Z1 rig automation
+- [x] `--meta` setup metadata and `scripts/rigs/pynq-z1/pynq-burst-hil.sh` (verified live: PASS,
+      bitstream SHA-256 recorded).
+- [ ] Software start of the burst instead of BTN1. The AV-11 RTL decodes bit 1 written to
+      `REG_CONTROL` (0x08), but the gate answers that write with SLVERR, which can raise an
+      imprecise abort in Linux. Needs a dedicated, error-free start register in the DUT RTL.
 
 ## B-06. NVIDIA Jetson `DO1` HIL test (blocked: 4.7–10 kΩ pull-up between Pico pin 36 and pin 34)
 - [ ] `./scripts/hil_j501_do1.sh`.

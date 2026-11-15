@@ -449,6 +449,12 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
         }
         ss << "\n";
     }
+    if (!o.setup.empty()) {
+        ss << "- Setup:";
+        for (const auto& [k, v] : o.setup)
+            ss << " " << k << "=" << v << ";";
+        ss << "\n";
+    }
 
     ss << "- Sample rate: " << formatHz(b.frequency()) << " (period " << formatTime(b.samplePeriodSeconds())
        << "), " << b.size() << " samples, duration "
@@ -779,6 +785,8 @@ nlohmann::json jsonMetadata(const CaptureBuffer& b, const ReportOptions& o)
         doc["board"] = board;
     if (!o.userNote.empty())
         doc["user_note"] = o.userNote;
+    if (!o.setup.empty())
+        doc["setup"] = toJson(o.setup);
 
     nlohmann::json cursors = nlohmann::json::object();
     if (o.cursorA)

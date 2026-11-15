@@ -547,14 +547,26 @@ private Q_SLOTS:
         const QString savedJson = dir.filePath("cap.json");
         rc = run({"capture", "--port", QString::fromStdString(dev.port()), "--no-session",
                   "--channels", "1:STIM,2:REACT", "--samples", "40", "--trigger", "1:rising",
+                  "--meta", "dut.board=PYNQ-Z1", "--meta", "dut.bitstream_sha256=ccf4b15b",
                   "--out-json", savedJson, "--json"},
                  &j, &raw);
         QCOMPARE(rc, 0);
+        QCOMPARE(j["setup"]["dut.board"].get<std::string>(), std::string("PYNQ-Z1"));
+
+        // The setup travels with the saved capture; analyze keeps it and lets --meta override a key.
+        QString report;
+        rc = run({"analyze", savedJson, "--meta", "dut.board=PYNQ-Z1 rev C", "--ai"}, nullptr, &report);
+        QCOMPARE(rc, 0);
+        QVERIFY2(report.contains("- Setup: dut.bitstream_sha256=ccf4b15b; dut.board=PYNQ-Z1 rev C;"), qPrintable(report));
         rc = run({"analyze", savedJson, "--measure-latency", "1..2", "--expect", "events==1,p99_ns==2000", "--json"},
                  &j, &raw);
         QVERIFY2(rc == 0, qPrintable(raw));
         QCOMPARE(j["command"].get<std::string>(), std::string("analyze"));
         QVERIFY(j["assertions"]["passed"].get<bool>());
+        QCOMPARE(j["setup"]["dut.bitstream_sha256"].get<std::string>(), std::string("ccf4b15b"));
+
+        QCOMPARE(run({"analyze", savedJson, "--meta", "bad key=x", "--json"}, &j), 64);
+        QCOMPARE(run({"analyze", savedJson, "--meta", "novalue", "--json"}, &j), 64);
     }
 };
 

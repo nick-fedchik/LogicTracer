@@ -8,6 +8,7 @@
 // and an AI agent reason about identical data. Times are relative to the trigger (t = 0).
 
 #include "core/CaptureBuffer.hpp"
+#include "core/CaptureTypes.hpp"
 #include "core/SignalAnalyzer.hpp"
 
 #include <nlohmann/json.hpp>
@@ -57,6 +58,7 @@ struct ReportOptions {
     std::string triggerDescription;           // e.g. "CH24 falling"; empty = unknown/immediate
     std::string deviceVersion;                // e.g. "LOGIC_ANALYZER_PICO_V6_6"
     std::string board;                        // e.g. "PICO" (inferred from deviceVersion when empty)
+    SetupInfo setup;                          // test setup recorded with the capture (DUT, bitstream, wiring)
     std::string userNote;                     // optional engineer context / question to AI
     std::optional<LatencyPairSpec> latency;   // optional paired STIM -> REACT measurement
 };

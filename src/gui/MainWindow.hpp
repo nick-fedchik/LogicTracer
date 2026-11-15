@@ -30,7 +30,8 @@ public:
     [[nodiscard]] lt::AsyncDevice& device() noexcept { return m_device; }
 
     // Shows a capture (from a device or from tests) and refreshes the AI report.
-    void setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription);
+    // `setup` is the test-setup metadata recorded with the capture (shown in reports, saved to JSON).
+    void setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup = {});
     // Loads a saved lossless .json or .vcd capture into the viewer.
     bool openCaptureFile(const QString& path, QString* error = nullptr);
     // The text "Copy for AI" puts on the clipboard: the report for the current view and cursors.
@@ -130,6 +131,7 @@ private:
     std::optional<Pending> m_pending;
     QString m_triggerDescription;
     QString m_pendingTriggerDescription;
+    lt::SetupInfo m_setup;
     QAction* m_copyAction = nullptr;
     QAction* m_snapAction = nullptr;
 };

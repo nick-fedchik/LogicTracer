@@ -25,6 +25,14 @@ namespace lt::cli {
 // "50.12ms", "2us", "100ns", "1.5s", "-200us" -> seconds. A unit is required (except for "0").
 [[nodiscard]] std::optional<double> parseTimeSeconds(std::string_view text);
 
+// Setup metadata entries ("dut.bitstream=burst.bit"): key 1..64 chars of [A-Za-z0-9_.-],
+// value up to 512 printable characters without line breaks.
+[[nodiscard]] bool isValidSetupEntry(std::string_view key, std::string_view value, std::string* error = nullptr);
+[[nodiscard]] std::optional<std::pair<std::string, std::string>> parseSetupArg(std::string_view text,
+                                                                               std::string* error = nullptr);
+// Adds or replaces `key` keeping the original insertion order.
+void setSetupEntry(SetupInfo& setup, std::string key, std::string value);
+
 struct TriggerArg {
     bool none = true;
     EdgeTrigger trigger;

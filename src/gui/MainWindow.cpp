@@ -434,7 +434,7 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     const QString candidateTrigger = std::exchange(m_pendingTriggerDescription, QString{});
     switch (r.status) {
     case lt::CaptureStatus::Ok:
-        setCapture(*r.buffer, candidateTrigger);
+        setCapture(*r.buffer, candidateTrigger, pending && !pending->isProbe ? pending->options.setup : lt::SetupInfo{});
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
         break;
     case lt::CaptureStatus::Cancelled: showStatus(tr("Capture cancelled")); break;
@@ -489,9 +489,10 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
     }
 }
 
-void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription)
+void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup)
 {
     m_triggerDescription = triggerDescription;
+    m_setup = std::move(setup);
     m_waveform->setCapture(buffer);
     updateReport();
 }
@@ -541,6 +542,7 @@ lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> mod
     auto options = m_waveform->reportOptions();
     options.mode = modeOverride ? *modeOverride : copyMode();
     options.triggerDescription = str(m_triggerDescription);
+    options.setup = m_setup;
     if (m_device.isConnected()) {
         options.deviceVersion = m_device.info().version.raw;
         options.board = m_device.info().version.board;
@@ -654,7 +656,7 @@ bool MainWindow::openCaptureFile(const QString& path, QString* error)
         showStatus(QString::fromStdString(err), true);
         return false;
     }
-    setCapture(loaded.buffer, QString::fromStdString(loaded.triggerDescription));
+    setCapture(loaded.buffer, QString::fromStdString(loaded.triggerDescription), loaded.setup);
     if (!loaded.annotations.empty())
         m_waveform->setAnnotations(std::move(loaded.annotations));
     updateReport();
@@ -707,6 +709,8 @@ void MainWindow::saveJson()
     nlohmann::json doc = lt::captureToJson(buf, stats, true, board);
     if (!m_triggerDescription.isEmpty())
         doc["trigger_description"] = str(m_triggerDescription);
+    if (!m_setup.empty())
+        doc["setup"] = lt::toJson(m_setup);
     if (!m_waveform->annotations().empty()) {
         auto notes = nlohmann::json::array();
         for (const auto& a : m_waveform->annotations()) {

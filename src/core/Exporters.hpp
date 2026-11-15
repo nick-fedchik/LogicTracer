@@ -5,6 +5,7 @@
 
 #include "core/AiReport.hpp"
 #include "core/CaptureBuffer.hpp"
+#include "core/CaptureTypes.hpp"
 #include "core/DeviceProtocol.hpp"
 #include "core/SignalAnalyzer.hpp"
 
@@ -47,7 +48,12 @@ struct LoadedCapture {
     CaptureBuffer buffer;
     std::string triggerDescription;
     std::vector<Annotation> annotations;
+    SetupInfo setup;
 };
+
+// SetupInfo <-> JSON object {"key": "value", ...}. Invalid entries are skipped when reading.
+[[nodiscard]] nlohmann::json toJson(const SetupInfo& setup);
+[[nodiscard]] SetupInfo setupFromJson(const nlohmann::json& object);
 
 // Loads a lossless JSON capture (direct captureToJson or CLI/MCP envelope) or a VCD waveform.
 bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string* error = nullptr);

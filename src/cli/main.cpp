@@ -213,10 +213,25 @@ bool copyAndConfirm(std::string_view text, std::string& err)
     return true;
 }
 
+// Collects repeated --meta key=value options (later keys override earlier ones).
+std::optional<lt::SetupInfo> parseMetaOptions(const QCommandLineParser& p, lt::SetupInfo base, std::string& error)
+{
+    for (const auto& text : p.values("meta")) {
+        auto entry = lt::cli::parseSetupArg(str(text), &error);
+        if (!entry) {
+            error = "--meta: " + error;
+            return std::nullopt;
+        }
+        lt::cli::setSetupEntry(base, std::move(entry->first), std::move(entry->second));
+    }
+    return base;
+}
+
 std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode, std::string title,
                                 std::string triggerDesc, std::string deviceVersion, std::string board,
                                 std::string userNote, const std::optional<lt::cli::LatencyArg>& latencyArg,
-                                const std::vector<lt::Annotation>& annotations = {}, const json* assertions = nullptr)
+                                const std::vector<lt::Annotation>& annotations = {}, const json* assertions = nullptr,
+                                const lt::SetupInfo& setup = {})
 {
     lt::ReportOptions ro;
     ro.mode = mode;
@@ -226,6 +241,7 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
     ro.board = std::move(board);
     ro.userNote = std::move(userNote);
     ro.annotations = annotations;
+    ro.setup = setup;
     if (latencyArg) {
         std::optional<std::size_t> sIdx, rIdx;
         for (std::size_t i = 0; i < buf.channels().size(); ++i) {
@@ -473,6 +489,7 @@ int cmdCapture(const QStringList& args, Output o)
         {"ai", "Print an AI-ready Markdown + ASCII report instead of the plain text summary."},
         {"ai-mode", "AI report detail: brief (default, chat-ready), cursors, or full.", "mode", "brief"},
         {"note", "Context or question prepended to the AI report.", "text"},
+        {"meta", "Record test-setup metadata with the result, repeatable: --meta dut.board=PYNQ-Z1.", "key=value"},
         {"copy", "Copy the AI report (or JSON when --json is set) to the system clipboard."},
         {"summary", "Include per-channel analytics in the output."},
         {"edges", "Include every edge timestamp in the stdout JSON (always included in --out-json)."},
@@ -552,6 +569,9 @@ int cmdCapture(const QStringList& args, Output o)
         if (!expectations)
             return report(o, ExitUsage, error);
     }
+    const auto setup = parseMetaOptions(p, {}, error);
+    if (!setup)
+        return report(o, ExitUsage, error);
 
     std::vector<std::string> warnings;
     if (p.isSet("pull-up")) {
@@ -583,6 +603,7 @@ int cmdCapture(const QStringList& args, Output o)
         if (preSamples) params["pre_samples"] = *preSamples;
         if (p.isSet("measure-latency")) params["latency"] = str(p.value("measure-latency"));
         if (p.isSet("expect")) params["expect"] = str(p.value("expect"));
+        if (!setup->empty()) params["meta"] = lt::toJson(*setup);
         if (p.isSet("out-vcd")) params["out_vcd"] = str(p.value("out-vcd"));
         if (p.isSet("out-json")) params["out_json"] = str(p.value("out-json"));
         if (p.isSet("out-csv")) params["out_csv"] = str(p.value("out-csv"));
@@ -676,6 +697,7 @@ int cmdCapture(const QStringList& args, Output o)
     docOptions.latency = latencyArg;
     docOptions.collectLatencyEvents = p.isSet("out-events-csv");
     docOptions.expectations = expectations;
+    docOptions.setup = *setup;
 
     auto outcome = lt::performCapture(conn, spec, docOptions, warnings);
     json& doc = outcome.document.doc;
@@ -718,7 +740,7 @@ int cmdCapture(const QStringList& args, Output o)
             const json* assertionsPtr = doc.contains("assertions") ? &doc["assertions"] : nullptr;
             aiText = buildBufferAiReport(*result.buffer, *aiMode, "LogicTracer capture (" + info.port + ")", trigDesc,
                                          info.version.raw, info.version.board, str(p.value("note")), latencyArg, {},
-                                         assertionsPtr);
+                                         assertionsPtr, *setup);
         } else if (result.status == lt::CaptureStatus::Timeout) {
             aiText = buildTimeoutAiReport(doc, result.lineDump ? &*result.lineDump : nullptr, str(p.value("note")));
         }
@@ -785,6 +807,7 @@ int cmdAnalyze(const QStringList& args, Output o)
         {"ai", "Print an AI-ready Markdown + ASCII report for the capture file."},
         {"ai-mode", "AI report detail: brief (default, chat-ready), cursors, or full.", "mode", "brief"},
         {"note", "Context or question prepended to the AI report.", "text"},
+        {"meta", "Record test-setup metadata with the result, repeatable: --meta dut.board=PYNQ-Z1.", "key=value"},
         {"copy", "Copy the AI report (or JSON when --json is set) to the system clipboard."},
         {"board", "Optional board name for GPIO pin mapping (e.g. PICO, ZERO, PICO_2).", "name"},
         {"summary", "Include per-channel analytics in the output."},
@@ -841,6 +864,9 @@ int cmdAnalyze(const QStringList& args, Output o)
         if (!expectations)
             return report(o, ExitUsage, error);
     }
+    const auto setup = parseMetaOptions(p, loaded.setup, error);
+    if (!setup)
+        return report(o, ExitUsage, error);
 
     lt::SignalAnalyzer::Options anOpts;
     anOpts.collectEdges = p.isSet("out-json") || p.isSet("edges");
@@ -856,6 +882,8 @@ int cmdAnalyze(const QStringList& args, Output o)
         {"warnings", json::array()},
         {"outputs", json::object()},
     };
+    if (!setup->empty())
+        capDoc.doc["setup"] = lt::toJson(*setup);
     if (p.isSet("summary") || p.isSet("edges") || o.json)
         capDoc.doc["capture"] = lt::captureToJson(buf, *capDoc.stats, p.isSet("edges"));
 
@@ -908,7 +936,7 @@ int cmdAnalyze(const QStringList& args, Output o)
         const json* assertionsPtr = capDoc.doc.contains("assertions") ? &capDoc.doc["assertions"] : nullptr;
         aiText = buildBufferAiReport(buf, *aiMode, "LogicTracer analyze: " + inputPath, loaded.triggerDescription, {},
                                      str(p.value("board")), str(p.value("note")), latencyArg, loaded.annotations,
-                                     assertionsPtr);
+                                     assertionsPtr, *setup);
     }
 
     if (p.isSet("ai")) {

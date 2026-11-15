@@ -104,6 +104,8 @@ json McpServer::toolList()
         {"edges", prop("boolean", "Include every edge timestamp in the result (default false).")},
         {"latency", prop("string", "Optional cross-channel STIM->REACT latency spec, e.g. \"1->2\" or \"24:falling->2:rising\".")},
         {"expect", prop("string", "Optional pass/fail assertions, e.g. \"p99_ns<=60,drops==0,DO1:low_pulses>=1\".")},
+        {"meta", prop("object", "Optional test-setup metadata recorded with the result, string values only, e.g. "
+                                "{\"dut.board\": \"PYNQ-Z1\", \"dut.bitstream_sha256\": \"...\"}.")},
         {"out_vcd", prop("string", "Write the waveform to this .vcd file (confined to allowed output directory).")},
         {"out_json", prop("string", "Write the lossless capture JSON v1 (with edge_samples) to this .json file.")},
         {"out_csv", prop("string", "Write sample-by-sample CSV to this .csv file.")},

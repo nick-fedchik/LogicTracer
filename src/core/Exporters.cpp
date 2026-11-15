@@ -3,6 +3,8 @@
 
 #include "core/Exporters.hpp"
 
+#include "core/ArgParsing.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -559,6 +561,11 @@ bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string*
         }
     }
 
+    if (doc.contains("setup"))
+        out.setup = setupFromJson(doc["setup"]);
+    else if (cap.contains("setup"))
+        out.setup = setupFromJson(cap["setup"]);
+
     const nlohmann::json* notes = doc.contains("annotations") && doc["annotations"].is_array()
                                       ? &doc["annotations"]
                                       : (cap.contains("annotations") && cap["annotations"].is_array()
@@ -580,6 +587,26 @@ bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string*
         }
     }
     return true;
+}
+
+nlohmann::json toJson(const SetupInfo& setup)
+{
+    nlohmann::json j = nlohmann::json::object();
+    for (const auto& [k, v] : setup)
+        j[k] = v;
+    return j;
+}
+
+SetupInfo setupFromJson(const nlohmann::json& object)
+{
+    SetupInfo out;
+    if (!object.is_object())
+        return out;
+    for (auto it = object.begin(); it != object.end(); ++it) {
+        if (it.value().is_string() && cli::isValidSetupEntry(it.key(), it.value().get_ref<const std::string&>()))
+            out.emplace_back(it.key(), it.value().get<std::string>());
+    }
+    return out;
 }
 
 bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)

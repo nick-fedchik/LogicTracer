@@ -3,6 +3,19 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `--meta key=value` on `capture` and `analyze` (and `meta` in the session/MCP capture call):
+  test-setup metadata stored in the capture JSON, preserved by `analyze`, shown in AI reports and
+  in the GUI.
+- `scripts/rigs/pynq-z1/`: one-command HIL run against a PYNQ-Z1 (bitstream programming with
+  SHA-256 over SSH, idle check, armed notification, verdict and artefacts).
+
+### Fixed
+- Qt 6.4: worker calls in `AsyncDevice` are queued as type-safe functors (probe never started).
+- Qt 6.4: implicit `nlohmann::json` conversions disabled (QCOMPARE failed to compile).
+
 ## [0.1.0] - 2026-11-15
 
 First public release, migrated from a private prototype.

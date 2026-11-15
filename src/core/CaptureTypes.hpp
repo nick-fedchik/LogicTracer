@@ -14,11 +14,17 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace lt {
 
 using namespace std::chrono_literals;
+
+// Free-form description of the test setup recorded with a capture (DUT, bitstream hash, wiring,
+// switch positions), so every result can be traced back to exactly what was connected.
+// Keys use [A-Za-z0-9_.-]; values are single-line text.
+using SetupInfo = std::vector<std::pair<std::string, std::string>>;
 
 struct DetectedPort {
     std::string port;  // system location, e.g. /dev/ttyACM0

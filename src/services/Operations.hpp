@@ -54,6 +54,7 @@ struct DocumentOptions {
     std::optional<cli::LatencyArg> latency;
     bool collectLatencyEvents = false;
     std::optional<std::vector<cli::ExpectationClause>> expectations;
+    SetupInfo setup;  // recorded as "setup" in the document and the lossless capture file
 };
 
 struct CaptureDocument {

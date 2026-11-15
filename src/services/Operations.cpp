@@ -293,6 +293,8 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
     };
     if (!result.error.empty())
         out.doc["error"] = result.error;
+    if (!options.setup.empty())
+        out.doc["setup"] = toJson(options.setup);
 
     if (result.buffer) {
         SignalAnalyzer::Options opts;
@@ -583,6 +585,21 @@ std::optional<DocumentOptions> documentOptionsFromJson(const json& p, bool defau
             return std::nullopt;
         }
         o.latency = *lat;
+    }
+    if (p.contains("meta") && !p["meta"].is_null()) {
+        if (!p["meta"].is_object()) {
+            error = "meta must be an object of strings, e.g. {\"dut.board\": \"PYNQ-Z1\"}";
+            return std::nullopt;
+        }
+        for (auto it = p["meta"].begin(); it != p["meta"].end(); ++it) {
+            if (!it.value().is_string()) {
+                error = "meta value for '" + it.key() + "' must be a string";
+                return std::nullopt;
+            }
+            if (!cli::isValidSetupEntry(it.key(), it.value().get_ref<const std::string&>(), &error))
+                return std::nullopt;
+            cli::setSetupEntry(o.setup, it.key(), it.value().get<std::string>());
+        }
     }
     if (p.contains("expect") && !p["expect"].is_null()) {
         if (!p["expect"].is_string()) {

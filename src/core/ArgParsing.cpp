@@ -479,4 +479,54 @@ std::vector<ExpectationCheck> evaluateExpectations(const std::vector<Expectation
     return results;
 }
 
+bool isValidSetupEntry(std::string_view key, std::string_view value, std::string* error)
+{
+    auto fail = [&](std::string msg) {
+        if (error)
+            *error = std::move(msg);
+        return false;
+    };
+    if (key.empty() || key.size() > 64)
+        return fail("setup key must be 1..64 characters");
+    for (const char c : key) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' ||
+                        c == '.' || c == '-';
+        if (!ok)
+            return fail("setup key '" + std::string(key) + "' may only contain letters, digits, '_', '.', '-'");
+    }
+    if (value.size() > 512)
+        return fail("setup value for '" + std::string(key) + "' is longer than 512 characters");
+    for (const char c : value) {
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F)
+            return fail("setup value for '" + std::string(key) + "' contains a control character");
+    }
+    return true;
+}
+
+std::optional<std::pair<std::string, std::string>> parseSetupArg(std::string_view text, std::string* error)
+{
+    const auto eq = text.find('=');
+    if (eq == std::string_view::npos) {
+        if (error)
+            *error = "setup entry '" + std::string(text) + "' must look like key=value";
+        return std::nullopt;
+    }
+    const std::string_view key = trim(text.substr(0, eq));
+    const std::string_view value = trim(text.substr(eq + 1));
+    if (!isValidSetupEntry(key, value, error))
+        return std::nullopt;
+    return std::pair<std::string, std::string>{std::string(key), std::string(value)};
+}
+
+void setSetupEntry(SetupInfo& setup, std::string key, std::string value)
+{
+    for (auto& [k, v] : setup) {
+        if (k == key) {
+            v = std::move(value);
+            return;
+        }
+    }
+    setup.emplace_back(std::move(key), std::move(value));
+}
+
 }  // namespace lt::cli

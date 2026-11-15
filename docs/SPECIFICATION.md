@@ -134,6 +134,10 @@ logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 30k \
 logictracer-cli bootloader --port /dev/ttyACM0 --yes
 ```
 
+`--meta key=value` (repeatable; key `[A-Za-z0-9_.-]{1,64}`, single-line value ≤ 512 chars) records
+the test setup under `"setup"` in the result and in the lossless file; `analyze` keeps it and lets
+`--meta` override keys, and AI reports print it as a `Setup:` line.
+
 `--measure-latency` accepts `1..2` or `'1->2'` (quote the arrow form: unquoted `>` is a shell
 redirection), with optional edges: `24:falling..2:rising`.
 
