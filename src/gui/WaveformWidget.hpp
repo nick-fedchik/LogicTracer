@@ -109,6 +109,7 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
     void leaveEvent(QEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
+    bool event(QEvent* event) override;
 
 private:
     [[nodiscard]] QRectF plotRect() const;
@@ -119,6 +120,7 @@ private:
     [[nodiscard]] double xOfSample(double sample) const;
     [[nodiscard]] uint64_t annotationNear(double x) const;
     [[nodiscard]] int cursorNear(double x) const;  // 0 none, 1 = A, 2 = B
+    [[nodiscard]] QString hintAt(const QPointF& pos) const;
     [[nodiscard]] QRectF overviewRect() const;
     [[nodiscard]] double overviewX(double sample) const;
     void jumpFromOverview(double x);

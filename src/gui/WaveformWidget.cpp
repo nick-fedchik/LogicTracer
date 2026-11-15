@@ -8,6 +8,8 @@
 
 #include <QContextMenuEvent>
 #include <QFontMetrics>
+#include <QHelpEvent>
+#include <QToolTip>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -857,6 +859,37 @@ void WaveformWidget::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
     event->ignore();
+}
+
+QString WaveformWidget::hintAt(const QPointF& pos) const
+{
+    if (!hasCapture())
+        return {};
+    if (pos.y() < kOverviewHeight)
+        return tr("Overview of the whole capture.\nClick or drag to jump; the box is the visible window.");
+    if (pos.x() < kGutterWidth)
+        return tr("CHx (GPx) name; green dot = the line toggles in this capture.\nH hides inactive channels.");
+    if (cursorNear(pos.x()))
+        return tr("Drag to move this cursor (hold Alt to bypass edge snap).");
+    if (pos.y() < kPlotTop)
+        return tr("Time ruler relative to the trigger.\nCtrl+wheel zooms around the pointer.");
+    return tr("Ctrl+wheel: zoom at pointer  |  Wheel: scroll  |  Drag: pan\n"
+              "Click: Cursor A  |  Shift+click: Cursor B  |  Drag a cursor line: move it\n"
+              "Right-click: menu  |  Double-click / Home: fit all  |  +/-: zoom  |  H: hide inactive");
+}
+
+bool WaveformWidget::event(QEvent* e)
+{
+    if (e->type() == QEvent::ToolTip) {
+        const auto* help = static_cast<QHelpEvent*>(e);
+        const QString text = hintAt(help->pos());
+        if (text.isEmpty())
+            QToolTip::hideText();
+        else
+            QToolTip::showText(help->globalPos(), text, this);
+        return true;
+    }
+    return QWidget::event(e);
 }
 
 void WaveformWidget::leaveEvent(QEvent*)
