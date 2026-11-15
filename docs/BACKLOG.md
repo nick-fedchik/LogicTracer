@@ -20,8 +20,14 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [x] First push to GitHub; CI (`.github/workflows/build.yml`, Ubuntu 24.04, Qt 6.4) green.
 - [x] Releases: tag `v0.2.0`; GitHub release `v0.3.0` with UF2 images (100 MHz, 200 MHz Turbo) and
       `SHA256SUMS`, built from the tagged sources.
-- [ ] Request a dedicated USB PID for LogicTracer from pid.codes (currently `1209:3020`, which
-      belongs to the upstream LogicAnalyzer); keep `3020` as a discovery fallback.
+- [~] **Deferred (decision 2026-11-15):** dedicated USB PID. The firmware keeps `1209:3020`
+      (pid.codes allocation of the upstream LogicAnalyzer, see `NOTICE.md`). Not needed now:
+      the device is a standard USB CDC class (no vendor driver), and the host identifies
+      firmware by the `LOGICTRACER_…` ID line, not by PID. Revisit if any of these happens:
+      - LogicTracer gets its own hardware (PCB), which makes a pid.codes request well-founded;
+      - a vendor-specific (non-CDC) USB interface/driver is introduced;
+      - the upstream owner or pid.codes objects to the shared PID.
+      When adopted, keep `3020` as a discovery fallback for upstream-firmware boards.
 
 ## B-02. Turbo 200 MS/s (5 ns step)
 - [ ] `scripts/build_firmware.sh` → `logictracer-cli bootloader --yes` → copy the Turbo image from
