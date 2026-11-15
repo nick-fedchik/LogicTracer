@@ -48,7 +48,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [ ] `logictracer-cli diff A B` (histogram shift, Δp99, Δmax, new anomalies, sampling-phase verdict).
 - [ ] Firmware V6_7: edge-sensitive trigger (+2–3 PIO instructions) and re-arm for `loopCount`
       (prevents re-triggering on the same pulse); expose `loopCount + measure` for N = 1000 series.
-- [ ] GUI: automatic anomaly annotations, `F3` / `Shift+F3` navigation; MCP `lt_get_anomalies`.
+- [ ] GUI: automatic anomaly annotations; MCP `lt_get_anomalies`. (`F3` / `Shift+F3` navigation: done.)
+- [x] GUI UX (#1-#4): Armed/Stale capture states, 8-capture history (`Alt+Left`/`Alt+Right`), `capture_id`
+      stale-capture guard, pre-flight window and inline validation, locale-independent numbers, standard
+      mouse model (cursor drag, right-click menu), overview strip, `CHx (GPx) Name` gutter, `H` hides
+      inactive channels.
 - [ ] Compact report for idle captures (merge identical constant channels, skip the ASCII timeline).
 
 ## B-05. Device abstraction and PYNQ-Z1 capture backend

@@ -16,6 +16,7 @@
 #include <QComboBox>
 #include <QFileDialog>
 #include <QFontDatabase>
+#include <QInputDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -287,6 +288,10 @@ void MainWindow::buildMenus()
     view->addAction(tr("Next &anomaly"), QKeySequence(Qt::Key_F3), this, [this] { jumpToAnomaly(+1); });
     view->addAction(tr("Previous a&nomaly"), QKeySequence(Qt::SHIFT | Qt::Key_F3), this, [this] { jumpToAnomaly(-1); });
     view->addSeparator();
+    m_hideInactiveAction = view->addAction(tr("&Hide Inactive Channels"));
+    m_hideInactiveAction->setCheckable(true);
+    m_hideInactiveAction->setShortcut(QKeySequence(Qt::Key_H));
+    connect(m_hideInactiveAction, &QAction::toggled, m_waveform, &WaveformWidget::setHideInactive);
     m_snapAction = view->addAction(tr("&Snap cursors to edges"));
     m_snapAction->setCheckable(true);
     m_snapAction->setChecked(m_waveform->snapToEdges());
@@ -375,6 +380,7 @@ void MainWindow::onOpened(bool ok, const QString& error)
         if (!m_lastBoard.empty() && board != m_lastBoard)
             clearSetupMetadata();  // setup text describes wiring of another board
         m_lastBoard = board;
+        m_waveform->setBoard(board);
         showStatus(tr("Connected: %1").arg(QString::fromStdString(m_device.info().version.raw)));
     } else {
         showStatus(tr("Connection failed: %1").arg(error), true);
@@ -991,22 +997,47 @@ void MainWindow::copyCursorsForAi()
     copyWithMode(lt::CopyMode::CursorsOnly);
 }
 
-void MainWindow::showWaveformContextMenu(const QPoint& globalPos)
+void MainWindow::showWaveformContextMenu(const QPoint& globalPos, std::size_t sample, uint64_t annotationId)
 {
-    QMenu menu(this);
-    menu.addAction(tr("Copy Brief for Chat (MD + ASCII)"), this, &MainWindow::copyBriefForAi);
-    auto* copyAb = menu.addAction(tr("Copy Cursors A..B for AI"), this, &MainWindow::copyCursorsForAi);
-    copyAb->setEnabled(m_waveform->cursorA().has_value() && m_waveform->cursorB().has_value());
-    menu.addAction(tr("Copy Full Report (MD + ASCII + JSON)"), this, [this] { copyWithMode(lt::CopyMode::Full); });
-    menu.addSeparator();
-    auto* zoomAb = menu.addAction(tr("Zoom to Cursors A..B"), m_waveform, &WaveformWidget::zoomToCursors);
-    zoomAb->setEnabled(m_waveform->cursorA().has_value() && m_waveform->cursorB().has_value());
-    menu.addAction(tr("Fit All"), m_waveform, &WaveformWidget::fitAll);
-    menu.addAction(tr("Clear Cursors"), m_waveform, &WaveformWidget::clearCursors);
-    menu.addSeparator();
+    // Non-blocking: the menu lives on until it is dismissed, so the event loop (and tests) keep running.
+    auto* menu = new QMenu(this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->setObjectName("waveformMenu");
+    const bool has = m_waveform->hasCapture();
+    const bool both = m_waveform->cursorA().has_value() && m_waveform->cursorB().has_value();
+
+    auto* a = menu->addAction(tr("Set Cursor A Here"), this, [this, sample] { m_waveform->setCursorA(sample); });
+    auto* b = menu->addAction(tr("Set Cursor B Here"), this, [this, sample] { m_waveform->setCursorB(sample); });
+    a->setEnabled(has);
+    b->setEnabled(has);
+    menu->addAction(tr("Add Annotation Here..."), this, [this, sample] {
+        bool ok = false;
+        const auto text = QInputDialog::getText(this, tr("Add Annotation"), tr("Label:"), QLineEdit::Normal, {}, &ok).trimmed();
+        if (!ok || text.isEmpty())
+            return;
+        lt::Annotation note;
+        note.timeSeconds = m_waveform->capture().timeOfSample(sample);
+        note.label = str(text);
+        note.author = "user";
+        m_waveform->addAnnotation(std::move(note));
+    })->setEnabled(has);
+    if (annotationId != 0)
+        menu->addAction(tr("Delete Annotation #%1").arg(annotationId), this,
+                        [this, annotationId] { m_waveform->removeAnnotation(annotationId); });
+    menu->addSeparator();
+    menu->addAction(tr("Copy Brief for Chat (MD + ASCII)"), this, &MainWindow::copyBriefForAi);
+    menu->addAction(tr("Copy Cursors A..B for AI"), this, &MainWindow::copyCursorsForAi)->setEnabled(both);
+    menu->addAction(tr("Copy Full Report (MD + ASCII + JSON)"), this, [this] { copyWithMode(lt::CopyMode::Full); });
+    menu->addSeparator();
+    menu->addAction(tr("Zoom to Cursors A..B"), m_waveform, &WaveformWidget::zoomToCursors)->setEnabled(both);
+    menu->addAction(tr("Fit All"), m_waveform, &WaveformWidget::fitAll);
+    menu->addAction(tr("Clear Cursors"), m_waveform, &WaveformWidget::clearCursors);
+    menu->addSeparator();
+    if (m_hideInactiveAction)
+        menu->addAction(m_hideInactiveAction);
     if (m_snapAction)
-        menu.addAction(m_snapAction);
-    menu.exec(globalPos);
+        menu->addAction(m_snapAction);
+    menu->popup(globalPos);
 }
 
 bool MainWindow::openCaptureFile(const QString& path, QString* error)

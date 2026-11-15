@@ -12,6 +12,7 @@
 #include <QImage>
 #include <QCheckBox>
 #include <QLabel>
+#include <QMenu>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -146,8 +147,23 @@ private Q_SLOTS:
         QVERIFY(std::abs(static_cast<long>(*w->cursorB()) - 1200) <= 4);
         QCOMPARE(cursors.count(), 2);
         w->clearCursors();
+        QSignalSpy menuRequests(w, &WaveformWidget::contextMenuRequested);
         QTest::mouseClick(w, Qt::RightButton, Qt::NoModifier, plotPoint(*w, 800));
-        QVERIFY(!w->cursorA() && w->cursorB());
+        QVERIFY2(!w->cursorA() && !w->cursorB(), "a plain right click must not place a cursor");
+        QCOMPARE(menuRequests.count(), 1);
+        const auto menu = win.findChild<QMenu*>("waveformMenu");  // opened without blocking the event loop
+        QVERIFY(menu);
+        QVERIFY(menu->isVisible());
+        const auto setA = [&](const QString& t) {
+            for (auto* act : menu->actions())
+                if (act->text() == t)
+                    return act;
+            return static_cast<QAction*>(nullptr);
+        };
+        QVERIFY(setA("Set Cursor B Here"));
+        setA("Set Cursor B Here")->trigger();
+        QVERIFY(w->cursorB() && std::abs(static_cast<long>(*w->cursorB()) - 800) <= 1);
+        menu->close();
 
         const auto fullSpan = w->visibleEnd() - w->visibleFirst();
         QPointF anchor = plotPoint(*w, 2000);
@@ -181,6 +197,86 @@ private Q_SLOTS:
         QTest::mouseRelease(w, Qt::LeftButton, Qt::NoModifier, {kGutter + 200, 60});
         QVERIFY2(w->visibleFirst() > firstBefore, "dragging left must reveal later samples");
         QVERIFY2(!w->cursorA(), "a drag is not a click");
+    }
+
+    void draggingACursorLineMovesItWithoutPanning()
+    {
+        MainWindow win;
+        win.show();
+        win.loadDemo();
+        auto* w = win.waveform();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        const QPointF anchor = plotPoint(*w, 2000);
+        QWheelEvent zoom(anchor, w->mapToGlobal(anchor), {}, {0, 480}, Qt::NoButton, Qt::ControlModifier,
+                         Qt::NoScrollPhase, false);
+        QApplication::sendEvent(w, &zoom);
+        w->setCursorA(w->visibleFirst() + 20);
+        const auto first = w->visibleFirst();
+        const auto before = *w->cursorA();
+
+        const int y = WaveformWidget::kPlotTop + 5;
+        const QPoint onLine(static_cast<int>(kGutter + w->view().xAt(static_cast<double>(before) + 0.5)) + 3, y);
+        QTest::mousePress(w, Qt::LeftButton, Qt::NoModifier, onLine);
+        QTest::mouseMove(w, onLine + QPoint(30, 0));
+        QTest::mouseMove(w, onLine + QPoint(60, 0));
+        QTest::mouseRelease(w, Qt::LeftButton, Qt::AltModifier, onLine + QPoint(60, 0));
+        QCOMPARE(w->visibleFirst(), first);
+        QVERIFY2(*w->cursorA() > before, "the cursor follows the drag");
+        QVERIFY(!w->cursorB());
+    }
+
+    void hideInactiveChannelsKeepsBufferIndices()
+    {
+        MainWindow win;
+        win.show();
+        auto* w = win.waveform();
+        std::vector<uint32_t> samples(300);
+        for (std::size_t i = 0; i < samples.size(); ++i)
+            samples[i] = ((i / 10) & 1u) | 2u;  // CH1 toggles, CH2 is constant high
+        w->setCapture(lt::CaptureBuffer({{0, "A"}, {1, "B"}}, 1'000'000, 0, samples));
+        QVERIFY(w->channelActive(0));
+        QVERIFY(!w->channelActive(1));
+        QCOMPARE(w->visibleChannels().size(), std::size_t{2});
+
+        QAction* hide = nullptr;
+        for (auto* act : win.findChildren<QAction*>())
+            if (act->text() == "&Hide Inactive Channels")
+                hide = act;
+        QVERIFY(hide);
+        QCOMPARE(hide->shortcut(), QKeySequence(Qt::Key_H));
+        hide->trigger();
+        QVERIFY(w->hideInactive());
+        QCOMPARE(w->visibleChannels(), std::vector<std::size_t>{0});
+        QCOMPARE(w->capture().channels().size(), std::size_t{2});  // buffer untouched
+        QVERIFY(win.aiReport().contains("| 2 | B |"));             // reports still cover every channel
+        hide->trigger();
+        QCOMPARE(w->visibleChannels().size(), std::size_t{2});
+
+        // Nothing active: never leave the view empty.
+        hide->trigger();
+        w->setCapture(lt::CaptureBuffer({{0, "A"}}, 1'000'000, 0, std::vector<uint32_t>(50, 1)));
+        QCOMPARE(w->visibleChannels().size(), std::size_t{1});
+    }
+
+    void overviewClickJumpsTheView()
+    {
+        MainWindow win;
+        win.show();
+        win.loadDemo();
+        auto* w = win.waveform();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        const QPointF anchor = plotPoint(*w, 100);
+        QWheelEvent zoom(anchor, w->mapToGlobal(anchor), {}, {0, 480}, Qt::NoButton, Qt::ControlModifier,
+                         Qt::NoScrollPhase, false);
+        QApplication::sendEvent(w, &zoom);
+        const auto span = w->visibleEnd() - w->visibleFirst();
+        QVERIFY(w->visibleFirst() < w->capture().size() / 4);
+
+        const int x = kGutter + (w->width() - kGutter) * 3 / 4;
+        QTest::mouseClick(w, Qt::LeftButton, Qt::NoModifier, QPoint(x, 5));
+        const auto centre = (w->visibleFirst() + w->visibleEnd()) / 2;
+        QVERIFY(std::abs(static_cast<long>(centre) - static_cast<long>(w->capture().size() * 3 / 4)) < static_cast<long>(span));
+        QVERIFY2(!w->cursorA(), "an overview click navigates, it does not place a cursor");
     }
 
     void copyForAiDescribesTheCurrentView()
@@ -580,14 +676,14 @@ private Q_SLOTS:
             QApplication::sendEvent(w, &zoom);
         }
         const QPoint edgePt = plotPoint(*w, 400);
-        const QPoint nearEdge(edgePt.x() + 4, WaveformWidget::kRulerHeight + 10);  // row 0 = CLK (toggles at sample 400)
+        const QPoint nearEdge(edgePt.x() + 4, WaveformWidget::kPlotTop + 10);  // row 0 = CLK (toggles at sample 400)
         QTest::mouseClick(w, Qt::LeftButton, Qt::NoModifier, nearEdge);
         QVERIFY(w->cursorA().has_value());
         QCOMPARE(*w->cursorA(), std::size_t{400});  // snapped onto the exact transition
 
         // Holding Alt bypasses edge snapping when an exact sample between transitions is desired.
         const QPoint midPulse = plotPoint(*w, 405);
-        QTest::mouseClick(w, Qt::LeftButton, Qt::AltModifier, QPoint(midPulse.x(), WaveformWidget::kRulerHeight + 10));
+        QTest::mouseClick(w, Qt::LeftButton, Qt::AltModifier, QPoint(midPulse.x(), WaveformWidget::kPlotTop + 10));
         QVERIFY(*w->cursorA() >= 404 && *w->cursorA() <= 406);  // mid-pulse, not snapped to 400 or 410
 
         // AI grounding bar: note + paired latency + Brief / Cursors A..B modes.

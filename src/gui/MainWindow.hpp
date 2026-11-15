@@ -89,7 +89,7 @@ private Q_SLOTS:
     void onProgress(int stage);
     void onBusyChanged(bool busy);
     void onHover(bool has, double seconds, int channel, int level);
-    void showWaveformContextMenu(const QPoint& globalPos);
+    void showWaveformContextMenu(const QPoint& globalPos, std::size_t sample, uint64_t annotationId);
     void updateReport();
 
 private:
@@ -198,6 +198,7 @@ private:
     QString m_pendingTriggerDescription;
     lt::SetupInfo m_setup;
     QAction* m_copyAction = nullptr;
+    QAction* m_hideInactiveAction = nullptr;
     QAction* m_snapAction = nullptr;
 };
 

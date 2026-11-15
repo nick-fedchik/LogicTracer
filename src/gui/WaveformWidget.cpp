@@ -3,6 +3,7 @@
 
 #include "gui/WaveformWidget.hpp"
 
+#include "core/DeviceProtocol.hpp"
 #include "core/Format.hpp"
 
 #include <QContextMenuEvent>
@@ -60,18 +61,18 @@ WaveformWidget::WaveformWidget(QWidget* parent) : QWidget(parent)
 
 QSize WaveformWidget::minimumSizeHint() const
 {
-    const int rows = std::max<int>(1, static_cast<int>(m_buffer.channels().size()));
-    return {kGutterWidth + 200, kRulerHeight + rows * kMinRowHeight};
+    const int rows = std::max<int>(1, static_cast<int>(m_rows.size()));
+    return {kGutterWidth + 200, kPlotTop + rows * kMinRowHeight};
 }
 
 QRectF WaveformWidget::plotRect() const
 {
-    return QRectF(kGutterWidth, kRulerHeight, std::max(1, width() - kGutterWidth), std::max(1, height() - kRulerHeight));
+    return QRectF(kGutterWidth, kPlotTop, std::max(1, width() - kGutterWidth), std::max(1, height() - kPlotTop));
 }
 
 double WaveformWidget::rowHeight() const
 {
-    const auto n = std::max<std::size_t>(1, m_buffer.channels().size());
+    const auto n = std::max<std::size_t>(1, m_rows.size());
     return std::clamp(plotRect().height() / static_cast<double>(n), static_cast<double>(kMinRowHeight),
                       static_cast<double>(kMaxRowHeight));
 }
@@ -84,6 +85,7 @@ void WaveformWidget::updateViewWidth()
 void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
 {
     m_buffer = buffer;
+    rebuildChannelState();
     m_cursorA.reset();
     m_cursorB.reset();
     m_annotations.clear();  // annotation times are relative to the trigger of the capture they were made on
@@ -95,6 +97,43 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     Q_EMIT captureChanged();
     Q_EMIT viewChanged();
     Q_EMIT cursorsChanged();
+}
+
+void WaveformWidget::setBoard(std::string board)
+{
+    m_board = std::move(board);
+    update();
+}
+
+void WaveformWidget::setHideInactive(bool hide)
+{
+    if (m_hideInactive == hide)
+        return;
+    m_hideInactive = hide;
+    rebuildChannelState();
+    updateGeometry();
+    update();
+}
+
+void WaveformWidget::rebuildChannelState()
+{
+    const std::size_t nCh = m_buffer.channels().size();
+    m_active.assign(nCh, false);
+    const auto& samples = m_buffer.samples();
+    if (!samples.empty()) {
+        uint32_t changed = 0;
+        const uint32_t first = samples.front();
+        for (const uint32_t v : samples)
+            changed |= v ^ first;
+        for (std::size_t ch = 0; ch < nCh && ch < 32; ++ch)
+            m_active[ch] = (changed >> ch) & 1u;
+    }
+    m_rows.clear();
+    const bool any = std::find(m_active.begin(), m_active.end(), true) != m_active.end();
+    for (std::size_t ch = 0; ch < nCh; ++ch)
+        if (!m_hideInactive || !any || m_active[ch])  // never hide everything
+            m_rows.push_back(ch);
+    m_densityWidth = 0;
 }
 
 void WaveformWidget::setDisplayState(DisplayState state, const QString& banner)
@@ -212,6 +251,17 @@ void WaveformWidget::setAnnotations(std::vector<lt::Annotation> annotations)
     Q_EMIT annotationsChanged();
 }
 
+bool WaveformWidget::removeAnnotation(uint64_t id)
+{
+    const auto it = std::find_if(m_annotations.begin(), m_annotations.end(), [id](const auto& a) { return a.id == id; });
+    if (it == m_annotations.end())
+        return false;
+    m_annotations.erase(it);
+    update();
+    Q_EMIT annotationsChanged();
+    return true;
+}
+
 void WaveformWidget::clearAnnotations()
 {
     m_annotations.clear();
@@ -256,9 +306,8 @@ std::size_t WaveformWidget::sampleAtPosition(const QPointF& pos, bool allowSnap)
         sHi = std::min<std::size_t>(m_buffer.size() - 1, raw + kMaxScanRadius);
     }
 
-    const auto clickedCh = pos.y() >= kRulerHeight
-                               ? static_cast<std::size_t>((pos.y() - kRulerHeight) / rowHeight())
-                               : m_buffer.channels().size();
+    const auto clickedRow = rowAtY(pos.y());
+    const auto clickedCh = clickedRow ? m_rows[*clickedRow] : m_buffer.channels().size();
 
     if (clickedCh < m_buffer.channels().size()) {
         double bestPx = kRowSnapPx + 1e-6;
@@ -292,6 +341,125 @@ std::size_t WaveformWidget::sampleAtPosition(const QPointF& pos, bool allowSnap)
     return bestSample.value_or(raw);
 }
 
+std::optional<std::size_t> WaveformWidget::rowAtY(double y) const
+{
+    if (y < kPlotTop)
+        return std::nullopt;
+    const auto r = static_cast<std::size_t>((y - kPlotTop) / rowHeight());
+    return r < m_rows.size() ? std::optional<std::size_t>(r) : std::nullopt;
+}
+
+double WaveformWidget::xOfSample(double sample) const
+{
+    return kGutterWidth + m_view.xAt(sample + 0.5);
+}
+
+uint64_t WaveformWidget::annotationNear(double x) const
+{
+    uint64_t best = 0;
+    double bestDist = kGrabPx + 1e-6;
+    const double rate = m_buffer.frequency();
+    for (const auto& a : m_annotations) {
+        const double sample = static_cast<double>(m_buffer.triggerIndex()) + a.timeSeconds * rate;
+        const double dist = std::abs(kGutterWidth + m_view.xAt(sample) - x);
+        if (dist <= bestDist) {
+            bestDist = dist;
+            best = a.id;
+        }
+    }
+    return best;
+}
+
+int WaveformWidget::cursorNear(double x) const
+{
+    double bestDist = kGrabPx + 1e-6;
+    int best = 0;
+    if (m_cursorA && std::abs(xOfSample(static_cast<double>(*m_cursorA)) - x) <= bestDist) {
+        bestDist = std::abs(xOfSample(static_cast<double>(*m_cursorA)) - x);
+        best = 1;
+    }
+    if (m_cursorB && std::abs(xOfSample(static_cast<double>(*m_cursorB)) - x) <= bestDist)
+        best = 2;
+    return best;
+}
+
+QRectF WaveformWidget::overviewRect() const
+{
+    return QRectF(kGutterWidth, 0, std::max(1, width() - kGutterWidth), kOverviewHeight);
+}
+
+double WaveformWidget::overviewX(double sample) const
+{
+    const auto r = overviewRect();
+    return r.left() + sample / static_cast<double>(std::max<std::size_t>(1, m_buffer.size())) * r.width();
+}
+
+void WaveformWidget::jumpFromOverview(double x)
+{
+    const auto r = overviewRect();
+    const double frac = std::clamp((x - r.left()) / r.width(), 0.0, 1.0);
+    centerOn(static_cast<std::size_t>(frac * static_cast<double>(m_buffer.size() - 1)));
+}
+
+void WaveformWidget::drawOverview(QPainter& p) const
+{
+    const QRectF r = overviewRect();
+    p.fillRect(QRectF(0, 0, width(), kOverviewHeight), QColor(20, 22, 27));
+    p.setPen(kText);
+    p.drawText(QRectF(6, 0, kGutterWidth - 12, kOverviewHeight), Qt::AlignVCenter | Qt::AlignLeft, tr("Overview"));
+
+    // Edge density: transitions per column over the whole capture, on every channel that is drawn.
+    const int cols = static_cast<int>(r.width());
+    if (m_densityWidth != cols) {
+        m_density.assign(static_cast<std::size_t>(cols), 0);
+        uint32_t mask = 0;
+        for (const auto ch : m_rows)
+            if (ch < 32)
+                mask |= 1u << ch;
+        const auto& samples = m_buffer.samples();
+        for (std::size_t i = 1; i < samples.size(); ++i)
+            if ((samples[i] ^ samples[i - 1]) & mask)
+                ++m_density[std::min<std::size_t>(static_cast<std::size_t>(cols) - 1,
+                                                        i * static_cast<std::size_t>(cols) / samples.size())];
+        m_densityWidth = cols;
+    }
+    const uint32_t peak = m_density.empty() ? 0 : *std::max_element(m_density.begin(), m_density.end());
+    if (peak > 0) {
+        p.setPen(QColor(90, 120, 170));
+        for (int c = 0; c < cols; ++c) {
+            const uint32_t d = m_density[static_cast<std::size_t>(c)];
+            if (!d)
+                continue;
+            const double h = std::max(2.0, (kOverviewHeight - 4) * std::sqrt(static_cast<double>(d) / peak));
+            p.drawLine(QPointF(r.left() + c + 0.5, kOverviewHeight - 2), QPointF(r.left() + c + 0.5, kOverviewHeight - 2 - h));
+        }
+    }
+
+    const double trigger = static_cast<double>(m_buffer.triggerIndex());
+    if (trigger < static_cast<double>(m_buffer.size())) {
+        p.setPen(QPen(kTrigger, 1));
+        p.drawLine(QPointF(overviewX(trigger), 0), QPointF(overviewX(trigger), kOverviewHeight));
+        p.drawText(QPointF(overviewX(trigger) + 3, 11), "T");
+    }
+    if (m_cursorA) {
+        p.setPen(QPen(kCursorA, 1.5));
+        p.drawLine(QPointF(overviewX(static_cast<double>(*m_cursorA)), 0), QPointF(overviewX(static_cast<double>(*m_cursorA)), kOverviewHeight));
+    }
+    if (m_cursorB) {
+        p.setPen(QPen(kCursorB, 1.5));
+        p.drawLine(QPointF(overviewX(static_cast<double>(*m_cursorB)), 0), QPointF(overviewX(static_cast<double>(*m_cursorB)), kOverviewHeight));
+    }
+    const double x0 = overviewX(m_view.start());
+    const double x1 = overviewX(m_view.start() + m_view.visibleSamples());
+    const QRectF box(x0, 0.5, std::max(2.0, x1 - x0), kOverviewHeight - 1.0);
+    p.fillRect(box, QColor(255, 255, 255, 36));
+    p.setPen(QPen(QColor(220, 225, 235), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawRect(box);
+    p.setPen(kGrid);
+    p.drawLine(QPointF(0, kOverviewHeight - 0.5), QPointF(width(), kOverviewHeight - 0.5));
+}
+
 // ---------------------------------------------------------------------------------------------
 // Painting
 
@@ -308,14 +476,15 @@ void WaveformWidget::paintEvent(QPaintEvent*)
     }
 
     const double rh = rowHeight();
-    for (std::size_t ch = 0; ch < m_buffer.channels().size(); ++ch) {
-        const QRectF row(0, kRulerHeight + static_cast<double>(ch) * rh, width(), rh);
+    for (std::size_t r = 0; r < m_rows.size(); ++r) {
+        const QRectF row(0, kPlotTop + static_cast<double>(r) * rh, width(), rh);
         if (row.top() >= height())
             break;
-        if (ch % 2)
+        if (r % 2)
             p.fillRect(row, kRowAlt);
-        drawChannel(p, plot, ch, row);
+        drawChannel(p, plot, m_rows[r], row);
     }
+    drawOverview(p);
     drawRuler(p, plot);
     drawAnnotations(p, plot);
     drawCursors(p, plot);
@@ -324,14 +493,14 @@ void WaveformWidget::paintEvent(QPaintEvent*)
         if (m_displayState == DisplayState::Armed) {
             QColor veil = kBackground;
             veil.setAlpha(153);  // the old waveform stays visible at ~40%
-            p.fillRect(QRectF(0, kRulerHeight, width(), height() - kRulerHeight), veil);
+            p.fillRect(QRectF(0, kPlotTop, width(), height() - kPlotTop), veil);
         }
         QFont bold = font();
         bold.setBold(true);
         p.setFont(bold);
         const QString text = m_banner.isEmpty() ? (m_displayState == DisplayState::Armed ? tr("ARMED") : tr("STALE"))
                                                 : m_banner;
-        const QRectF box = QRectF(plot.left() + 8, kRulerHeight + 6, QFontMetrics(bold).horizontalAdvance(text) + 20, 24);
+        const QRectF box = QRectF(plot.left() + 8, kPlotTop + 6, QFontMetrics(bold).horizontalAdvance(text) + 20, 24);
         p.setPen(Qt::NoPen);
         p.setBrush(m_displayState == DisplayState::Armed ? QColor(230, 160, 40) : QColor(200, 70, 60));
         p.drawRoundedRect(box, 4, 4);
@@ -342,12 +511,22 @@ void WaveformWidget::paintEvent(QPaintEvent*)
 
 void WaveformWidget::drawChannel(QPainter& p, const QRectF& plot, std::size_t ch, const QRectF& row) const
 {
-    // Gutter: channel number and name.
-    p.setPen(kText);
-    p.drawText(QRectF(6, row.top(), kGutterWidth - 12, row.height()), Qt::AlignVCenter | Qt::AlignLeft,
-               QFontMetrics(font()).elidedText(
-                   QString("%1  %2").arg(m_buffer.channels()[ch].displayNumber()).arg(QString::fromStdString(m_buffer.channels()[ch].label())),
-                   Qt::ElideRight, kGutterWidth - 12));
+    // Gutter: "CHx (GPx) Name" plus an activity dot (green = the line toggles in this capture).
+    const auto& info = m_buffer.channels()[ch];
+    QString title = QString("CH%1").arg(info.displayNumber());
+    if (const auto gp = lt::gpioForChannel(m_board, info.number))
+        title += QString(" (GP%1)").arg(static_cast<int>(*gp));
+    const QString label = QString::fromStdString(info.label());
+    if (!label.isEmpty() && label != QString("CH%1").arg(info.displayNumber()) &&
+        label != QString::number(info.displayNumber()))
+        title += " " + label;
+    const bool active = channelActive(ch);
+    p.setPen(active ? kText : QColor(130, 135, 145));
+    p.drawText(QRectF(6, row.top(), kGutterWidth - 28, row.height()), Qt::AlignVCenter | Qt::AlignLeft,
+               QFontMetrics(font()).elidedText(title, Qt::ElideRight, kGutterWidth - 28));
+    p.setPen(Qt::NoPen);
+    p.setBrush(active ? QColor(90, 200, 120) : QColor(80, 84, 94));
+    p.drawEllipse(QPointF(kGutterWidth - 12, row.center().y()), 4.0, 4.0);
 
     const double pad = std::min(5.0, row.height() * 0.2);
     const double yHigh = row.top() + pad, yLow = row.bottom() - pad;
@@ -414,9 +593,9 @@ void WaveformWidget::drawChannel(QPainter& p, const QRectF& plot, std::size_t ch
 
 void WaveformWidget::drawRuler(QPainter& p, const QRectF& plot) const
 {
-    p.fillRect(QRectF(0, 0, width(), kRulerHeight), kBackground);
+    p.fillRect(QRectF(0, kOverviewHeight, width(), kRulerHeight), kBackground);
     p.setPen(kGrid);
-    p.drawLine(QPointF(0, kRulerHeight - 0.5), QPointF(width(), kRulerHeight - 0.5));
+    p.drawLine(QPointF(0, kPlotTop - 0.5), QPointF(width(), kPlotTop - 0.5));
 
     const double period = m_buffer.samplePeriodSeconds();
     if (period <= 0)
@@ -427,14 +606,14 @@ void WaveformWidget::drawRuler(QPainter& p, const QRectF& plot) const
     const double t1 = t0 + plot.width() * secondsPerPixel;
 
     p.save();
-    p.setClipRect(QRectF(plot.left(), 0, plot.width(), kRulerHeight));
+    p.setClipRect(QRectF(plot.left(), kOverviewHeight, plot.width(), kRulerHeight));
     for (double t = std::ceil(t0 / step) * step; t <= t1; t += step) {
         const double sample = t / period + static_cast<double>(m_buffer.triggerIndex());
         const double x = plot.left() + m_view.xAt(sample);
         p.setPen(kGrid);
-        p.drawLine(QPointF(x, kRulerHeight - 8), QPointF(x, height()));
+        p.drawLine(QPointF(x, kPlotTop - 8), QPointF(x, height()));
         p.setPen(kText);
-        p.drawText(QPointF(x + 3, kRulerHeight - 12), QString::fromStdString(lt::formatTime(std::abs(t) < step * 1e-6 ? 0.0 : t)));
+        p.drawText(QPointF(x + 3, kPlotTop - 12), QString::fromStdString(lt::formatTime(std::abs(t) < step * 1e-6 ? 0.0 : t)));
     }
     p.restore();
 }
@@ -442,7 +621,7 @@ void WaveformWidget::drawRuler(QPainter& p, const QRectF& plot) const
 void WaveformWidget::drawCursors(QPainter& p, const QRectF& plot) const
 {
     p.save();
-    p.setClipRect(QRectF(plot.left() - 1, 0, plot.width() + 2, height()));
+    p.setClipRect(QRectF(plot.left() - 1, kOverviewHeight, plot.width() + 2, height() - kOverviewHeight));
 
     const auto xOfSample = [&](double s) { return plot.left() + m_view.xAt(s + 0.5); };
 
@@ -451,8 +630,8 @@ void WaveformWidget::drawCursors(QPainter& p, const QRectF& plot) const
     if (trigger >= 0 && trigger < static_cast<double>(m_buffer.size())) {
         const double x = plot.left() + m_view.xAt(trigger);
         p.setPen(QPen(kTrigger, 1, Qt::DashLine));
-        p.drawLine(QPointF(x, kRulerHeight), QPointF(x, height()));
-        p.drawText(QPointF(x + 3, kRulerHeight + 12), "T");
+        p.drawLine(QPointF(x, kPlotTop), QPointF(x, height()));
+        p.drawText(QPointF(x + 3, kPlotTop + 12), "T");
     }
 
     auto line = [&](std::optional<std::size_t> c, const QColor& color, const char* label) {
@@ -460,8 +639,8 @@ void WaveformWidget::drawCursors(QPainter& p, const QRectF& plot) const
             return;
         const double x = xOfSample(static_cast<double>(*c));
         p.setPen(QPen(color, 1.5));
-        p.drawLine(QPointF(x, 0), QPointF(x, height()));
-        p.drawText(QPointF(x + 3, 12), label);
+        p.drawLine(QPointF(x, kOverviewHeight), QPointF(x, height()));
+        p.drawText(QPointF(x + 3, kOverviewHeight + 12), label);
     };
     line(m_cursorA, kCursorA, "A");
     line(m_cursorB, kCursorB, "B");
@@ -473,7 +652,7 @@ void WaveformWidget::drawCursors(QPainter& p, const QRectF& plot) const
         if (dt != 0.0)
             text += QString("  (%1)").arg(QString::fromStdString(lt::formatHz(1.0 / std::abs(dt))));
         // Measurement bar just below the ruler, on a backing so it stays readable over the waveforms.
-        const double y = kRulerHeight + 26;
+        const double y = kPlotTop + 26;
         const QFontMetrics fm(p.font());
         const QRectF label(std::min(xa, xb) + 6, y - fm.ascent() - 3, fm.horizontalAdvance(text) + 8, fm.height() + 4);
         p.fillRect(label, QColor(24, 26, 31, 220));
@@ -489,7 +668,7 @@ void WaveformWidget::drawAnnotations(QPainter& p, const QRectF& plot) const
     if (m_annotations.empty() || m_buffer.size() == 0)
         return;
     p.save();
-    p.setClipRect(QRectF(plot.left(), kRulerHeight, plot.width(), height() - kRulerHeight));
+    p.setClipRect(QRectF(plot.left(), kPlotTop, plot.width(), height() - kPlotTop));
     const QFontMetrics fm(p.font());
     const double rate = m_buffer.frequency();
     for (std::size_t i = 0; i < m_annotations.size(); ++i) {
@@ -503,14 +682,14 @@ void WaveformWidget::drawAnnotations(QPainter& p, const QRectF& plot) const
             const double x2 = plot.left() + m_view.xAt(sample + a.durationSeconds * rate);
             QColor span = color;
             span.setAlpha(40);
-            p.fillRect(QRectF(x, kRulerHeight, std::max(1.0, x2 - x), height() - kRulerHeight), span);
+            p.fillRect(QRectF(x, kPlotTop, std::max(1.0, x2 - x), height() - kPlotTop), span);
         }
         p.setPen(QPen(color, 1.5, Qt::DashDotLine));
-        p.drawLine(QPointF(x, kRulerHeight), QPointF(x, height()));
+        p.drawLine(QPointF(x, kPlotTop), QPointF(x, height()));
 
         // Tags stagger over three lines so neighbouring markers stay readable.
         const QString text = QString("#%1 %2").arg(a.id).arg(QString::fromStdString(a.label));
-        const double ty = kRulerHeight + 44 + static_cast<double>(i % 3) * (fm.height() + 3);
+        const double ty = kPlotTop + 44 + static_cast<double>(i % 3) * (fm.height() + 3);
         const QRectF tag(x + 3, ty, fm.horizontalAdvance(text) + 8, fm.height() + 2);
         QColor back = color.darker(300);
         back.setAlpha(230);
@@ -562,48 +741,82 @@ void WaveformWidget::wheelEvent(QWheelEvent* event)
 void WaveformWidget::mousePressEvent(QMouseEvent* event)
 {
     setFocus();
-    if (event->button() == Qt::RightButton &&
-        ((event->modifiers() & Qt::ControlModifier) || !plotRect().contains(event->position()))) {
-        Q_EMIT contextMenuRequested(event->globalPosition().toPoint());
-        event->accept();
+    const QPointF pos = event->position();
+    if (event->button() == Qt::RightButton) {
+        if (hasCapture()) {
+            Q_EMIT contextMenuRequested(event->globalPosition().toPoint(), sampleAtX(pos.x()),
+                                        plotRect().contains(pos) ? annotationNear(pos.x()) : 0);
+            event->accept();
+        } else {
+            QWidget::mousePressEvent(event);
+        }
         return;
     }
-    if (!hasCapture() || (event->button() != Qt::LeftButton && event->button() != Qt::RightButton)) {
+    if (!hasCapture() || event->button() != Qt::LeftButton) {
         QWidget::mousePressEvent(event);
         return;
     }
     m_pressed = true;
     m_dragging = false;
+    m_dragCursor = 0;
+    m_overviewDrag = false;
     m_pressButton = event->button();
     m_pressModifiers = event->modifiers();
-    m_pressPos = m_lastPos = event->position();
+    m_pressPos = m_lastPos = pos;
+    if (pos.y() < kOverviewHeight && pos.x() >= kGutterWidth) {
+        m_overviewDrag = true;
+        jumpFromOverview(pos.x());
+    } else if (plotRect().contains(pos) && !(event->modifiers() & Qt::ShiftModifier)) {
+        m_dragCursor = cursorNear(pos.x());  // grabbing a cursor line must not pan
+    }
 }
 
 void WaveformWidget::mouseMoveEvent(QMouseEvent* event)
 {
+    const QPointF pos = event->position();
     if (m_pressed && m_pressButton == Qt::LeftButton) {
-        if (!m_dragging && std::abs(event->position().x() - m_pressPos.x()) > kDragThreshold) {
+        if (m_overviewDrag) {
+            jumpFromOverview(pos.x());
+            return;
+        }
+        if (!m_dragging && std::abs(pos.x() - m_pressPos.x()) > kDragThreshold) {
             m_dragging = true;
-            setCursor(Qt::ClosedHandCursor);
+            setCursor(m_dragCursor ? Qt::SizeHorCursor : Qt::ClosedHandCursor);
         }
         if (m_dragging) {
-            m_view.panByPixels(event->position().x() - m_lastPos.x());
-            m_lastPos = event->position();
-            update();
-            Q_EMIT viewChanged();
+            if (m_dragCursor) {
+                const auto s = sampleAtPosition(pos, !(event->modifiers() & Qt::AltModifier));
+                if (m_dragCursor == 1)
+                    setCursorA(s);
+                else
+                    setCursorB(s);
+            } else {
+                m_view.panByPixels(pos.x() - m_lastPos.x());
+                update();
+                Q_EMIT viewChanged();
+            }
+            m_lastPos = pos;
             return;
         }
     }
-    m_lastPos = event->position();
+    m_lastPos = pos;
 
     const QRectF plot = plotRect();
-    if (hasCapture() && plot.contains(event->position())) {
-        const auto s = sampleAtX(event->position().x());
-        const auto ch = static_cast<std::size_t>((event->position().y() - kRulerHeight) / rowHeight());
-        if (ch < m_buffer.channels().size())
-            Q_EMIT hoverChanged(true, m_buffer.timeOfSample(s), m_buffer.channels()[ch].displayNumber(), m_buffer.bit(s, ch));
+    if (!m_pressed) {
+        if (hasCapture() && plot.contains(pos) && cursorNear(pos.x()))
+            setCursor(Qt::SizeHorCursor);
         else
+            unsetCursor();
+    }
+    if (hasCapture() && plot.contains(pos)) {
+        const auto s = sampleAtX(pos.x());
+        m_hoverSample = s;
+        if (const auto row = rowAtY(pos.y())) {
+            const auto ch = m_rows[*row];
+            Q_EMIT hoverChanged(true, m_buffer.timeOfSample(s), m_buffer.channels()[ch].displayNumber(), m_buffer.bit(s, ch));
+        } else {
             Q_EMIT hoverChanged(true, m_buffer.timeOfSample(s), 0, -1);
+        }
     } else {
         Q_EMIT hoverChanged(false, 0.0, 0, -1);
     }
@@ -615,15 +828,16 @@ void WaveformWidget::mouseReleaseEvent(QMouseEvent* event)
         QWidget::mouseReleaseEvent(event);
         return;
     }
-    const bool wasDrag = m_dragging;
-    m_pressed = m_dragging = false;
+    const bool wasDrag = m_dragging || m_overviewDrag;
+    m_pressed = m_dragging = m_overviewDrag = false;
+    m_dragCursor = 0;
     unsetCursor();
     if (wasDrag || !plotRect().contains(event->position()))
         return;
-    // A click places a cursor: left = A, right or Shift+left = B. Hold Alt to bypass edge snap.
+    // A click places a cursor: left = A, Shift+left = B. Hold Alt to bypass edge snap.
     const bool allowSnap = !(m_pressModifiers & Qt::AltModifier);
     const auto s = sampleAtPosition(event->position(), allowSnap);
-    if (m_pressButton == Qt::RightButton || (m_pressModifiers & Qt::ShiftModifier))
+    if (m_pressModifiers & Qt::ShiftModifier)
         setCursorB(s);
     else
         setCursorA(s);
@@ -638,7 +852,7 @@ void WaveformWidget::mouseDoubleClickEvent(QMouseEvent* event)
 void WaveformWidget::contextMenuEvent(QContextMenuEvent* event)
 {
     if (event->reason() == QContextMenuEvent::Keyboard) {
-        Q_EMIT contextMenuRequested(event->globalPos());
+        Q_EMIT contextMenuRequested(event->globalPos(), m_hoverSample, 0);
         event->accept();
         return;
     }

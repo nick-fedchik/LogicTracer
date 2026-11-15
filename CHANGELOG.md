@@ -3,6 +3,25 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- GUI capture lifecycle: Armed (dimmed old waveform + banner) and Stale-on-timeout states, with a
+  line-state diagnosis instead of a copy of the old report; history of the last 8 captures
+  (`Alt+Left` / `Alt+Right`); setup metadata persists between captures; pinnable AI note.
+- `capture_id` in reports, state, CLI and MCP; `annotate --capture-id` / `lt_add_annotation`
+  `capture_id` reject stale targets with `StaleCapture`.
+- Pre-flight `Window | Step | Pre` line, capture warnings and inline field validation.
+- `F3` / `Shift+F3` anomaly navigation; RP2040 input-physics notes in probe and timeout reports.
+- Waveform: overview strip, `CHx (GPx) Name` gutter with activity dot, `H` hides inactive channels,
+  draggable cursors, right-click context menu (Set Cursor A/B, annotations).
+
+### Changed
+- Right click no longer places Cursor B; it opens the context menu. Shift+click sets Cursor B.
+
+### Fixed
+- Locale-dependent decimal commas in warnings (`1,31 ms`).
+
 ## [0.3.0] - 2026-11-15
 
 ### Added
