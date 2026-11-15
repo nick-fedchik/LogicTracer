@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Mykola Fedchyk
+
+#include "gui/Builders.hpp"
+
+#include "core/ArgParsing.hpp"
+#include "core/DeviceProtocol.hpp"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QFrame>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPointer>
+#include <QPushButton>
+#include <QVBoxLayout>
+
+#include <algorithm>
+#include <functional>
+#include <map>
+
+namespace lt::gui {
+
+namespace {
+
+constexpr int kNoChannel = 0;
+
+QFrame* makePopup(QWidget* anchor, const char* objectName)
+{
+    auto* frame = new QFrame(anchor->window(), Qt::Popup);
+    frame->setObjectName(objectName);
+    frame->setAttribute(Qt::WA_DeleteOnClose);
+    frame->setFrameShape(QFrame::StyledPanel);
+    return frame;
+}
+
+void placeBelow(QFrame* frame, QWidget* anchor)
+{
+    frame->adjustSize();
+    frame->move(anchor->mapToGlobal(QPoint(0, anchor->height())));
+    frame->show();
+}
+
+QPushButton* addApply(QVBoxLayout* layout, QFrame* frame, const std::function<void()>& apply)
+{
+    auto* row = new QHBoxLayout;
+    row->addStretch(1);
+    auto* cancel = new QPushButton(QObject::tr("Cancel"));
+    cancel->setObjectName("cancel");
+    auto* ok = new QPushButton(QObject::tr("Apply"));
+    ok->setObjectName("apply");
+    ok->setDefault(true);
+    row->addWidget(cancel);
+    row->addWidget(ok);
+    layout->addLayout(row);
+    QObject::connect(cancel, &QPushButton::clicked, frame, &QWidget::close);
+    QObject::connect(ok, &QPushButton::clicked, frame, [frame, apply] {
+        apply();
+        frame->close();
+    });
+    return ok;
+}
+
+// A channel name goes into "n:name" tokens, so separators and blanks are not allowed.
+QString sanitizeName(QString name)
+{
+    name = name.trimmed();
+    for (const QChar bad : {QChar(','), QChar(':'), QChar(' '), QChar('\t')})
+        name.replace(bad, '_');
+    return name;
+}
+
+QComboBox* edgeCombo(bool falling)
+{
+    auto* c = new QComboBox;
+    c->addItem(QObject::tr("rising"), false);
+    c->addItem(QObject::tr("falling"), true);
+    c->setCurrentIndex(falling ? 1 : 0);
+    return c;
+}
+
+QComboBox* channelCombo(const std::vector<int>& channels, int current, bool allowNone)
+{
+    auto* c = new QComboBox;
+    if (allowNone)
+        c->addItem(QObject::tr("Immediate (none)"), kNoChannel);
+    for (const int ch : channels)
+        c->addItem(QString("CH%1").arg(ch), ch);
+    const int idx = c->findData(current);
+    if (idx >= 0)
+        c->setCurrentIndex(idx);
+    return c;
+}
+
+}  // namespace
+
+QString composeChannelList(const std::vector<std::pair<int, QString>>& input)
+{
+    auto channels = input;
+    std::sort(channels.begin(), channels.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    QStringList tokens;
+    for (std::size_t i = 0; i < channels.size();) {
+        if (!channels[i].second.isEmpty()) {
+            tokens << QString("%1:%2").arg(channels[i].first).arg(channels[i].second);
+            ++i;
+            continue;
+        }
+        std::size_t j = i;
+        while (j + 1 < channels.size() && channels[j + 1].second.isEmpty() &&
+               channels[j + 1].first == channels[j].first + 1)
+            ++j;
+        if (j - i >= 2)
+            tokens << QString("%1-%2").arg(channels[i].first).arg(channels[j].first);
+        else
+            for (std::size_t k = i; k <= j; ++k)
+                tokens << QString::number(channels[k].first);
+        i = j + 1;
+    }
+    return tokens.join(',');
+}
+
+QString composeTrigger(int channel, bool falling)
+{
+    if (channel == kNoChannel)
+        return "none";
+    return QString("%1:%2").arg(channel).arg(falling ? "falling" : "rising");
+}
+
+QString composeLatency(int stimChannel, bool stimFalling, int reactChannel, bool reactFalling)
+{
+    if (!stimFalling && !reactFalling)
+        return QString("%1..%2").arg(stimChannel).arg(reactChannel);
+    return QString("%1:%2..%3:%4")
+        .arg(stimChannel)
+        .arg(stimFalling ? "falling" : "rising")
+        .arg(reactChannel)
+        .arg(reactFalling ? "falling" : "rising");
+}
+
+QFrame* showChannelsBuilder(QWidget* anchor, QLineEdit* target, const std::string& board, int maxChannels)
+{
+    auto* frame = makePopup(anchor, "channelsBuilder");
+    auto* layout = new QVBoxLayout(frame);
+    layout->addWidget(new QLabel(QObject::tr("Pick the channels to capture and optionally name them.")));
+
+    std::map<int, QString> initial;
+    if (const auto parsed = lt::cli::parseChannelList(target->text().toStdString(), maxChannels, nullptr))
+        for (const auto& ch : *parsed)
+            initial[ch.number + 1] = QString::fromStdString(ch.name);
+
+    auto* grid = new QGridLayout;
+    constexpr int kPerRow = 4;
+    std::vector<QCheckBox*> boxes;
+    std::vector<QLineEdit*> names;
+    for (int n = 1; n <= maxChannels; ++n) {
+        QString title = QString("CH%1").arg(n);
+        if (!board.empty())
+            if (const auto gp = lt::gpioForChannel(board, static_cast<uint8_t>(n - 1)))
+                title += QString(" (GP%1)").arg(static_cast<int>(*gp));
+        auto* box = new QCheckBox(title);
+        box->setObjectName(QString("ch%1").arg(n));
+        box->setChecked(initial.count(n) != 0);
+        auto* name = new QLineEdit(initial.count(n) ? initial[n] : QString{});
+        name->setObjectName(QString("name%1").arg(n));
+        name->setPlaceholderText(QObject::tr("name"));
+        name->setMaximumWidth(90);
+        name->setEnabled(box->isChecked());
+        QObject::connect(box, &QCheckBox::toggled, name, &QWidget::setEnabled);
+        const int row = (n - 1) / kPerRow, col = ((n - 1) % kPerRow) * 2;
+        grid->addWidget(box, row, col);
+        grid->addWidget(name, row, col + 1);
+        boxes.push_back(box);
+        names.push_back(name);
+    }
+    layout->addLayout(grid);
+
+    auto* quick = new QHBoxLayout;
+    auto* all = new QPushButton(QObject::tr("All"));
+    auto* none = new QPushButton(QObject::tr("Clear"));
+    quick->addWidget(all);
+    quick->addWidget(none);
+    quick->addStretch(1);
+    layout->addLayout(quick);
+    QObject::connect(all, &QPushButton::clicked, frame, [boxes] {
+        for (auto* b : boxes)
+            b->setChecked(true);
+    });
+    QObject::connect(none, &QPushButton::clicked, frame, [boxes] {
+        for (auto* b : boxes)
+            b->setChecked(false);
+    });
+
+    const QPointer<QLineEdit> field(target);
+    addApply(layout, frame, [field, boxes, names] {
+        std::vector<std::pair<int, QString>> picked;
+        for (std::size_t i = 0; i < boxes.size(); ++i)
+            if (boxes[i]->isChecked())
+                picked.emplace_back(static_cast<int>(i) + 1, sanitizeName(names[i]->text()));
+        if (field && !picked.empty())
+            field->setText(composeChannelList(picked));
+    });
+    placeBelow(frame, anchor);
+    return frame;
+}
+
+QFrame* showTriggerBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels)
+{
+    auto* frame = makePopup(anchor, "triggerBuilder");
+    auto* layout = new QVBoxLayout(frame);
+
+    int channel = kNoChannel;
+    bool falling = false;
+    if (const auto parsed = lt::cli::parseTrigger(target->text().toStdString(), 32, nullptr); parsed && !parsed->none) {
+        channel = parsed->trigger.channel + 1;
+        falling = parsed->trigger.inverted;
+    }
+    auto* row = new QHBoxLayout;
+    auto* ch = channelCombo(channels, channel, true);
+    ch->setObjectName("channel");
+    auto* edge = edgeCombo(falling);
+    edge->setObjectName("edge");
+    edge->setEnabled(ch->currentData().toInt() != kNoChannel);
+    QObject::connect(ch, &QComboBox::currentIndexChanged, edge,
+                     [ch, edge](int) { edge->setEnabled(ch->currentData().toInt() != kNoChannel); });
+    row->addWidget(new QLabel(QObject::tr("Trigger on")));
+    row->addWidget(ch);
+    row->addWidget(edge);
+    layout->addLayout(row);
+    auto* note = new QLabel(QObject::tr("RP2040 firmware trigger is level sensitive: if the line is already at the "
+                                        "target level when armed, it fires immediately."));
+    note->setWordWrap(true);
+    note->setMaximumWidth(360);
+    layout->addWidget(note);
+
+    const QPointer<QLineEdit> field(target);
+    addApply(layout, frame, [field, ch, edge] {
+        if (field)
+            field->setText(composeTrigger(ch->currentData().toInt(), edge->currentData().toBool()));
+    });
+    placeBelow(frame, anchor);
+    return frame;
+}
+
+QFrame* showLatencyBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels)
+{
+    auto* frame = makePopup(anchor, "latencyBuilder");
+    auto* layout = new QVBoxLayout(frame);
+
+    int stim = channels.empty() ? 1 : channels.front();
+    int react = channels.size() > 1 ? channels[1] : stim;
+    bool stimFalling = false, reactFalling = false;
+    if (const auto parsed = lt::cli::parseLatencyArg(target->text().toStdString(), 32, nullptr)) {
+        stim = parsed->stimChannel + 1;
+        react = parsed->reactChannel + 1;
+        stimFalling = parsed->stimFalling;
+        reactFalling = parsed->reactFalling;
+    }
+    auto* grid = new QGridLayout;
+    auto* stimCh = channelCombo(channels, stim, false);
+    stimCh->setObjectName("stimChannel");
+    auto* stimEdge = edgeCombo(stimFalling);
+    stimEdge->setObjectName("stimEdge");
+    auto* reactCh = channelCombo(channels, react, false);
+    reactCh->setObjectName("reactChannel");
+    auto* reactEdge = edgeCombo(reactFalling);
+    reactEdge->setObjectName("reactEdge");
+    grid->addWidget(new QLabel(QObject::tr("Stimulus")), 0, 0);
+    grid->addWidget(stimCh, 0, 1);
+    grid->addWidget(stimEdge, 0, 2);
+    grid->addWidget(new QLabel(QObject::tr("Reaction")), 1, 0);
+    grid->addWidget(reactCh, 1, 1);
+    grid->addWidget(reactEdge, 1, 2);
+    layout->addLayout(grid);
+
+    const QPointer<QLineEdit> field(target);
+    auto* ok = addApply(layout, frame, [field, stimCh, stimEdge, reactCh, reactEdge] {
+        if (field)
+            field->setText(composeLatency(stimCh->currentData().toInt(), stimEdge->currentData().toBool(),
+                                          reactCh->currentData().toInt(), reactEdge->currentData().toBool()));
+    });
+    ok->setEnabled(!channels.empty());
+    placeBelow(frame, anchor);
+    return frame;
+}
+
+}  // namespace lt::gui

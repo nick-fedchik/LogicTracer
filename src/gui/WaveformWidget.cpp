@@ -10,7 +10,11 @@
 #include <QFontMetrics>
 #include <QHelpEvent>
 #include <QToolTip>
+#include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -59,6 +63,43 @@ WaveformWidget::WaveformWidget(QWidget* parent) : QWidget(parent)
     setFocusPolicy(Qt::StrongFocus);
     setMinimumWidth(kGutterWidth + 200);
     setAutoFillBackground(false);
+
+    // Guided empty state: what to do first, with one-click access to the demo and to saved captures.
+    m_emptyCard = new QWidget(this);
+    m_emptyCard->setObjectName("emptyCard");
+    auto* card = new QVBoxLayout(m_emptyCard);
+    auto* title = new QLabel(tr("No capture yet"));
+    QFont big = title->font();
+    big.setBold(true);
+    big.setPointSizeF(big.pointSizeF() * 1.3);
+    title->setFont(big);
+    title->setAlignment(Qt::AlignCenter);
+    auto* steps = new QLabel(tr("1. Connect  \u2192  2. Probe lines  \u2192  3. Set Trigger  \u2192  4. Capture"));
+    steps->setAlignment(Qt::AlignCenter);
+    auto* demo = new QPushButton(tr("Load Demo Capture"));
+    demo->setObjectName("demoButton");
+    demo->setToolTip(tr("Explore the viewer with a synthetic capture (Ctrl+D); no hardware needed"));
+    auto* open = new QPushButton(tr("Open Capture..."));
+    open->setObjectName("openButton");
+    auto* buttons = new QHBoxLayout;
+    buttons->addStretch(1);
+    buttons->addWidget(demo);
+    buttons->addWidget(open);
+    buttons->addStretch(1);
+    card->addWidget(title);
+    card->addWidget(steps);
+    card->addLayout(buttons);
+    m_emptyCard->setStyleSheet("QLabel { color: #cdd2dc; }");
+    connect(demo, &QPushButton::clicked, this, &WaveformWidget::demoRequested);
+    connect(open, &QPushButton::clicked, this, &WaveformWidget::openRequested);
+    updateEmptyCard();
+}
+
+void WaveformWidget::updateEmptyCard()
+{
+    m_emptyCard->setVisible(!hasCapture());
+    m_emptyCard->adjustSize();
+    m_emptyCard->move((width() - m_emptyCard->width()) / 2, (height() - m_emptyCard->height()) / 2);
 }
 
 QSize WaveformWidget::minimumSizeHint() const
@@ -88,6 +129,7 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
 {
     m_buffer = buffer;
     rebuildChannelState();
+    updateEmptyCard();
     m_cursorA.reset();
     m_cursorB.reset();
     m_annotations.clear();  // annotation times are relative to the trigger of the capture they were made on
@@ -472,9 +514,7 @@ void WaveformWidget::paintEvent(QPaintEvent*)
     const QRectF plot = plotRect();
 
     if (!hasCapture()) {
-        p.setPen(kText);
-        p.drawText(rect(), Qt::AlignCenter, tr("No capture.\nConnect a device and press Capture."));
-        return;
+        return;  // the empty-state card (child widget) explains what to do
     }
 
     const double rh = rowHeight();
@@ -708,6 +748,7 @@ void WaveformWidget::drawAnnotations(QPainter& p, const QRectF& plot) const
 void WaveformWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    updateEmptyCard();
     const bool wasFit = m_view.isFit();
     const double firstSample = m_view.start(), visible = m_view.visibleSamples();
     updateViewWidth();

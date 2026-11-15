@@ -3,6 +3,7 @@
 
 # Widgets live in a library so headless GUI tests can drive MainWindow directly.
 add_library(logictracer_gui STATIC
+    Builders.cpp Builders.hpp
     MainWindow.cpp MainWindow.hpp
     ViewTransform.hpp
     WaveformWidget.cpp WaveformWidget.hpp

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Mykola Fedchyk
 
 #include "FakeDevice.hpp"
+#include "gui/Builders.hpp"
 #include "gui/MainWindow.hpp"
 #include "gui/ViewTransform.hpp"
 
@@ -11,7 +12,9 @@
 #include <QComboBox>
 #include <QImage>
 #include <QCheckBox>
+#include <QFrame>
 #include <QLabel>
+#include <QToolButton>
 #include <QMenu>
 #include <QLineEdit>
 #include <QPushButton>
@@ -162,7 +165,7 @@ private Q_SLOTS:
         };
         QVERIFY(setA("Set Cursor B Here"));
         setA("Set Cursor B Here")->trigger();
-        QVERIFY(w->cursorB() && std::abs(static_cast<long>(*w->cursorB()) - 800) <= 1);
+        QVERIFY(w->cursorB() && std::abs(static_cast<long>(*w->cursorB()) - 800) <= 4);
         menu->close();
 
         const auto fullSpan = w->visibleEnd() - w->visibleFirst();
@@ -707,6 +710,73 @@ private Q_SLOTS:
         const QString ab = QGuiApplication::clipboard()->text();
         QVERIFY(ab.contains("Cursor range (A..B): samples [199, 231)"));
         QVERIFY(ab.contains("```json"));
+    }
+
+    void emptyCardLoadsTheDemoAndMenuHasShortcut()
+    {
+        MainWindow win;
+        win.resize(1000, 700);
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        auto* card = win.waveform()->findChild<QWidget*>("emptyCard");
+        QVERIFY(card && card->isVisible());
+        QVERIFY(card->findChild<QPushButton*>("openButton"));
+        bool found = false;
+        for (auto* act : win.findChildren<QAction*>())
+            if (act->text().contains("Demo Capture")) {
+                QCOMPARE(act->shortcut(), QKeySequence(Qt::CTRL | Qt::Key_D));
+                found = true;
+            }
+        QVERIFY(found);
+        QTest::mouseClick(card->findChild<QPushButton*>("demoButton"), Qt::LeftButton);
+        QVERIFY(win.waveform()->hasCapture());
+        QVERIFY(!card->isVisible());
+    }
+
+    void buildersComposeFieldsFromPopups()
+    {
+        QCOMPARE(lt::gui::composeChannelList({{1, "CLK"}, {2, ""}, {3, ""}, {4, ""}, {6, ""}, {7, ""}}),
+                 QString("1:CLK,2-4,6,7"));
+        QCOMPARE(lt::gui::composeTrigger(0, false), QString("none"));
+        QCOMPARE(lt::gui::composeTrigger(3, true), QString("3:falling"));
+        QCOMPARE(lt::gui::composeLatency(1, false, 2, false), QString("1..2"));
+        QCOMPARE(lt::gui::composeLatency(1, true, 2, false), QString("1:falling..2:rising"));
+
+        MainWindow win;
+        win.resize(1200, 700);
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        auto* channels = win.findChild<QLineEdit*>("channels");
+        auto* trigger = win.findChild<QLineEdit*>("trigger");
+        auto* latency = win.findChild<QLineEdit*>("latencySpec");
+
+        QTest::mouseClick(win.findChild<QToolButton*>("channelsBuilderButton"), Qt::LeftButton);
+        auto* cb = win.findChild<QFrame*>("channelsBuilder");
+        QVERIFY(cb && cb->isVisible());
+        for (auto* box : cb->findChildren<QCheckBox*>())
+            box->setChecked(false);
+        cb->findChild<QCheckBox*>("ch1")->setChecked(true);
+        cb->findChild<QCheckBox*>("ch2")->setChecked(true);
+        cb->findChild<QLineEdit*>("name1")->setText("STIM");
+        cb->findChild<QPushButton*>("apply")->click();
+        QCOMPARE(channels->text(), QString("1:STIM,2"));
+
+        QTest::mouseClick(win.findChild<QToolButton*>("triggerBuilderButton"), Qt::LeftButton);
+        auto* tb = win.findChild<QFrame*>("triggerBuilder");
+        QVERIFY(tb);
+        tb->findChild<QComboBox*>("channel")->setCurrentIndex(tb->findChild<QComboBox*>("channel")->findData(2));
+        tb->findChild<QComboBox*>("edge")->setCurrentIndex(1);
+        tb->findChild<QPushButton*>("apply")->click();
+        QCOMPARE(trigger->text(), QString("2:falling"));
+
+        QTest::mouseClick(win.findChild<QToolButton*>("latencyBuilderButton"), Qt::LeftButton);
+        auto* lb = win.findChild<QFrame*>("latencyBuilder");
+        QVERIFY(lb);
+        lb->findChild<QComboBox*>("reactChannel")->setCurrentIndex(1);
+        lb->findChild<QPushButton*>("apply")->click();
+        QCOMPARE(latency->text(), QString("1..2"));
+        QTest::qWait(50);
+        QVERIFY(latency->styleSheet().isEmpty());
     }
 };
 

@@ -11,6 +11,7 @@
 #include <QMainWindow>
 
 #include <deque>
+#include <functional>
 
 class QCheckBox;
 class QComboBox;
@@ -141,6 +142,8 @@ private:
     void buildUi();
     void buildMenus();
     void updateControls();
+    QWidget* withBuilder(QLineEdit* field, const char* buttonName, const std::function<void()>& open);
+    std::vector<int> builderChannels() const;
     void showStatus(const QString& text, bool error = false);
     [[nodiscard]] lt::ReportOptions buildReportOptions(std::optional<lt::CopyMode> modeOverride = std::nullopt) const;
     void copyWithMode(lt::CopyMode mode);

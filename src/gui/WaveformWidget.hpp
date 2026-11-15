@@ -92,6 +92,9 @@ Q_SIGNALS:
     void captureChanged();
     void cursorsChanged();
     void annotationsChanged();
+    // Buttons of the empty-state card.
+    void demoRequested();
+    void openRequested();
     // Right click (or the menu key): the sample under the pointer and the id of an annotation within
     // kGrabPx of it (0 = none).
     void contextMenuRequested(const QPoint& globalPos, std::size_t sample, uint64_t annotationId);
@@ -125,6 +128,7 @@ private:
     [[nodiscard]] double overviewX(double sample) const;
     void jumpFromOverview(double x);
     void rebuildChannelState();
+    void updateEmptyCard();
     void drawOverview(QPainter& p) const;
     void drawRuler(QPainter& p, const QRectF& plot) const;
     void drawChannel(QPainter& p, const QRectF& plot, std::size_t channel, const QRectF& row) const;
@@ -140,6 +144,7 @@ private:
     DisplayState m_displayState = DisplayState::Live;
     QString m_banner;
 
+    QWidget* m_emptyCard = nullptr;
     std::string m_board;
     bool m_hideInactive = false;
     std::vector<bool> m_active;           // per channel: has at least one transition

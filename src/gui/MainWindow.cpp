@@ -5,6 +5,7 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Exporters.hpp"
+#include "gui/Builders.hpp"
 #include "services/Operations.hpp"
 #include "core/Format.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -19,6 +20,7 @@
 #include <QInputDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QToolButton>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -32,6 +34,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cmath>
 #include <limits>
@@ -74,6 +77,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_waveform, &WaveformWidget::cursorsChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_waveform, &WaveformWidget::annotationsChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_waveform, &WaveformWidget::hoverChanged, this, &MainWindow::onHover);
+    connect(m_waveform, &WaveformWidget::demoRequested, this, &MainWindow::loadDemo);
+    connect(m_waveform, &WaveformWidget::openRequested, this, &MainWindow::openCapture);
     connect(m_waveform, &WaveformWidget::contextMenuRequested, this, &MainWindow::showWaveformContextMenu);
     connect(m_aiNote, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_latencySpec, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
@@ -133,13 +138,19 @@ void MainWindow::buildUi()
     grid->addWidget(m_refresh, 0, col++);
     grid->addWidget(m_connect, 0, col++);
     grid->addWidget(new QLabel(tr("Channels")), 0, col++);
-    grid->addWidget(m_channels, 0, col++);
+    grid->addWidget(withBuilder(m_channels, "channelsBuilderButton", [this] {
+        const int maxCh = m_device.isConnected() ? std::min<int>(kMaxProtocolChannels, m_device.info().channels)
+                                                 : static_cast<int>(kMaxProtocolChannels);
+        lt::gui::showChannelsBuilder(m_channels, m_channels, m_lastBoard, maxCh);
+    }), 0, col++);
     grid->addWidget(new QLabel(tr("Rate")), 0, col++);
     grid->addWidget(m_rate, 0, col++);
     grid->addWidget(new QLabel(tr("Samples")), 0, col++);
     grid->addWidget(m_samples, 0, col++);
     grid->addWidget(new QLabel(tr("Trigger")), 0, col++);
-    grid->addWidget(m_trigger, 0, col++);
+    grid->addWidget(withBuilder(m_trigger, "triggerBuilderButton", [this] {
+        lt::gui::showTriggerBuilder(m_trigger, m_trigger, builderChannels());
+    }), 0, col++);
     grid->addWidget(new QLabel(tr("Timeout")), 0, col++);
     grid->addWidget(m_timeout, 0, col++);
     grid->addWidget(m_capture, 0, col++);
@@ -212,7 +223,9 @@ void MainWindow::buildUi()
     aiBar->addWidget(new QLabel(tr("Ask AI:")));
     aiBar->addWidget(m_aiNote, 1);
     aiBar->addWidget(m_notePin);
-    aiBar->addWidget(m_latencySpec);
+    aiBar->addWidget(withBuilder(m_latencySpec, "latencyBuilderButton", [this] {
+        lt::gui::showLatencyBuilder(m_latencySpec, m_latencySpec, builderChannels());
+    }));
     aiBar->addWidget(new QLabel(tr("Mode:")));
     aiBar->addWidget(m_copyMode);
     aiBar->addWidget(m_reportSize);
@@ -253,6 +266,7 @@ void MainWindow::buildMenus()
 {
     auto* file = menuBar()->addMenu(tr("&File"));
     file->addAction(tr("&Open Capture..."), QKeySequence::Open, this, &MainWindow::openCapture);
+    file->addAction(tr("Load &Demo Capture"), QKeySequence(Qt::CTRL | Qt::Key_D), this, &MainWindow::loadDemo);
     file->addSeparator();
     auto* vcd = file->addAction(tr("Save &VCD..."), this, &MainWindow::saveVcd);
     vcd->setToolTip(tr("Waveform for GTKWave / PulseView"));
@@ -304,6 +318,33 @@ void MainWindow::showStatus(const QString& text, bool error)
 {
     m_status->setText(text);
     m_status->setStyleSheet(error ? "color: #d04040;" : QString());
+}
+
+QWidget* MainWindow::withBuilder(QLineEdit* field, const char* buttonName, const std::function<void()>& open)
+{
+    auto* box = new QWidget;
+    auto* row = new QHBoxLayout(box);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(2);
+    auto* button = new QToolButton;
+    button->setObjectName(buttonName);
+    button->setText(QStringLiteral("\u2026"));
+    button->setToolTip(tr("Build this value visually (you can still type it)"));
+    row->addWidget(field, 1);
+    row->addWidget(button);
+    connect(button, &QToolButton::clicked, this, open);
+    return box;
+}
+
+std::vector<int> MainWindow::builderChannels() const
+{
+    std::vector<int> out;
+    const int maxCh = m_device.isConnected() ? std::min<int>(kMaxProtocolChannels, m_device.info().channels)
+                                             : static_cast<int>(kMaxProtocolChannels);
+    if (const auto parsed = lt::cli::parseChannelList(m_channels->text().toStdString(), maxCh, nullptr))
+        for (const auto& ch : *parsed)
+            out.push_back(ch.number + 1);
+    return out;
 }
 
 void MainWindow::updateControls()
