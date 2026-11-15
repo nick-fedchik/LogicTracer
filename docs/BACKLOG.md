@@ -17,9 +17,9 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 
 - [x] Clean migration from the prototype.
 - [x] Regression against the prototype on recorded traces (numbers, AI reports, VCD, CSV).
-- [ ] First push to GitHub; check CI (`.github/workflows/build.yml`, Ubuntu 24.04, Qt 6.4).
-- [ ] Release `v0.2.0`: tag + `LogicTracer-firmware-0.2.0-*.uf2` images, linking the corresponding
-      source (GPL requirement for binaries).
+- [x] First push to GitHub; CI (`.github/workflows/build.yml`, Ubuntu 24.04, Qt 6.4) green.
+- [x] Releases: tag `v0.2.0`; GitHub release `v0.3.0` with UF2 images (100 MHz, 200 MHz Turbo) and
+      `SHA256SUMS`, built from the tagged sources.
 - [ ] Request a dedicated USB PID for LogicTracer from pid.codes (currently `1209:3020`, which
       belongs to the upstream LogicAnalyzer); keep `3020` as a discovery fallback.
 
