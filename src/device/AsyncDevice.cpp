@@ -26,7 +26,8 @@ public:
 
     std::optional<std::chrono::milliseconds> pollLatencyOverride;
 
-public Q_SLOTS:
+    // Run on the worker thread; AsyncDevice queues them as type-safe functors (no string-based
+    // invokeMethod, so arguments need no metatype registration).
     void doOpen(const QString& port, int handshakeMs)
     {
         DeviceInfo info;
@@ -96,7 +97,6 @@ AsyncDevice::AsyncDevice(QObject* parent) : QObject(parent)
     qRegisterMetaType<lt::CaptureConfig>();
     qRegisterMetaType<lt::CaptureResult>();
     qRegisterMetaType<lt::ProbeResult>();
-    qRegisterMetaType<std::vector<lt::ChannelInfo>>();
 
     m_thread = new QThread(this);
     m_thread->setObjectName("logictracer-io");
@@ -135,8 +135,9 @@ bool AsyncDevice::open(const QString& port, int handshakeTimeoutMs)
         return false;
     setBusy(true);
     m_worker->pollLatencyOverride = m_pollLatencyOverride;
-    QMetaObject::invokeMethod(m_worker, "doOpen", Qt::QueuedConnection, Q_ARG(QString, port),
-                              Q_ARG(int, handshakeTimeoutMs));
+    QMetaObject::invokeMethod(
+        m_worker, [worker = m_worker, port, handshakeTimeoutMs] { worker->doOpen(port, handshakeTimeoutMs); },
+        Qt::QueuedConnection);
     return true;
 }
 
@@ -152,7 +153,8 @@ bool AsyncDevice::startCapture(const lt::CaptureConfig& config)
     if (m_busy || !m_connected)
         return false;
     setBusy(true);
-    QMetaObject::invokeMethod(m_worker, "doCapture", Qt::QueuedConnection, Q_ARG(lt::CaptureConfig, config));
+    QMetaObject::invokeMethod(
+        m_worker, [worker = m_worker, config] { worker->doCapture(config); }, Qt::QueuedConnection);
     return true;
 }
 
@@ -161,9 +163,9 @@ bool AsyncDevice::startProbe(const std::vector<lt::ChannelInfo>& channels, int w
     if (m_busy || !m_connected)
         return false;
     setBusy(true);
-    QMetaObject::invokeMethod(m_worker, "doProbe", Qt::QueuedConnection,
-                              Q_ARG(std::vector<lt::ChannelInfo>, channels), Q_ARG(int, windowMs),
-                              Q_ARG(uint32_t, frequency));
+    QMetaObject::invokeMethod(
+        m_worker, [worker = m_worker, channels, windowMs, frequency] { worker->doProbe(channels, windowMs, frequency); },
+        Qt::QueuedConnection);
     return true;
 }
 
