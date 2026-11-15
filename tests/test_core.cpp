@@ -12,7 +12,10 @@
 #include <QByteArray>
 #include <QTest>
 
+#include "core/Format.hpp"
+
 #include <cstring>
+#include <locale>
 #include <sstream>
 
 namespace {
@@ -879,6 +882,52 @@ private Q_SLOTS:
         QVERIFY(md.find("Check 4.7k resistor on Pin 34") != std::string::npos);
         QVERIFY(md.find("| 24 | GP28 | DO1 | **HIGH** | 100.0% | 0 | - | Stable HIGH (pull-up OK) |") !=
                 std::string::npos);
+        QVERIFY(md.find("weak internal pull-down") != std::string::npos);
+    }
+
+    void numbersStayLocaleIndependent()
+    {
+        struct CommaPunct : std::numpunct<char> {
+            char do_decimal_point() const override { return ','; }
+        };
+        const std::locale previous = std::locale::global(std::locale(std::locale::classic(), new CommaPunct));
+        const std::string n = lt::formatNumber(1.31);
+        const std::string t = lt::formatTime(0.00131);
+        std::locale::global(previous);
+        QCOMPARE(QString::fromStdString(n), QString("1.31"));
+        QVERIFY(t.find(',') == std::string::npos);
+    }
+
+    void timeoutReportDescribesLinesNotTheOldCapture()
+    {
+        const lt::CaptureBuffer dump({{0, ""}}, 1'000'000, 0, std::vector<uint32_t>(16, 0));
+        const auto md = lt::timeoutForAi(dump, "Trigger timeout", "CH1 rising", "PICO", "wiring check", 7);
+        QVERIFY(md.find("TIMEOUT") != std::string::npos);
+        QVERIFY(md.find("previous capture #7") != std::string::npos);
+        QVERIFY(md.find("GP2") != std::string::npos);
+        QVERIFY(md.find("weak internal pull-down") != std::string::npos);
+        QVERIFY(md.find("wiring check") != std::string::npos);
+    }
+
+    void reportCarriesCaptureIdWarningsAndAnomalies()
+    {
+        std::vector<uint32_t> samples(400, 0);
+        for (std::size_t i = 100; i < 110; ++i)
+            samples[i] = 1;
+        const lt::CaptureBuffer b({{0, ""}}, 1'000'000, 50, samples);
+        lt::ReportOptions o;
+        o.captureId = 42;
+        o.warnings = {"window shortened"};
+        o.banner = "ARMED";
+        const auto md = lt::markdownSummary(b, o);
+        QVERIFY(md.find("Capture ID: 42") != std::string::npos);
+        QVERIFY(md.find("Capture warning: window shortened") != std::string::npos);
+        QVERIFY(md.find("**ARMED**") != std::string::npos);
+        const auto json = lt::jsonMetadata(b, o);
+        QCOMPARE(json["capture_id"].get<int>(), 42);
+        const auto a = lt::findAnomalies(b, o);
+        for (std::size_t i = 1; i < a.size(); ++i)
+            QVERIFY(a[i - 1].severity >= a[i].severity);
     }
 };
 

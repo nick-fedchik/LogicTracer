@@ -10,6 +10,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QImage>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -259,6 +260,45 @@ private Q_SLOTS:
 
         QTest::mouseClick(connect, Qt::LeftButton);  // disconnect
         QTRY_VERIFY(!win.device().isConnected());
+    }
+
+    void preflightShowsWindowAndValidatesFieldsInline()
+    {
+        fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0)
+                d.send(fake::idReply("V6_5", true));
+        });
+        MainWindow win;
+        win.show();
+        win.device().setPollLatency(50ms);
+        win.setPortText(QString::fromStdString(dev.port()));
+        QTest::mouseClick(button(win, "Connect"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+
+        auto* preflight = win.findChild<QLabel*>("preflight");
+        QVERIFY(preflight);
+        field(win, "rate")->setText("1M");
+        field(win, "samples")->setText("1000");
+        field(win, "trigger")->setText("1:rising");
+        QVERIFY(preflight->text().contains("Window 1 ms"));
+        QVERIFY(preflight->text().contains("Step 1 us"));
+        QVERIFY(preflight->text().contains("Pre 100"));
+        QVERIFY(field(win, "rate")->styleSheet().isEmpty());
+
+        field(win, "rate")->setText("fast");
+        QVERIFY(!field(win, "rate")->styleSheet().isEmpty());
+        QVERIFY(preflight->text().contains("fix"));
+        field(win, "rate")->setText("1M");
+        field(win, "channels")->setText("99");
+        QVERIFY(!field(win, "channels")->styleSheet().isEmpty());
+        field(win, "channels")->setText("1,2");
+
+        // A latency pair naming a channel that is not on screen is flagged.
+        win.loadDemo();
+        field(win, "latencySpec")->setText("1..9");
+        QVERIFY(!field(win, "latencySpec")->styleSheet().isEmpty());
+        field(win, "latencySpec")->setText("1..2");
+        QVERIFY(field(win, "latencySpec")->styleSheet().isEmpty());
     }
 
     void failedCaptureKeepsOldTriggerAndProbeIgnoresSamples()

@@ -92,6 +92,7 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     m_view.fitAll();
     updateGeometry();
     update();
+    Q_EMIT captureChanged();
     Q_EMIT viewChanged();
     Q_EMIT cursorsChanged();
 }

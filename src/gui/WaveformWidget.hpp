@@ -61,6 +61,7 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     void viewChanged();
+    void captureChanged();
     void cursorsChanged();
     void annotationsChanged();
     void contextMenuRequested(const QPoint& globalPos);

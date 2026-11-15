@@ -75,9 +75,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_aiNote, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_latencySpec, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_copyMode, &QComboBox::currentIndexChanged, this, [this](int) { updateReport(); });
+    for (auto* field : {m_channels, m_rate, m_samples, m_trigger, m_latencySpec})
+        connect(field, &QLineEdit::textChanged, this, [this] { updatePreflight(); });
+    connect(m_timeout, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
+    connect(&m_device, &lt::AsyncDevice::opened, this, [this](bool, const QString&) { updatePreflight(); });
+    connect(m_waveform, &WaveformWidget::captureChanged, this, [this] { updatePreflight(); });
 
     refreshPorts();
     updateControls();
+    updatePreflight();
     updateReport();
     showStatus(tr("Not connected"));
     resize(1180, 760);
@@ -142,6 +148,11 @@ void MainWindow::buildUi()
 
     m_deviceInfo = new QLabel;
     root->addWidget(m_deviceInfo);
+    m_preflight = new QLabel;
+    m_preflight->setObjectName("preflight");
+    m_preflight->setWordWrap(true);
+    m_preflight->setTextFormat(Qt::PlainText);
+    root->addWidget(m_preflight);
 
     // Waveform on top, AI grounding bar + live AI report preview below it.
     auto* splitter = new QSplitter(Qt::Vertical);
@@ -365,7 +376,8 @@ bool MainWindow::buildSpec(lt::CaptureRequestSpec& spec, QString& error) const
     return true;
 }
 
-bool MainWindow::buildConfig(lt::CaptureConfig& config, QString& triggerText, QString& error) const
+bool MainWindow::buildConfig(lt::CaptureConfig& config, QString& triggerText, QString& error,
+                             std::vector<std::string>* warningsOut) const
 {
     lt::CaptureRequestSpec spec;
     if (!buildSpec(spec, error))
@@ -373,6 +385,8 @@ bool MainWindow::buildConfig(lt::CaptureConfig& config, QString& triggerText, QS
     std::vector<std::string> warnings;
     std::string err;
     const auto cfg = lt::buildCaptureConfig(m_device.info(), spec, warnings, err);
+    if (warningsOut)
+        *warningsOut = std::move(warnings);
     if (!cfg) {
         error = QString::fromStdString(err);
         return false;
@@ -387,14 +401,103 @@ void MainWindow::startCapture()
     lt::CaptureConfig config;
     QString error;
     QString trigger;
-    if (!buildConfig(config, trigger, error)) {
+    std::vector<std::string> warnings;
+    if (!buildConfig(config, trigger, error, &warnings)) {
         showStatus(error, true);
         return;
     }
     m_pendingTriggerDescription = trigger;
+    m_pendingWarnings = warnings;
     showStatus(tr("Starting capture..."));
-    if (!m_device.startCapture(config))
+    if (!m_device.startCapture(config)) {
         showStatus(tr("Device is busy or not connected"), true);
+        return;
+    }
+    if (!warnings.empty())
+        showStatus(tr("Starting capture... Warning: %1").arg(QString::fromStdString(warnings.front())));
+}
+
+void MainWindow::setFieldError(QLineEdit* field, const QString& message)
+{
+    if (!field->property("baseTip").isValid())
+        field->setProperty("baseTip", field->toolTip());
+    const QString base = field->property("baseTip").toString();
+    if (message.isEmpty()) {
+        field->setStyleSheet({});
+        field->setToolTip(base);
+    } else {
+        field->setStyleSheet(QStringLiteral("QLineEdit { border: 1px solid #c0392b; }"));
+        field->setToolTip(base.isEmpty() ? message : base + "\n\n" + message);
+    }
+}
+
+void MainWindow::updatePreflight()
+{
+    const int maxCh = m_device.isConnected() ? std::min<int>(kMaxProtocolChannels, m_device.info().channels) : static_cast<int>(kMaxProtocolChannels);
+    std::string err;
+    QString text;
+    bool bad = false;
+
+    const auto channels = lt::cli::parseChannelList(str(m_channels->text()), maxCh, &err);
+    setFieldError(m_channels, channels ? QString{} : QString::fromStdString(err));
+    bad |= !channels;
+
+    const auto rate = lt::cli::parseQuantity(str(m_rate->text()));
+    const bool rateOk = rate && *rate > 0 && *rate <= UINT32_MAX;
+    setFieldError(m_rate, rateOk ? QString{} : tr("Invalid sample rate (e.g. 1M, 500k)"));
+    const auto samples = lt::cli::parseQuantity(str(m_samples->text()));
+    const bool samplesOk = samples && *samples >= 4 && *samples <= UINT32_MAX;
+    setFieldError(m_samples, samplesOk ? QString{} : tr("Invalid sample count (at least 4)"));
+    const auto trigger = lt::cli::parseTrigger(str(m_trigger->text()), maxCh + 1, &err);
+    setFieldError(m_trigger, trigger ? QString{} : QString::fromStdString(err));
+    bad |= !rateOk || !samplesOk || !trigger;
+
+    QString latencyError;
+    if (const QString lat = m_latencySpec->text().trimmed(); !lat.isEmpty()) {
+        if (const auto parsed = lt::cli::parseLatencyArg(str(lat), kMaxProtocolChannels, &err)) {
+            if (m_waveform->hasCapture()) {
+                bool stim = false;
+                bool react = false;
+                for (const auto& ch : m_waveform->capture().channels()) {
+                    stim |= ch.number == parsed->stimChannel;
+                    react |= ch.number == parsed->reactChannel;
+                }
+                if (!stim || !react)
+                    latencyError = tr("Latency channel is not in the capture on screen");
+            }
+        } else {
+            latencyError = QString::fromStdString(err);
+        }
+    }
+    setFieldError(m_latencySpec, latencyError);
+
+    if (bad) {
+        m_preflight->setText(tr("Pre-flight: fix the highlighted fields"));
+        return;
+    }
+    const double step = 1.0 / static_cast<double>(*rate);
+    text = tr("Window %1 | Step %2")
+               .arg(QString::fromStdString(lt::formatTime(step * static_cast<double>(*samples))),
+                    QString::fromStdString(lt::formatTime(step)));
+    if (m_device.isConnected()) {
+        lt::CaptureConfig config;
+        QString trig;
+        QString error;
+        std::vector<std::string> warnings;
+        if (buildConfig(config, trig, error, &warnings)) {
+            text += tr(" | Pre %1 (%2)")
+                        .arg(config.trigger ? config.preSamples : 0)
+                        .arg(QString::fromStdString(lt::formatTime(
+                            step * static_cast<double>(config.trigger ? config.preSamples : 0))));
+            for (const auto& w : warnings)
+                text += "\n" + tr("Warning: %1").arg(QString::fromStdString(w));
+        } else {
+            text += "\n" + tr("Error: %1").arg(error);
+        }
+    } else {
+        text += tr(" | connect a device for Pre and limits");
+    }
+    m_preflight->setText(text);
 }
 
 void MainWindow::startProbe()
@@ -435,6 +538,9 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     switch (r.status) {
     case lt::CaptureStatus::Ok:
         setCapture(*r.buffer, candidateTrigger, pending && !pending->isProbe ? pending->options.setup : lt::SetupInfo{});
+        m_warnings = pending && !pending->isProbe ? pending->warnings : m_pendingWarnings;
+        m_pendingWarnings.clear();
+        updateReport();
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
         break;
     case lt::CaptureStatus::Cancelled: showStatus(tr("Capture cancelled")); break;
@@ -493,6 +599,7 @@ void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& trig
 {
     m_triggerDescription = triggerDescription;
     m_setup = std::move(setup);
+    m_warnings.clear();
     m_waveform->setCapture(buffer);
     updateReport();
 }
@@ -543,6 +650,7 @@ lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> mod
     options.mode = modeOverride ? *modeOverride : copyMode();
     options.triggerDescription = str(m_triggerDescription);
     options.setup = m_setup;
+    options.warnings = m_warnings;
     if (m_device.isConnected()) {
         options.deviceVersion = m_device.info().version.raw;
         options.board = m_device.info().version.board;

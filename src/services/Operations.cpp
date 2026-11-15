@@ -5,6 +5,7 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Exporters.hpp"
+#include "core/Format.hpp"
 #include "services/Session.hpp"
 
 #include <algorithm>
@@ -442,7 +443,7 @@ ProbeDocument probeDocument(const DeviceInfo& info, const ProbeResult& r, uint32
         warnings.push_back("--rate adjusted to " + std::to_string(r.buffer->frequency()) + " Hz (device limits " +
                            std::to_string(info.minFrequency()) + ".." + std::to_string(info.maxFrequency) + " Hz)");
     if (actualWindowUs < static_cast<double>(requestedWindow.count()) * 1000.0 * 0.999)
-        warnings.push_back("--window shortened to " + std::to_string(actualWindowUs / 1000.0) +
+        warnings.push_back("--window shortened to " + formatNumber(actualWindowUs / 1000.0) +
                            " ms (device buffer limit)");
 
     out.doc = {

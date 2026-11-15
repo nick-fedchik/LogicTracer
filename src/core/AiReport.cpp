@@ -432,9 +432,15 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
     std::ostringstream ss;
 
     ss << "## " << o.title << "\n\n";
+    if (!o.banner.empty())
+        ss << "> **" << o.banner << "**\n\n";
     if (!o.userNote.empty())
         ss << "> **Context / Question:** " << o.userNote << "\n\n";
 
+    if (o.captureId != 0)
+        ss << "- Capture ID: " << o.captureId << "\n";
+    for (const auto& w : o.warnings)
+        ss << "- Capture warning: " << w << "\n";
     if (!o.deviceVersion.empty() || !board.empty()) {
         ss << "- Device: " << (!o.deviceVersion.empty() ? o.deviceVersion : board);
         if (!board.empty() && !b.channels().empty()) {
@@ -560,7 +566,7 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
                << " ns, true ≤ " << ns(l.upperBoundNs(l.maxSamples)) << " ns)**; mean " << ns(l.meanNs)
                << " ns, stdev " << ns(l.stdevNs) << " ns (nearest-rank percentiles)\n";
             if (l.constantDelayConsistent())
-                ss << "- Constant-delay check: all pairs fit ONE fixed delay in (" << ns(l.constantDelayLowerNs()) << ", "
+                ss << "- **Verdict: constant-delay consistent.** All pairs fit ONE fixed delay in (" << ns(l.constantDelayLowerNs()) << ", "
                    << ns(l.constantDelayUpperNs())
                    << ") ns; the histogram spread is sampling phase, not proven jitter\n";
             else
@@ -779,6 +785,12 @@ nlohmann::json jsonMetadata(const CaptureBuffer& b, const ReportOptions& o)
           {"start_us", r.size() ? nlohmann::json(atUs(r.first)) : nlohmann::json(nullptr)},
           {"end_us", r.size() ? nlohmann::json(atUs(r.last - 1)) : nlohmann::json(nullptr)}}},
     };
+    if (o.captureId != 0)
+        doc["capture_id"] = o.captureId;
+    if (!o.warnings.empty())
+        doc["warnings"] = o.warnings;
+    if (!o.banner.empty())
+        doc["banner"] = o.banner;
     if (!o.deviceVersion.empty())
         doc["device_version"] = o.deviceVersion;
     if (!board.empty())
@@ -976,7 +988,58 @@ std::string probeForAi(const nlohmann::json& doc, std::string_view userNote)
                << diag << " |\n";
         }
     }
+    if (const auto note = inputPhysicsNote(board); !note.empty())
+        ss << "\n" << note << "\n";
     return ss.str();
+}
+
+std::string inputPhysicsNote(std::string_view board)
+{
+    if (board != "PICO" && board != "PICO_2" && board != "W" && board != "WIFI" && board != "2_W" &&
+        board != "2_WIFI" && board != "ZERO")
+        return {};
+    return "Input physics (RP2040/RP2350): inputs default to a weak internal pull-down, so LOW means either a driven 0 V or an "
+           "unpulled/open/floating line, not a proven short to GND; HIGH needs a driver or an external pull-up. "
+           "Inputs are 3.3 V only (not 5 V tolerant).";
+}
+
+std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view error, std::string_view triggerDescription,
+                         std::string_view board, std::string_view userNote, uint64_t previousCaptureId)
+{
+    std::ostringstream ss;
+    ss << "## LogicTracer capture failed: trigger timeout\n\n";
+    if (!userNote.empty())
+        ss << "> **Context / Question:** " << userNote << "\n\n";
+    ss << "- Status: **TIMEOUT** (" << error << ")\n";
+    ss << "- Trigger: " << (triggerDescription.empty() ? "unknown" : std::string(triggerDescription)) << "\n";
+    if (previousCaptureId != 0)
+        ss << "- The waveform on screen is the previous capture #" << previousCaptureId
+           << "; it does NOT describe this attempt.\n";
+    ss << "\nLine levels read right after the timeout:\n\n| Ch | Pin | Name | State | High % | Edges | Diagnosis |\n"
+          "|---|---|---|---|---|---|---|\n";
+    for (const auto& st : SignalAnalyzer{}.analyze(lineDump)) {
+        const auto diag = SignalAnalyzer::diagnose(st);
+        const auto gp = channelPinTag(board, st.channel);
+        std::ostringstream high;
+        high << std::fixed << std::setprecision(1) << st.highTimePercent;
+        ss << "| " << st.channel.displayNumber() << " | " << (gp.empty() ? "-" : gp) << " | " << st.channel.label()
+           << " | **" << toString(diag.state) << "** | " << high.str() << "% | " << st.transitions << " | "
+           << diag.message << " |\n";
+    }
+    if (const auto note = inputPhysicsNote(board); !note.empty())
+        ss << "\n" << note << "\n";
+    return ss.str();
+}
+
+std::vector<AnomalyIncident> findAnomalies(const CaptureBuffer& b, const ReportOptions& o)
+{
+    const Range r = normalize(b, o);
+    const auto stats = analyzeRange(b, r);
+    const auto lat = computeLatency(b, r, o);
+    std::vector<AnomalyIncident> out;
+    for (auto& a : computeInsights(b, r, stats, lat).anomalies)
+        out.push_back({a.sample, a.severity, std::move(a.kind), std::move(a.detail)});
+    return out;
 }
 
 }  // namespace lt

@@ -61,7 +61,21 @@ struct ReportOptions {
     SetupInfo setup;                          // test setup recorded with the capture (DUT, bitstream, wiring)
     std::string userNote;                     // optional engineer context / question to AI
     std::optional<LatencyPairSpec> latency;   // optional paired STIM -> REACT measurement
+    uint64_t captureId = 0;                   // identifies the capture on screen (0 = unknown)
+    std::string banner;                       // warning shown above the report, e.g. "ARMED: new capture pending"
+    std::vector<std::string> warnings;        // warnings the device layer raised for this capture
 };
+
+// One incident the analyzers flagged (drop, spurious reaction, timing outlier, irregular period, ...).
+struct AnomalyIncident {
+    std::size_t sample = 0;  // absolute sample index
+    int severity = 1;        // 3 = functional, 2 = timing, 1 = signal quality
+    std::string kind;
+    std::string detail;
+};
+
+// All incidents in the range selected by `options`, most severe first (same list the report prints).
+[[nodiscard]] std::vector<AnomalyIncident> findAnomalies(const CaptureBuffer& buffer, const ReportOptions& options);
 
 [[nodiscard]] std::string markdownSummary(const CaptureBuffer& buffer, const ReportOptions& options);
 [[nodiscard]] std::string asciiTimeline(const CaptureBuffer& buffer, const ReportOptions& options);
@@ -70,5 +84,12 @@ struct ReportOptions {
 [[nodiscard]] std::string copyForAi(const CaptureBuffer& buffer, const ReportOptions& options);
 // Compact AI-ready Markdown summary for a triggerless `probe` JSON document.
 [[nodiscard]] std::string probeForAi(const nlohmann::json& probeDoc, std::string_view userNote = {});
+// AI-ready diagnosis for a capture that failed (trigger timeout): the current level of every line,
+// taken from the line dump the device returns on TIMEOUT.
+[[nodiscard]] std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view error,
+                                       std::string_view triggerDescription, std::string_view board,
+                                       std::string_view userNote = {}, uint64_t previousCaptureId = 0);
+// Explains what a LOW/HIGH reading can and cannot prove on this board ("" for unknown boards).
+[[nodiscard]] std::string inputPhysicsNote(std::string_view board);
 
 }  // namespace lt

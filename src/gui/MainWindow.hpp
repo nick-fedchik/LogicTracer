@@ -100,7 +100,10 @@ private:
     [[nodiscard]] lt::ReportOptions buildReportOptions(std::optional<lt::CopyMode> modeOverride = std::nullopt) const;
     void copyWithMode(lt::CopyMode mode);
     [[nodiscard]] bool buildSpec(lt::CaptureRequestSpec& spec, QString& error) const;
-    [[nodiscard]] bool buildConfig(lt::CaptureConfig& config, QString& triggerText, QString& error) const;
+    [[nodiscard]] bool buildConfig(lt::CaptureConfig& config, QString& triggerText, QString& error,
+                                   std::vector<std::string>* warnings = nullptr) const;
+    void updatePreflight();
+    void setFieldError(QLineEdit* field, const QString& message);
 
     lt::AsyncDevice m_device;
     WaveformWidget* m_waveform = nullptr;
@@ -126,6 +129,9 @@ private:
     QLabel* m_status = nullptr;
     QLabel* m_hover = nullptr;
     QLabel* m_deviceInfo = nullptr;
+    QLabel* m_preflight = nullptr;
+    std::vector<std::string> m_pendingWarnings;
+    std::vector<std::string> m_warnings;  // device-layer warnings for the capture on screen
 
     lt::session::Server m_session;
     std::optional<Pending> m_pending;
