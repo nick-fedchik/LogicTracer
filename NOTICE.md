@@ -40,6 +40,14 @@ the upstream host software does not recognise the new identity line. The USB VID
 (pid.codes, allocated to LogicAnalyzer) is still used for driver-free compatibility; a dedicated PID
 for LogicTracer is planned.
 
+## Licences in this repository
+
+| Path | Licence |
+|---|---|
+| `src/`, `tests/`, `scripts/`, `cmake/` | GPL-3.0-or-later |
+| `firmware/rp2040/` | GPL-3.0 (upstream LogicAnalyzer firmware with LogicTracer changes) |
+| `hdl/` | CERN-OHL-W-2.0 (`hdl/LICENSE`) |
+
 ## Third-party dependencies (not bundled)
 
 | Component | License |
@@ -47,3 +55,4 @@ for LogicTracer is planned.
 | Qt 6 (Core, Network, SerialPort, Widgets, Test) | LGPL-3.0 / GPL-3.0 |
 | nlohmann/json | MIT |
 | Raspberry Pi Pico SDK (firmware build only) | BSD-3-Clause |
+| Icarus Verilog, Verilator, Yosys (HDL checks only) | GPL-2.0 / LGPL-3.0 / ISC |

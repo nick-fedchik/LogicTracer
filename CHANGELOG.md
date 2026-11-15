@@ -10,6 +10,9 @@ All notable changes are documented here. The format follows
   driver.
 - Replay device: `--port replay:<file>` plays a saved capture back as a device (edge-triggered,
   consecutive events, integer rate decimation) in the CLI, GUI and MCP.
+- `hdl/lt_capture`: in-design FPGA capture core (CERN-OHL-W-2.0) — edge-encoded ring buffer,
+  pattern/edge/external/force triggers, error-free AXI4-Lite registers; self-checking Icarus
+  testbench, Verilator lint and Yosys xc7 synthesis run in CTest and CI.
 
 ## [0.2.0] - 2026-11-15
 

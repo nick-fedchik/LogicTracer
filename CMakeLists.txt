@@ -22,6 +22,7 @@ endif()
 
 option(LOGICTRACER_BUILD_GUI "Build the Qt Widgets GUI (needs Qt6::Widgets)" ON)
 option(LOGICTRACER_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(LOGICTRACER_HDL_TESTS "Simulate, lint and synthesize the HDL capture core when the tools are installed" ON)
 
 include(CTest)  # provides BUILD_TESTING (ON by default)
 
@@ -44,6 +45,9 @@ add_subdirectory(src)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
+    if(LOGICTRACER_HDL_TESTS)
+        add_subdirectory(hdl)
+    endif()
 endif()
 
 install(FILES LICENSE NOTICE.md README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})

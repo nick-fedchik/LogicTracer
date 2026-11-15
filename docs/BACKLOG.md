@@ -48,8 +48,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 ## B-05. Device abstraction and PYNQ-Z1 capture backend
 - [x] B1: `IDevice` interface + `createDevice(port)`; `ReplayDevice` (`replay:<file>`) for tests,
       demos and offline review; CLI, GUI (`AsyncDevice`) and MCP use the interface.
-- [ ] PYNQ-Z1 as a capture device, synchronous to the DUT clock: see
-      [design/pynq-capture-backend.md](design/pynq-capture-backend.md).
+- [x] B2: `lt_capture` RTL core (CERN-OHL-W-2.0) with self-checking simulation, Verilator lint and
+      Yosys synthesis (18 × RAMB36E1) in CTest/CI; see [hdl/README.md](../hdl/README.md).
+- [ ] B3: board agent + `PynqConnection : IDevice`; integrate `lt_capture` into one DUT top level.
+- [ ] B4: live cross-check of the PL core against the RP2040 on the same pins.
+      Design: [design/pynq-capture-backend.md](design/pynq-capture-backend.md).
 
 ## B-08. PYNQ-Z1 rig automation
 - [x] `--meta` setup metadata and `scripts/rigs/pynq-z1/pynq-burst-hil.sh` (verified live: PASS,

@@ -173,6 +173,7 @@ logictracer/
 ├── CMakeLists.txt, CMakePresets.json, cmake/LogicTracerOptions.cmake
 ├── docs/            # SPECIFICATION.md (this document), BACKLOG.md
 ├── firmware/rp2040/ # LogicTracer firmware, derived from LogicAnalyzer V2 (GPL-3.0)
+├── hdl/             # lt_capture in-design FPGA capture core (CERN-OHL-W-2.0)
 ├── packaging/       # desktop entry
 ├── scripts/         # firmware build, HIL scenarios
 ├── src/

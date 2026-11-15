@@ -1,6 +1,7 @@
 # Design: PYNQ-Z1 as a capture backend
 
-Status: proposal (backlog B-05). Nothing here is implemented yet.
+Status: B1 (`IDevice`, replay device) and B2 (`lt_capture` RTL with simulation, lint and synthesis
+checks, see [hdl/README.md](../../hdl/README.md)) are done; B3 and B4 are planned.
 
 ## Why
 

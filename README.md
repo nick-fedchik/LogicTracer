@@ -33,6 +33,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | `src/gui` | `logictracer-gui`: waveform viewer with cursors, snap-to-edge and the AI grounding bar |
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
 | `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
+| `hdl/` | `lt_capture`: in-design FPGA capture core, exact clock-cycle timing (CERN-OHL-W-2.0) |
 | `docs/` | Specification and backlog |
 
 ## Platform support
@@ -166,6 +167,8 @@ with unmodified upstream firmware (V5_x, V6_0–V6_5); it then waits ~2 s longer
 
 - Host software (`src/`, `tests/`, `scripts/`, `cmake/`): **GPL-3.0-or-later**.
 - Firmware (`firmware/rp2040/`): **GPL-3.0**, derived from LogicAnalyzer by Agustín Gimenez Bernad.
+- FPGA capture core (`hdl/`): **CERN-OHL-W-2.0** ([hdl/LICENSE](hdl/LICENSE)), so it can be embedded
+  in proprietary designs; changes to the core itself stay open.
 
 The full license text is in [LICENSE](LICENSE); attribution and the list of changes are in
 [NOTICE.md](NOTICE.md).
