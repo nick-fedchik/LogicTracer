@@ -13,6 +13,8 @@ target_compile_definitions(logictracer_options INTERFACE
     LT_VERSION="${PROJECT_VERSION}"
     # Qt hygiene: no `signals`/`slots`/`emit` macros (use Q_SIGNALS/Q_SLOTS/Q_EMIT), no Q_FOREACH,
     # and no APIs deprecated before the minimum supported Qt.
+    # nlohmann::json: explicit .get<T>() only (implicit conversions confuse overload resolution, e.g. QCOMPARE).
+    JSON_USE_IMPLICIT_CONVERSIONS=0
     QT_NO_KEYWORDS
     QT_NO_FOREACH
     QT_DISABLE_DEPRECATED_BEFORE=0x060400)
