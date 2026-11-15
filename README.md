@@ -35,21 +35,72 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | `firmware/rp2040` | Modified LogicAnalyzer firmware V6_6 (GPL-3.0) |
 | `docs/` | Specification and backlog |
 
-## Build
+## Platform support
 
-Requirements: CMake ≥ 3.24, Ninja, a C++20 compiler (GCC ≥ 12, Clang ≥ 15), Qt ≥ 6.4 (Core,
-Network, SerialPort, Widgets, Test), nlohmann_json ≥ 3.10.
+| OS | Status | Notes |
+|---|---|---|
+| **Ubuntu 24.04 LTS** (x86_64) | ✅ Supported, tested in CI | Qt 6.4, GCC 13 |
+| **Ubuntu 26.04 LTS** (x86_64) | ✅ Supported, tested on hardware | Qt 6.10, GCC 15 |
+| Other Linux (Debian 12+, Fedora 39+, aarch64 / NVIDIA Jetson) | ⚠️ Expected to work, not tested | needs Qt ≥ 6.4 and a C++20 compiler |
+| **macOS** 13+ | ⚠️ Expected to build, not tested | device appears as `/dev/cu.usbmodem*` |
+| **Windows** 10/11 | ❌ Not supported yet | the IPC session and the test emulator use POSIX APIs; the core library and the analysis CLI commands are portable |
+
+Requirements: CMake ≥ 3.24, Ninja, a C++20 compiler (GCC ≥ 12, Clang ≥ 15, Apple Clang ≥ 15),
+Qt ≥ 6.4 (Core, Network, SerialPort, Widgets, Test) and nlohmann_json ≥ 3.10.
+
+## Install dependencies
+
+### Ubuntu / Debian
 
 ```bash
-# Ubuntu 24.04+
+sudo apt update
 sudo apt install cmake ninja-build g++ qt6-base-dev qt6-serialport-dev nlohmann-json3-dev
 
+# Optional: clipboard support for `--copy` (Wayland or X11)
+sudo apt install wl-clipboard xclip
+
+# Serial port access (log out and back in afterwards)
+sudo usermod -aG dialout $USER
+```
+
+### Fedora
+
+```bash
+sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtserialport-devel json-devel
+sudo usermod -aG dialout $USER
+```
+
+### macOS (Homebrew, untested)
+
+```bash
+xcode-select --install
+brew install cmake ninja qt nlohmann-json
+export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
+```
+
+No extra driver is needed: the RP2040 is a USB CDC device. The clipboard uses the built-in
+`pbcopy`.
+
+### Windows (not supported yet)
+
+A port is planned. The intended toolchain is Visual Studio 2022 (MSVC, C++20), Qt 6.4+
+for MSVC 2022 64-bit with the Qt Serial Port module (Qt Online Installer), and
+`vcpkg install nlohmann-json`.
+
+### Firmware toolchain (optional)
+
+Only needed to rebuild the RP2040 firmware: the Arm GNU toolchain (`arm-none-eabi-gcc`; on Ubuntu
+`sudo apt install gcc-arm-none-eabi`) and the [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) 2.x
+(`PICO_SDK_PATH`).
+
+## Build
+
+```bash
 cmake --preset default          # or: debug (warnings as errors), release, headless (no GUI)
 cmake --build --preset default
 ctest --preset default
+sudo cmake --install build      # optional: installs logictracer-cli, -gui, -mcp
 ```
-
-The serial port needs access rights: add yourself to the `dialout` group (`sudo usermod -aG dialout $USER`).
 
 ## Quick start
 

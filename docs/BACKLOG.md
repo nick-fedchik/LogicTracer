@@ -49,3 +49,9 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 
 ## B-06. NVIDIA Jetson `DO1` HIL test (blocked: 4.7–10 kΩ pull-up between Pico pin 36 and pin 34)
 - [ ] `./scripts/hil_j501_do1.sh`.
+
+## B-07. Portability
+- [ ] Windows: replace the POSIX parts of `Session.cpp` (`getuid`, `lstat`, `/tmp` fallback) with
+      Qt equivalents / named pipes, and give the pty-based test emulator a Windows alternative or
+      skip those suites; add a `windows-latest` CI job (MSVC 2022, Qt via `install-qt-action`).
+- [ ] macOS: add a `macos-latest` CI job (Homebrew Qt) to turn "expected to build" into "tested".
