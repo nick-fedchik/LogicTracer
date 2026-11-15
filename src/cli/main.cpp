@@ -1013,8 +1013,12 @@ int finishSessionCall(const Output& o, const lt::session::CallResult& r, const s
 {
     if (!r.ok) {
         const ExitCode code = r.errorCode == lt::session::error::InvalidParams ? ExitUsage : ExitError;
-        return report(o, code, r.error + (r.connected ? "" : " (start logictracer-gui first)"),
-                      {{"session_connected", r.connected}});
+        json extra = {{"session_connected", r.connected}};
+        if (r.errorCode == lt::session::error::StaleCapture)
+            extra["error_kind"] = "StaleCapture";
+        if (!r.errorData.is_null())
+            extra["details"] = r.errorData;
+        return report(o, code, r.error + (r.connected ? "" : " (start logictracer-gui first)"), extra);
     }
     if (o.json) {
         json doc = r.result;
@@ -1041,6 +1045,7 @@ int cmdAnnotate(const QStringList& args, Output o)
         {"color", "Colour name or #rrggbb (default red).", "color"},
         {"duration", "Highlight a span of this length starting at --time (e.g. 2ms).", "t"},
         {"author", "Who placed the marker (default: cli).", "name", "cli"},
+        {"capture-id", "Refuse (StaleCapture) unless this capture id is the one on screen; take it from capture/view.", "N"},
         {"list", "List existing annotations instead of adding one."},
         {"clear", "Remove all annotations instead of adding one."},
         {"socket", "Session socket (default: $LOGICTRACER_SOCKET or the per-user default).", "path"},
@@ -1075,6 +1080,13 @@ int cmdAnnotate(const QStringList& args, Output o)
         if (!d || *d < 0)
             return report(o, ExitUsage, "invalid --duration '" + str(p.value("duration")) + "'");
         params["duration_us"] = *d * 1e6;
+    }
+    if (p.isSet("capture-id")) {
+        bool ok = false;
+        const auto id = p.value("capture-id").toULongLong(&ok);
+        if (!ok || id == 0)
+            return report(o, ExitUsage, "invalid --capture-id '" + str(p.value("capture-id")) + "' (expected a positive integer)");
+        params["capture_id"] = static_cast<uint64_t>(id);
     }
     return finishSessionCall(o, lt::session::call(socket, "annotate", params), [&](const json& r) {
         std::cout << "Annotation #" << r["id"].get<int>() << " added at " << lt::formatTime(*seconds) << ": "
@@ -1147,7 +1159,8 @@ int cmdView(const QStringList& args, Output o)
     }
     return finishSessionCall(o, sr, [](const json& r) {
         std::cout << "GUI " << (r["connected"].get<bool>() ? "connected to a device" : "not connected") << ", "
-                  << (r["has_capture"].get<bool>() ? "capture shown" : "no capture") << ", "
+                  << (r["has_capture"].get<bool>() ? "capture #" + std::to_string(r.value("capture_id", uint64_t{0})) + " shown" : "no capture")
+                  << " [" << r.value("display_state", std::string("live")) << "], "
                   << r["annotation_count"].get<int>() << " annotation(s)\n";
         if (r.contains("visible") && !r["visible"]["start_us"].is_null())
             std::cout << "Visible: " << lt::formatTime(r["visible"]["start_us"].get<double>() * 1e-6) << " .. "

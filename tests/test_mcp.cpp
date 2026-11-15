@@ -235,6 +235,15 @@ private Q_SLOTS:
         const auto state = client.tool("lt_get_view", {{"report", false}});
         QCOMPARE(state["result"]["structuredContent"]["annotation_count"].get<int>(), 1);
 
+        const auto id = state["result"]["structuredContent"]["capture_id"].get<std::uint64_t>();
+        QVERIFY(id > 0);
+        const auto stale = client.tool("lt_add_annotation", {{"time_us", 5}, {"text", "x"}, {"capture_id", id + 1}});
+        QVERIFY(stale["result"]["isError"].get<bool>());
+        QVERIFY(stale.dump().find("StaleCapture") != std::string::npos);
+        const auto fresh = client.tool("lt_add_annotation", {{"time_us", 5}, {"text", "y"}, {"capture_id", id}});
+        QVERIFY2(!fresh["result"]["isError"].get<bool>(), fresh.dump().c_str());
+        QCOMPARE(win.waveform()->annotations().size(), std::size_t{2});
+        QVERIFY(!client.tool("lt_clear_annotations", {})["result"]["isError"].get<bool>());
         const auto cleared = client.tool("lt_clear_annotations", {});
         QVERIFY(!cleared["result"]["isError"].get<bool>());
         QVERIFY(win.waveform()->annotations().empty());

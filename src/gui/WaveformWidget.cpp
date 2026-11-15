@@ -155,6 +155,17 @@ void WaveformWidget::zoomToCursors()
     Q_EMIT viewChanged();
 }
 
+void WaveformWidget::centerOn(std::size_t sample)
+{
+    if (!hasCapture())
+        return;
+    const double half = std::max(1.0, static_cast<double>(m_view.endVisible() - m_view.firstVisible()) / 2.0);
+    const double centre = static_cast<double>(std::min(sample, m_buffer.size() - 1)) + 0.5;
+    m_view.showRange(std::max(0.0, centre - half), std::min(static_cast<double>(m_buffer.size()), centre + half));
+    update();
+    Q_EMIT viewChanged();
+}
+
 void WaveformWidget::setSnapToEdges(bool enabled)
 {
     m_snapToEdges = enabled;

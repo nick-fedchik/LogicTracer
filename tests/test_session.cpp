@@ -161,6 +161,29 @@ private Q_SLOTS:
         QVERIFY(win.waveform()->annotations().empty());
     }
 
+    void annotationCanBePinnedToACaptureId()
+    {
+        lt::gui::MainWindow win;
+        win.show();
+        win.loadDemo();
+        QVERIFY(win.startSession(socket("id.sock")));
+        const QString s = socket("id.sock");
+
+        auto r = runCli({"view", "--json"}, s);
+        const auto id = r.doc["capture_id"].get<std::uint64_t>();
+        QVERIFY(id > 0);
+
+        r = runCli({"annotate", "--time", "5us", "--label", "ok", "--capture-id", QString::number(id), "--json"}, s);
+        QVERIFY2(r.exitCode == 0, qPrintable(r.out));
+
+        r = runCli({"annotate", "--time", "6us", "--label", "late", "--capture-id", QString::number(id + 7), "--json"}, s);
+        QVERIFY(r.exitCode != 0);
+        QCOMPARE(r.doc["error_kind"].get<std::string>(), std::string("StaleCapture"));
+        QCOMPARE(win.waveform()->annotations().size(), std::size_t{1});
+
+        QCOMPARE(runCli({"annotate", "--time", "5us", "--label", "x", "--capture-id", "0", "--json"}, s).exitCode, 64);
+    }
+
     void invalidAnnotationsAreRejected()
     {
         lt::gui::MainWindow win;

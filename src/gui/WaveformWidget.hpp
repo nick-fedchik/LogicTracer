@@ -59,6 +59,8 @@ public Q_SLOTS:
     void zoomIn();
     void zoomOut();
     void zoomToCursors();
+    // Scrolls so `sample` is centred, keeping the current zoom level.
+    void centerOn(std::size_t sample);
     void setCursorA(std::size_t sample);
     void setCursorB(std::size_t sample);
     void setSnapToEdges(bool enabled);

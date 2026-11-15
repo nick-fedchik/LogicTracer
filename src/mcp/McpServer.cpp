@@ -145,12 +145,17 @@ json McpServer::toolList()
              schema({{"time_us", prop("number", "Time in microseconds relative to the trigger (may be negative).")},
                      {"text", prop("string", "Marker text, 1..200 characters.")},
                      {"color", prop("string", "Colour name or #rrggbb (default red).")},
-                     {"duration_us", prop("number", "Highlight a span of this length starting at time_us.")}},
+                     {"duration_us", prop("number", "Highlight a span of this length starting at time_us.")},
+                     {"capture_id", prop("integer", "Capture id from lt_get_view / lt_configure_and_capture. The marker "
+                                                    "is refused with StaleCapture if another capture is on screen now; "
+                                                    "always pass it.")}},
                     {"time_us", "text"})),
         tool("lt_get_view",
              "Read what the engineer currently sees in the GUI: capture metadata, the visible time range, cursors "
              "A/B and annotations. With report=true also returns the 'Copy for AI' report (Markdown summary, causal "
-             "chronological transition log, ASCII timeline, and optional JSON edge list) of that view.",
+             "chronological transition log, ASCII timeline, and optional JSON edge list) of that view. The result "
+             "carries capture_id (pass it to lt_add_annotation) and display_state (live / armed / stale): when "
+             "stale, the report is a failure diagnosis, not a description of the waveform on screen.",
              schema({{"report", prop("boolean", "Include the report for the visible range (default true).")},
                      {"mode", prop("string", "Report detail: 'brief' (compact, no raw JSON), 'cursors' (A..B only), or 'full'.")},
                      {"latency", prop("string", "Optional cross-channel STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")}})),
@@ -310,7 +315,7 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
         else if (args.contains("time"))
             params["time"] = args["time"];
         params["label"] = args.contains("text") ? args["text"] : args.value("label", json(""));
-        for (const char* key : {"color", "duration_us"})
+        for (const char* key : {"color", "duration_us", "capture_id"})
             if (args.contains(key))
                 params[key] = args[key];
         return sessionOrError("annotate", params);

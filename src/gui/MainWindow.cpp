@@ -33,6 +33,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <QColor>
 #include <QCoreApplication>
 
@@ -231,6 +232,7 @@ void MainWindow::buildUi()
     setCentralWidget(central);
 
     m_status = new QLabel;
+    m_status->setObjectName("status");
     m_hover = new QLabel;
     m_hover->setMinimumWidth(260);
     statusBar()->addWidget(m_status, 1);
@@ -281,6 +283,9 @@ void MainWindow::buildMenus()
     view->addAction(tr("Zoom &out"), QKeySequence(Qt::Key_Minus), m_waveform, &WaveformWidget::zoomOut);
     view->addAction(tr("Zoom to &cursors A..B"), QKeySequence(Qt::Key_Z), m_waveform, &WaveformWidget::zoomToCursors);
     view->addAction(tr("&Fit all"), QKeySequence(Qt::Key_Home), m_waveform, &WaveformWidget::fitAll);
+    view->addSeparator();
+    view->addAction(tr("Next &anomaly"), QKeySequence(Qt::Key_F3), this, [this] { jumpToAnomaly(+1); });
+    view->addAction(tr("Previous a&nomaly"), QKeySequence(Qt::SHIFT | Qt::Key_F3), this, [this] { jumpToAnomaly(-1); });
     view->addSeparator();
     m_snapAction = view->addAction(tr("&Snap cursors to edges"));
     m_snapAction->setCheckable(true);
@@ -709,6 +714,7 @@ void MainWindow::showEntry(std::size_t index)
     m_setup = e.setup;
     m_warnings = e.warnings;
     m_currentCaptureId = e.id;
+    m_lastAnomaly.reset();
     m_waveform->setCapture(e.buffer);
     m_waveform->setAnnotations(e.annotations);
     if (e.cursorA)
@@ -778,6 +784,49 @@ void MainWindow::consumeNote()
     if (!m_notePin->isChecked() && !m_consumedNote.isEmpty() && m_aiNote->text() == m_consumedNote)
         m_aiNote->clear();
     m_consumedNote = m_aiNote->text();
+}
+
+void MainWindow::jumpToAnomaly(int direction)
+{
+    if (!m_waveform->hasCapture()) {
+        showStatus(tr("No capture to search for anomalies"), true);
+        return;
+    }
+    auto options = buildReportOptions(lt::CopyMode::Full);
+    options.first = 0;
+    options.last = std::numeric_limits<std::size_t>::max();
+    auto list = lt::findAnomalies(m_waveform->capture(), options);
+    std::stable_sort(list.begin(), list.end(),
+                     [](const lt::AnomalyIncident& a, const lt::AnomalyIncident& b) { return a.sample < b.sample; });
+    if (list.empty()) {
+        showStatus(tr("No anomalies found in this capture"));
+        return;
+    }
+    const std::size_t reference =
+        m_lastAnomaly ? *m_lastAnomaly : (m_waveform->visibleFirst() + m_waveform->visibleEnd()) / 2;
+    std::size_t pick = direction >= 0 ? 0 : list.size() - 1;  // wrap-around default
+    if (direction >= 0) {
+        for (std::size_t i = 0; i < list.size(); ++i)
+            if (list[i].sample > reference) {
+                pick = i;
+                break;
+            }
+    } else {
+        for (std::size_t i = list.size(); i-- > 0;)
+            if (list[i].sample < reference) {
+                pick = i;
+                break;
+            }
+    }
+    const auto& a = list[pick];
+    m_lastAnomaly = a.sample;
+    m_waveform->centerOn(a.sample);
+    showStatus(tr("Anomaly %1/%2: %3 at %4 - %5")
+                   .arg(pick + 1)
+                   .arg(list.size())
+                   .arg(QString::fromStdString(a.kind),
+                        QString::fromStdString(lt::formatTime(m_waveform->capture().timeOfSample(a.sample))),
+                        QString::fromStdString(a.detail)));
 }
 
 void MainWindow::clearSetupMetadata()

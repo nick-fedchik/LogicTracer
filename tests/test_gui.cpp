@@ -357,6 +357,20 @@ private Q_SLOTS:
         QVERIFY(!win.aiReport().contains("TIMEOUT"));
     }
 
+    void f3JumpsBetweenAnomaliesAndWraps()
+    {
+        lt::gui::MainWindow win;
+        win.show();
+        win.loadDemo();
+        win.jumpToAnomaly(+1);
+        const QString first = win.findChild<QLabel*>("status")->text();
+        QVERIFY2(first.startsWith("Anomaly ") || first.startsWith("No anomalies"), qPrintable(first));
+        if (first.startsWith("No anomalies"))
+            return;
+        win.jumpToAnomaly(-1);  // wraps to the last one
+        QVERIFY(win.findChild<QLabel*>("status")->text().startsWith("Anomaly "));
+    }
+
     void armedStateDimsTheOldWaveformAndLabelsTheReport()
     {
         fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {

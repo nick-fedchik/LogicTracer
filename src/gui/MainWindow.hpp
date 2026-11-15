@@ -72,6 +72,8 @@ public Q_SLOTS:
     void showPreviousCapture();
     void showNextCapture();
     void clearSetupMetadata();
+    // Moves the view to the next (+1) / previous (-1) anomaly of the whole capture, wrapping around.
+    void jumpToAnomaly(int direction);
     void copyForAi();
     void copyBriefForAi();
     void copyCursorsForAi();
@@ -188,6 +190,7 @@ private:
     std::optional<FailureInfo> m_failure;
     QString m_consumedNote;  // note text already attached to the previous device capture
     std::string m_lastBoard;
+    std::optional<std::size_t> m_lastAnomaly;  // sample of the anomaly F3 last jumped to
 
     lt::session::Server m_session;
     std::optional<Pending> m_pending;
