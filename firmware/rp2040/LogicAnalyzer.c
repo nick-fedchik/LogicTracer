@@ -1,3 +1,8 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Original work: LogicAnalyzer firmware, Copyright (C) Agustin Gimenez Bernad (gusmanb/logicanalyzer), GPL-3.0.
+// Modified 2026 by Mykola Fedchyk for LogicTracer: V6_6 fast completion/cancel polling (10 ms instead of
+// 2 x 1 s) and shorter pre-transfer USB delays. See firmware/rp2040/README.md.
+
 #include "LogicAnalyzer_Board_Settings.h"
 
 #include <stdio.h>
@@ -664,16 +669,16 @@ int main()
                     }
                     else
                     {
-                        sleep_ms(100);
+                        sleep_ms(5);
                         cdc_transfer(lengthPointer, 4);
                     }
 
                 #else
-                    sleep_ms(100);
+                    sleep_ms(5);
                     cdc_transfer(lengthPointer, 4);
                 #endif
 
-                sleep_ms(100);
+                sleep_ms(2);
 
                 //Tanslate sample numbers to byte indexes, makes easier to send data
                 switch(mode)
@@ -739,11 +744,18 @@ int main()
                 #endif
                 //Done!
                 capturing = false;
+                LED_ON();
             }
             else
             {
-                LED_OFF();
-                sleep_ms(1000);
+                // Fast 10 ms completion/cancel poll (~15 ms turnaround instead of 2.2 s) with 1 Hz LED blink.
+                static uint8_t pollTick = 0;
+                if(pollTick == 0)
+                    LED_OFF();
+                else if(pollTick == 50)
+                    LED_ON();
+
+                sleep_ms(10);
 
                 //Check for cancel request
                 if(processCancel())
@@ -751,15 +763,16 @@ int main()
                     //Stop capture
                     StopCapture();
                     capturing = false;
+                    pollTick = 0;
                     LED_ON();
                 }
                 else
                 {
-                    LED_ON();
                     #ifdef SUPPORTS_COMPLEX_TRIGGER
                     check_fast_interrupt();
                     #endif
-                    sleep_ms(1000);
+                    if(++pollTick >= 100)
+                        pollTick = 0;
                 }
             }
         }

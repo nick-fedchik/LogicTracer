@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Original work: LogicAnalyzer firmware, Copyright (C) Agustin Gimenez Bernad (gusmanb/logicanalyzer), GPL-3.0.
+# Modified 2026 by Mykola Fedchyk for LogicTracer: firmware version V6_6. See firmware/rp2040/README.md.
+
 # Generated Cmake Pico project file
 
 cmake_minimum_required(VERSION 3.13)
@@ -94,8 +98,8 @@ pico_generate_pio_header(${PROJECT_NAME}
 )
 
 pico_set_program_name(LogicAnalyzer "LogicAnalyzer")
-pico_set_program_version(LogicAnalyzer "6.5")
-add_compile_definitions(FIRMWARE_VERSION="V6_5")
+pico_set_program_version(LogicAnalyzer "6.6")
+add_compile_definitions(FIRMWARE_VERSION="V6_6")
 
 pico_enable_stdio_uart(LogicAnalyzer 0)
 pico_enable_stdio_usb(LogicAnalyzer 1)
