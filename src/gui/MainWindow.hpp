@@ -10,6 +10,9 @@
 
 #include <QMainWindow>
 
+#include <deque>
+
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -41,6 +44,15 @@ public:
     void setCopyMode(lt::CopyMode mode);
     void setAiNote(const QString& note);
     void setLatencySpec(const QString& spec);
+    // Identifies the capture on screen; strictly increasing, never 0 once a capture exists.
+    [[nodiscard]] uint64_t captureId() const noexcept { return m_currentCaptureId; }
+    [[nodiscard]] WaveformWidget::DisplayState displayState() const noexcept { return m_waveform->displayState(); }
+    [[nodiscard]] std::size_t historySize() const noexcept { return m_history.size(); }
+    // Index of the history entry on screen (0 = oldest); historySize() when nothing is shown.
+    [[nodiscard]] std::size_t historyIndex() const noexcept { return m_viewIndex; }
+    [[nodiscard]] const lt::SetupInfo& setup() const noexcept { return m_setup; }
+    // History keeps at most `entries` captures / `bytes` of samples, but always the newest one.
+    void setHistoryLimits(std::size_t entries, std::size_t bytes);
     // Synthetic capture so the UI can be explored without hardware.
     void loadDemo();
 
@@ -57,6 +69,9 @@ public Q_SLOTS:
     void connectOrDisconnect();
     void startCapture();
     void startProbe();
+    void showPreviousCapture();
+    void showNextCapture();
+    void clearSetupMetadata();
     void copyForAi();
     void copyBriefForAi();
     void copyCursorsForAi();
@@ -88,6 +103,34 @@ private:
         std::chrono::milliseconds probeWindow{0};
     };
 
+    struct CaptureEntry {
+        uint64_t id = 0;
+        lt::CaptureBuffer buffer;
+        QString trigger;
+        lt::SetupInfo setup;
+        std::vector<lt::Annotation> annotations;
+        std::optional<std::size_t> cursorA, cursorB;
+        std::vector<std::string> warnings;
+        bool isProbe = false;
+    };
+    // The last failed attempt; its line levels explain why the waveform on screen is stale.
+    struct FailureInfo {
+        lt::CaptureBuffer lineDump;
+        std::string status;
+        std::string error;
+        QString trigger;
+    };
+
+    void showNewCapture(const lt::CaptureBuffer& buffer, const QString& trigger, lt::SetupInfo setup,
+                        std::vector<std::string> warnings, bool isProbe);
+    void showEntry(std::size_t index);
+    void saveViewState();
+    void trimHistory();
+    void updateHistoryUi();
+    void setArmed();
+    void restoreIdleState();
+    void consumeNote();
+    [[nodiscard]] QString failureReport() const;
     void handleSession(const std::string& method, const nlohmann::json& params, lt::session::Responder reply);
     void sessionAnnotate(const nlohmann::json& params, lt::session::Responder reply);
     void sessionCapture(const nlohmann::json& params, lt::session::Responder reply);
@@ -132,6 +175,19 @@ private:
     QLabel* m_preflight = nullptr;
     std::vector<std::string> m_pendingWarnings;
     std::vector<std::string> m_warnings;  // device-layer warnings for the capture on screen
+    QCheckBox* m_notePin = nullptr;
+    QPushButton* m_prev = nullptr;
+    QPushButton* m_next = nullptr;
+    QLabel* m_historyLabel = nullptr;
+    std::deque<CaptureEntry> m_history;
+    std::size_t m_viewIndex = 0;
+    std::size_t m_maxHistoryEntries = 8;
+    std::size_t m_maxHistoryBytes = std::size_t{64} << 20;
+    uint64_t m_nextCaptureId = 0;
+    uint64_t m_currentCaptureId = 0;
+    std::optional<FailureInfo> m_failure;
+    QString m_consumedNote;  // note text already attached to the previous device capture
+    std::string m_lastBoard;
 
     lt::session::Server m_session;
     std::optional<Pending> m_pending;

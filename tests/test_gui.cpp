@@ -10,6 +10,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QImage>
+#include <QCheckBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -27,6 +28,31 @@ using lt::gui::ViewTransform;
 using lt::gui::WaveformWidget;
 
 namespace {
+
+lt::CaptureBuffer toggling(std::size_t n = 400)
+{
+    std::vector<uint32_t> samples(n);
+    for (std::size_t i = 0; i < n; ++i)
+        samples[i] = (i / 10) % 2;
+    return lt::CaptureBuffer({{0, "CLK"}}, 1'000'000, 20, samples);
+}
+
+lt::CaptureResult okResult(const lt::CaptureBuffer& b)
+{
+    lt::CaptureResult r;
+    r.status = lt::CaptureStatus::Ok;
+    r.buffer = b;
+    return r;
+}
+
+int brightPixels(const QImage& img)  // pixels clearly brighter than the dark background
+{
+    int n = 0;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x)
+            n += qGray(img.pixel(x, y)) > 100;
+    return n;
+}
 
 constexpr int kGutter = WaveformWidget::kGutterWidth;
 
@@ -301,6 +327,142 @@ private Q_SLOTS:
         QVERIFY(field(win, "latencySpec")->styleSheet().isEmpty());
     }
 
+    void timeoutKeepsOldWaveformButReportsLineState()
+    {
+        MainWindow win;
+        win.show();
+        win.setCapture(toggling(), "CH1 rising");
+        const auto firstId = win.captureId();
+        QVERIFY(firstId != 0);
+
+        lt::CaptureResult timeout;
+        timeout.status = lt::CaptureStatus::Timeout;
+        timeout.error = "Trigger timeout";
+        timeout.lineDump = lt::CaptureBuffer({{0, "CLK"}}, 1'000'000, 0, std::vector<uint32_t>(16, 1));
+        Q_EMIT win.device().captureFinished(timeout);
+
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Stale);
+        QCOMPARE(win.waveform()->capture().size(), std::size_t{400});  // old waveform stays visible
+        QCOMPARE(win.captureId(), firstId);
+        const QString report = win.aiReport();
+        QVERIFY(report.contains("TIMEOUT"));
+        QVERIFY(report.contains(QString("previous capture #%1").arg(firstId)));
+        QVERIFY(!report.contains("Chronological transitions"));  // not a report about the old waveform
+        win.copyForAi();
+        QCOMPARE(QGuiApplication::clipboard()->text(), report);
+
+        Q_EMIT win.device().captureFinished(okResult(toggling(300)));
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Live);
+        QVERIFY(win.captureId() > firstId);
+        QVERIFY(!win.aiReport().contains("TIMEOUT"));
+    }
+
+    void armedStateDimsTheOldWaveformAndLabelsTheReport()
+    {
+        fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0)
+                d.send(fake::idReply("V6_5", true));  // never answers the capture: it stays armed
+        });
+        MainWindow win;
+        win.show();
+        win.device().setPollLatency(50ms);
+        win.setCapture(toggling(), "CH1 rising");
+        const auto lowerHalf = [&] {  // below the banner, where only the waveform lines can differ
+            const QImage img = win.waveform()->grab().toImage();
+            return brightPixels(img.copy(0, 70, img.width(), img.height() - 70));
+        };
+        const int live = lowerHalf();
+        win.setPortText(QString::fromStdString(dev.port()));
+        QTest::mouseClick(button(win, "Connect"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+
+        field(win, "trigger")->setText("1:rising");
+        QTest::mouseClick(button(win, "Capture"), Qt::LeftButton);
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Armed);
+        QVERIFY(win.aiReport().contains("ARMED"));
+        QVERIFY(win.aiReport().contains("PREVIOUS capture"));
+        QVERIFY(live > 100);
+        QVERIFY(lowerHalf() < live);
+
+        QTest::mouseClick(button(win, "Cancel"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(!win.device().isBusy(), 8000);
+        // The silent device never acknowledged the capture, so the attempt ends as a failure, not as ARMED.
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Stale);
+        QVERIFY(!win.aiReport().contains("ARMED"));
+    }
+
+    void historyRingKeepsRecentCapturesAndAnnotations()
+    {
+        MainWindow win;
+        win.setHistoryLimits(3, std::size_t{1} << 20);
+        for (int i = 0; i < 5; ++i) {
+            win.setCapture(toggling(100 + static_cast<std::size_t>(i)), "CH1 rising");
+            if (i == 3) {
+                lt::Annotation a;
+                a.label = "marker";
+                win.waveform()->addAnnotation(a);
+            }
+        }
+        QCOMPARE(win.historySize(), std::size_t{3});
+        QCOMPARE(win.captureId(), uint64_t{5});
+        QCOMPARE(win.waveform()->capture().size(), std::size_t{104});
+
+        auto* prev = button(win, "Prev");
+        auto* next = button(win, "Next");
+        QVERIFY(prev->isEnabled() && !next->isEnabled());
+        QTest::mouseClick(prev, Qt::LeftButton);
+        QCOMPARE(win.captureId(), uint64_t{4});
+        QCOMPARE(win.waveform()->annotations().size(), std::size_t{1});  // kept with its capture
+        QVERIFY(win.aiReport().contains("HISTORY: capture #4"));
+        QTest::mouseClick(prev, Qt::LeftButton);
+        QCOMPARE(win.captureId(), uint64_t{3});
+        QVERIFY(!prev->isEnabled());
+        QTest::mouseClick(next, Qt::LeftButton);
+        QTest::mouseClick(next, Qt::LeftButton);
+        QCOMPARE(win.captureId(), uint64_t{5});
+        QVERIFY(!win.aiReport().contains("HISTORY:"));
+
+        win.setHistoryLimits(8, 2 * 100 * sizeof(uint32_t));  // memory cap keeps only what fits (and the newest)
+        QCOMPARE(win.historySize(), std::size_t{1});
+        QCOMPARE(win.captureId(), uint64_t{5});
+    }
+
+    void setupSurvivesDeviceCapturesAndClearsOnDemand()
+    {
+        MainWindow win;
+        win.setCapture(toggling(), "CH1 rising", {{"dut", "board A"}});
+        QCOMPARE(win.setup().size(), std::size_t{1});
+        Q_EMIT win.device().captureFinished(okResult(toggling(200)));  // a GUI capture carries no new setup
+        QCOMPARE(win.setup().size(), std::size_t{1});
+        QVERIFY(win.aiReport().contains("dut=board A"));
+
+        for (auto* a : win.findChildren<QAction*>())
+            if (a->text().contains("Clear Setup"))
+                a->trigger();
+        QVERIFY(win.setup().empty());
+        QVERIFY(!win.aiReport().contains("dut=board A"));
+    }
+
+    void unpinnedNoteIsClearedByTheNextCapture()
+    {
+        MainWindow win;
+        auto* note = field(win, "aiNote");
+        auto* pin = win.findChild<QCheckBox*>("notePin");
+        QVERIFY(note && pin && !pin->isChecked());
+
+        note->setText("first question");
+        Q_EMIT win.device().captureFinished(okResult(toggling()));
+        QCOMPARE(note->text(), QString("first question"));  // written for this capture
+        Q_EMIT win.device().captureFinished(okResult(toggling()));
+        QVERIFY(note->text().isEmpty());  // stale: it was already sent with the previous capture
+
+        note->setText("kept");
+        pin->setChecked(true);
+        Q_EMIT win.device().captureFinished(okResult(toggling()));
+        Q_EMIT win.device().captureFinished(okResult(toggling()));
+        QCOMPARE(note->text(), QString("kept"));
+    }
+
     void failedCaptureKeepsOldTriggerAndProbeIgnoresSamples()
     {
         // Regression for A-06 and A-09.
@@ -334,8 +496,10 @@ private Q_SLOTS:
         field(win, "trigger")->setText("2:falling");
         QTest::mouseClick(button(win, "Capture"), Qt::LeftButton);
         QTRY_VERIFY_WITH_TIMEOUT(!win.device().isBusy(), 5000);
-        QVERIFY(win.aiReport().contains("CH1 rising"));
-        QVERIFY(!win.aiReport().contains("CH2 falling"));
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Stale);
+        QVERIFY(win.aiReport().contains("capture failed"));
+        QVERIFY(win.aiReport().contains("previous capture #1"));
+        QCOMPARE(win.waveform()->capture().size(), std::size_t{4000});  // old waveform kept on screen
 
         // Probe must succeed even when Samples holds garbage (A-09).
         rejectNext = false;
@@ -343,6 +507,13 @@ private Q_SLOTS:
         QTest::mouseClick(button(win, "Probe"), Qt::LeftButton);
         QTRY_VERIFY_WITH_TIMEOUT(!win.device().isBusy(), 5000);
         QVERIFY(win.aiReport().contains("none (probe)"));
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Live);
+
+        // The probe did not destroy the earlier triggered capture: it is one Prev away, trigger intact.
+        QCOMPARE(win.historySize(), std::size_t{2});
+        QTest::mouseClick(button(win, "Prev"), Qt::LeftButton);
+        QVERIFY(win.aiReport().contains("CH1 rising"));
+        QVERIFY(!win.aiReport().contains("CH2 falling"));
     }
 
     void openCaptureFileLoadsJsonAndVcd()

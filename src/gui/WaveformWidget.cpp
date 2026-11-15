@@ -97,6 +97,15 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     Q_EMIT cursorsChanged();
 }
 
+void WaveformWidget::setDisplayState(DisplayState state, const QString& banner)
+{
+    if (m_displayState == state && m_banner == banner)
+        return;
+    m_displayState = state;
+    m_banner = banner;
+    update();
+}
+
 void WaveformWidget::clearCapture()
 {
     setCapture(lt::CaptureBuffer{});
@@ -299,6 +308,25 @@ void WaveformWidget::paintEvent(QPaintEvent*)
     drawRuler(p, plot);
     drawAnnotations(p, plot);
     drawCursors(p, plot);
+
+    if (m_displayState != DisplayState::Live) {
+        if (m_displayState == DisplayState::Armed) {
+            QColor veil = kBackground;
+            veil.setAlpha(153);  // the old waveform stays visible at ~40%
+            p.fillRect(QRectF(0, kRulerHeight, width(), height() - kRulerHeight), veil);
+        }
+        QFont bold = font();
+        bold.setBold(true);
+        p.setFont(bold);
+        const QString text = m_banner.isEmpty() ? (m_displayState == DisplayState::Armed ? tr("ARMED") : tr("STALE"))
+                                                : m_banner;
+        const QRectF box = QRectF(plot.left() + 8, kRulerHeight + 6, QFontMetrics(bold).horizontalAdvance(text) + 20, 24);
+        p.setPen(Qt::NoPen);
+        p.setBrush(m_displayState == DisplayState::Armed ? QColor(230, 160, 40) : QColor(200, 70, 60));
+        p.drawRoundedRect(box, 4, 4);
+        p.setPen(QColor(20, 20, 20));
+        p.drawText(box, Qt::AlignCenter, text);
+    }
 }
 
 void WaveformWidget::drawChannel(QPainter& p, const QRectF& plot, std::size_t ch, const QRectF& row) const

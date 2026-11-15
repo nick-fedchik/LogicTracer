@@ -33,6 +33,7 @@ inline constexpr int NoCapture = -32000;
 inline constexpr int Busy = -32001;
 inline constexpr int NoDevice = -32002;
 inline constexpr int Failed = -32003;
+inline constexpr int StaleCapture = -32004;  // the request named a capture that is no longer on screen
 }  // namespace error
 
 // $LOGICTRACER_SOCKET, else $XDG_RUNTIME_DIR/logictracer.sock, else /tmp/logictracer-<uid>.sock
@@ -45,7 +46,8 @@ public:
     Responder() = default;
     Responder(Sink sink, nlohmann::json id) : m_sink(std::move(sink)), m_id(std::move(id)) {}
     void ok(const nlohmann::json& result) const;
-    void fail(int code, const std::string& message) const;
+    // `data` (optional) is attached to the error object for machine-readable details.
+    void fail(int code, const std::string& message, const nlohmann::json& data = nullptr) const;
 
 private:
     Sink m_sink;
@@ -84,6 +86,7 @@ struct CallResult {
     nlohmann::json result;
     int errorCode = 0;
     std::string error;
+    nlohmann::json errorData;  // null when the error has no structured details
 };
 
 // Blocking request/response; needs no event loop.

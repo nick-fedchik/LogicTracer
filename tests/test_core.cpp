@@ -901,7 +901,7 @@ private Q_SLOTS:
     void timeoutReportDescribesLinesNotTheOldCapture()
     {
         const lt::CaptureBuffer dump({{0, ""}}, 1'000'000, 0, std::vector<uint32_t>(16, 0));
-        const auto md = lt::timeoutForAi(dump, "Trigger timeout", "CH1 rising", "PICO", "wiring check", 7);
+        const auto md = lt::timeoutForAi(dump, "TIMEOUT", "Trigger timeout", "CH1 rising", "PICO", "wiring check", 7);
         QVERIFY(md.find("TIMEOUT") != std::string::npos);
         QVERIFY(md.find("previous capture #7") != std::string::npos);
         QVERIFY(md.find("GP2") != std::string::npos);

@@ -11,6 +11,7 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QFileDialog>
@@ -147,7 +148,21 @@ void MainWindow::buildUi()
     root->addLayout(grid);
 
     m_deviceInfo = new QLabel;
-    root->addWidget(m_deviceInfo);
+    m_prev = new QPushButton(tr("Prev"));
+    m_prev->setObjectName("historyPrev");
+    m_prev->setToolTip(tr("Show the previous capture (Alt+Left)"));
+    m_next = new QPushButton(tr("Next"));
+    m_next->setObjectName("historyNext");
+    m_next->setToolTip(tr("Show the next capture (Alt+Right)"));
+    m_historyLabel = new QLabel;
+    m_historyLabel->setObjectName("historyLabel");
+    auto* infoRow = new QHBoxLayout;
+    infoRow->setContentsMargins(0, 0, 0, 0);
+    infoRow->addWidget(m_deviceInfo, 1);
+    infoRow->addWidget(m_prev);
+    infoRow->addWidget(m_historyLabel);
+    infoRow->addWidget(m_next);
+    root->addLayout(infoRow);
     m_preflight = new QLabel;
     m_preflight->setObjectName("preflight");
     m_preflight->setWordWrap(true);
@@ -171,6 +186,9 @@ void MainWindow::buildUi()
     m_aiNote->setClearButtonEnabled(true);
     m_aiNote->setPlaceholderText(
         tr("Context / Question for AI (e.g. J501 DO1 -> GP28 via 4.7k pull-up; why is pulse 12 us?)"));
+    m_notePin = new QCheckBox(tr("Pin"));
+    m_notePin->setObjectName("notePin");
+    m_notePin->setToolTip(tr("Keep this note for the next captures. Unpinned notes are cleared when a new capture arrives."));
     m_latencySpec = new QLineEdit;
     m_latencySpec->setObjectName("latencySpec");
     m_latencySpec->setClearButtonEnabled(true);
@@ -191,6 +209,7 @@ void MainWindow::buildUi()
 
     aiBar->addWidget(new QLabel(tr("Ask AI:")));
     aiBar->addWidget(m_aiNote, 1);
+    aiBar->addWidget(m_notePin);
     aiBar->addWidget(m_latencySpec);
     aiBar->addWidget(new QLabel(tr("Mode:")));
     aiBar->addWidget(m_copyMode);
@@ -223,6 +242,8 @@ void MainWindow::buildUi()
     connect(m_probe, &QPushButton::clicked, this, &MainWindow::startProbe);
     connect(m_cancel, &QPushButton::clicked, &m_device, &lt::AsyncDevice::requestCancel);
     connect(m_copyButton, &QPushButton::clicked, this, &MainWindow::copyForAi);
+    connect(m_prev, &QPushButton::clicked, this, &MainWindow::showPreviousCapture);
+    connect(m_next, &QPushButton::clicked, this, &MainWindow::showNextCapture);
 }
 
 void MainWindow::buildMenus()
@@ -248,7 +269,14 @@ void MainWindow::buildMenus()
     copyAb->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
     copyAb->setToolTip(tr("Copy report zoomed strictly to the span between Cursors A and B"));
 
+    edit->addSeparator();
+    edit->addAction(tr("Clear Setup &Metadata"), this, &MainWindow::clearSetupMetadata)
+        ->setToolTip(tr("Forget the test-setup metadata (DUT, wiring, ...) attached to reports"));
+
     auto* view = menuBar()->addMenu(tr("&View"));
+    view->addAction(tr("&Previous capture"), QKeySequence(Qt::ALT | Qt::Key_Left), this, &MainWindow::showPreviousCapture);
+    view->addAction(tr("&Next capture"), QKeySequence(Qt::ALT | Qt::Key_Right), this, &MainWindow::showNextCapture);
+    view->addSeparator();
     view->addAction(tr("Zoom &in"), QKeySequence(Qt::Key_Plus), m_waveform, &WaveformWidget::zoomIn);
     view->addAction(tr("Zoom &out"), QKeySequence(Qt::Key_Minus), m_waveform, &WaveformWidget::zoomOut);
     view->addAction(tr("Zoom to &cursors A..B"), QKeySequence(Qt::Key_Z), m_waveform, &WaveformWidget::zoomToCursors);
@@ -283,6 +311,7 @@ void MainWindow::updateControls()
                        static_cast<QWidget*>(m_samples), static_cast<QWidget*>(m_trigger),
                        static_cast<QWidget*>(m_timeout)})
         w->setEnabled(!busy);
+    updateHistoryUi();
     m_deviceInfo->setText(connected ? QString("%1  |  %2 channels, max %3, buffer %4 KiB")
                                           .arg(QString::fromStdString(m_device.info().version.raw))
                                           .arg(m_device.info().channels)
@@ -336,10 +365,15 @@ void MainWindow::connectOrDisconnect()
 void MainWindow::onOpened(bool ok, const QString& error)
 {
     updateControls();
-    if (ok)
+    if (ok) {
+        const std::string board = m_device.info().version.board;
+        if (!m_lastBoard.empty() && board != m_lastBoard)
+            clearSetupMetadata();  // setup text describes wiring of another board
+        m_lastBoard = board;
         showStatus(tr("Connected: %1").arg(QString::fromStdString(m_device.info().version.raw)));
-    else
+    } else {
         showStatus(tr("Connection failed: %1").arg(error), true);
+    }
 }
 
 bool MainWindow::buildSpec(lt::CaptureRequestSpec& spec, QString& error) const
@@ -407,12 +441,15 @@ void MainWindow::startCapture()
         return;
     }
     m_pendingTriggerDescription = trigger;
-    m_pendingWarnings = warnings;
     showStatus(tr("Starting capture..."));
     if (!m_device.startCapture(config)) {
+        m_pendingTriggerDescription.clear();
         showStatus(tr("Device is busy or not connected"), true);
         return;
     }
+    m_pendingWarnings = warnings;
+    if (config.trigger)
+        setArmed();
     if (!warnings.empty())
         showStatus(tr("Starting capture... Warning: %1").arg(QString::fromStdString(warnings.front())));
 }
@@ -535,44 +572,47 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     updateControls();
     const auto pending = std::exchange(m_pending, std::nullopt);
     const QString candidateTrigger = std::exchange(m_pendingTriggerDescription, QString{});
+    auto pendingWarnings = std::exchange(m_pendingWarnings, {});
+    const bool fromSession = pending && !pending->isProbe;
     switch (r.status) {
     case lt::CaptureStatus::Ok:
-        setCapture(*r.buffer, candidateTrigger, pending && !pending->isProbe ? pending->options.setup : lt::SetupInfo{});
-        m_warnings = pending && !pending->isProbe ? pending->warnings : m_pendingWarnings;
-        m_pendingWarnings.clear();
-        updateReport();
+        consumeNote();
+        m_failure.reset();
+        showNewCapture(*r.buffer, candidateTrigger, fromSession ? pending->options.setup : m_setup,
+                       fromSession ? pending->warnings : std::move(pendingWarnings), false);
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
         break;
-    case lt::CaptureStatus::Cancelled: showStatus(tr("Capture cancelled")); break;
+    case lt::CaptureStatus::Cancelled:
+        restoreIdleState();
+        showStatus(tr("Capture cancelled"));
+        break;
     case lt::CaptureStatus::Timeout:
     case lt::CaptureStatus::Error: {
         QString statusMsg = QString::fromStdString(r.error);
         if (r.lineDump) {  // TIMEOUT carries the current line state
-            const auto stats = lt::SignalAnalyzer{}.analyze(*r.lineDump);
             QString summary;
-            for (const auto& st : stats) {
+            for (const auto& st : lt::SignalAnalyzer{}.analyze(*r.lineDump)) {
                 if (!summary.isEmpty())
                     summary += ", ";
                 summary += QString("%1=%2").arg(QString::fromStdString(st.channel.label()),
                                                 QString::fromStdString(std::string(lt::toString(lt::SignalAnalyzer::diagnose(st).state))));
             }
             statusMsg += tr(" [line state: %1]").arg(summary);
-            if (!m_waveform->hasCapture()) {
-                QString text = tr("%1\n\nCurrent line state:\n").arg(QString::fromStdString(r.error));
-                for (const auto& st : stats)
-                    text += QString("  %1: %2\n").arg(QString::fromStdString(st.channel.label()),
-                                                      QString::fromStdString(std::string(lt::SignalAnalyzer::diagnose(st).message)));
-                m_report->setPlainText(text);
-            }
         }
+        m_failure = FailureInfo{r.lineDump ? *r.lineDump : lt::CaptureBuffer{}, std::string(lt::toString(r.status)),
+                                r.error, candidateTrigger};
+        restoreIdleState();
+        updateReport();
         showStatus(statusMsg, true);
         break;
     }
     }
 
-    if (pending && !pending->isProbe) {  // the request came over the session socket
+    if (fromSession) {  // the request came over the session socket
         auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, pending->warnings,
                                        pending->options);
+        if (r.status == lt::CaptureStatus::Ok)
+            doc.doc["capture_id"] = m_currentCaptureId;
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
         pending->reply.ok(doc.doc);
     }
@@ -583,25 +623,181 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
     updateControls();
     const auto pending = std::exchange(m_pending, std::nullopt);
     const QString candidateTrigger = std::exchange(m_pendingTriggerDescription, QString{});
-    if (pending && pending->isProbe)
-        pending->reply.ok(lt::probeDocument(m_device.info(), r, pending->probeRate, pending->probeWindow).doc);
-    if (r.status == lt::CaptureStatus::Ok && r.buffer) {
-        setCapture(*r.buffer, candidateTrigger);
+    const bool ok = r.status == lt::CaptureStatus::Ok && r.buffer;
+    if (ok) {
+        consumeNote();
+        m_failure.reset();
+        showNewCapture(*r.buffer, candidateTrigger, m_setup, {}, true);
         showStatus(tr("Probe complete (%1 ms)").arg(r.elapsed.count()));
     } else if (r.status == lt::CaptureStatus::Cancelled) {
         showStatus(tr("Probe cancelled"));
     } else {
         showStatus(QString::fromStdString(r.error), true);
     }
+    if (pending && pending->isProbe) {
+        auto doc = lt::probeDocument(m_device.info(), r, pending->probeRate, pending->probeWindow).doc;
+        if (ok)
+            doc["capture_id"] = m_currentCaptureId;
+        pending->reply.ok(doc);
+    }
 }
 
 void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup)
 {
-    m_triggerDescription = triggerDescription;
-    m_setup = std::move(setup);
-    m_warnings.clear();
-    m_waveform->setCapture(buffer);
+    m_failure.reset();
+    showNewCapture(buffer, triggerDescription, std::move(setup), {}, false);
+}
+
+void MainWindow::setHistoryLimits(std::size_t entries, std::size_t bytes)
+{
+    m_maxHistoryEntries = std::max<std::size_t>(1, entries);
+    m_maxHistoryBytes = bytes;
+    trimHistory();
+    if (!m_history.empty())
+        showEntry(std::min(m_viewIndex, m_history.size() - 1));
+}
+
+void MainWindow::showNewCapture(const lt::CaptureBuffer& buffer, const QString& trigger, lt::SetupInfo setup,
+                                std::vector<std::string> warnings, bool isProbe)
+{
+    saveViewState();
+    CaptureEntry entry;
+    entry.id = ++m_nextCaptureId;
+    entry.buffer = buffer;
+    entry.trigger = trigger;
+    entry.setup = std::move(setup);
+    entry.warnings = std::move(warnings);
+    entry.isProbe = isProbe;
+    m_history.push_back(std::move(entry));
+    trimHistory();
+    showEntry(m_history.size() - 1);
+}
+
+void MainWindow::saveViewState()
+{
+    if (m_viewIndex >= m_history.size())
+        return;
+    auto& e = m_history[m_viewIndex];
+    e.annotations = m_waveform->annotations();
+    e.cursorA = m_waveform->cursorA();
+    e.cursorB = m_waveform->cursorB();
+    e.setup = m_setup;
+}
+
+void MainWindow::trimHistory()
+{
+    const auto bytes = [this] {
+        std::size_t total = 0;
+        for (const auto& e : m_history)
+            total += e.buffer.size() * sizeof(uint32_t);
+        return total;
+    };
+    while (m_history.size() > 1 && (m_history.size() > m_maxHistoryEntries || bytes() > m_maxHistoryBytes)) {
+        m_history.pop_front();
+        if (m_viewIndex > 0)
+            --m_viewIndex;
+    }
+}
+
+void MainWindow::showEntry(std::size_t index)
+{
+    if (index >= m_history.size())
+        return;
+    m_viewIndex = index;
+    const auto& e = m_history[index];
+    m_triggerDescription = e.trigger;
+    m_setup = e.setup;
+    m_warnings = e.warnings;
+    m_currentCaptureId = e.id;
+    m_waveform->setCapture(e.buffer);
+    m_waveform->setAnnotations(e.annotations);
+    if (e.cursorA)
+        m_waveform->setCursorA(*e.cursorA);
+    if (e.cursorB)
+        m_waveform->setCursorB(*e.cursorB);
+    restoreIdleState();
+    updateHistoryUi();
     updateReport();
+}
+
+void MainWindow::showPreviousCapture()
+{
+    if (m_device.isBusy() || m_viewIndex == 0 || m_history.empty())
+        return;
+    saveViewState();
+    showEntry(m_viewIndex - 1);
+    showStatus(tr("Showing capture #%1 (%2 of %3)").arg(m_currentCaptureId).arg(m_viewIndex + 1).arg(m_history.size()));
+}
+
+void MainWindow::showNextCapture()
+{
+    if (m_device.isBusy() || m_viewIndex + 1 >= m_history.size())
+        return;
+    saveViewState();
+    showEntry(m_viewIndex + 1);
+    showStatus(tr("Showing capture #%1 (%2 of %3)").arg(m_currentCaptureId).arg(m_viewIndex + 1).arg(m_history.size()));
+}
+
+void MainWindow::updateHistoryUi()
+{
+    if (!m_prev)
+        return;
+    const bool idle = !m_device.isBusy();
+    m_prev->setEnabled(idle && m_viewIndex > 0 && !m_history.empty());
+    m_next->setEnabled(idle && m_viewIndex + 1 < m_history.size());
+    m_historyLabel->setText(m_history.empty() ? tr("No captures")
+                                              : tr("Capture #%1 (%2/%3)")
+                                                    .arg(m_currentCaptureId)
+                                                    .arg(m_viewIndex + 1)
+                                                    .arg(m_history.size()));
+}
+
+void MainWindow::setArmed()
+{
+    m_waveform->setDisplayState(WaveformWidget::DisplayState::Armed,
+                                m_waveform->hasCapture()
+                                    ? tr("ARMED - waiting for trigger; showing previous capture #%1").arg(m_currentCaptureId)
+                                    : tr("ARMED - waiting for trigger"));
+    updateReport();
+}
+
+void MainWindow::restoreIdleState()
+{
+    const bool latest = m_history.empty() || m_viewIndex + 1 >= m_history.size();
+    if (m_failure && latest)
+        m_waveform->setDisplayState(WaveformWidget::DisplayState::Stale,
+                                    m_waveform->hasCapture()
+                                        ? tr("STALE - capture failed; showing old capture #%1").arg(m_currentCaptureId)
+                                        : tr("STALE - capture failed"));
+    else
+        m_waveform->setDisplayState(WaveformWidget::DisplayState::Live);
+}
+
+void MainWindow::consumeNote()
+{
+    if (!m_notePin->isChecked() && !m_consumedNote.isEmpty() && m_aiNote->text() == m_consumedNote)
+        m_aiNote->clear();
+    m_consumedNote = m_aiNote->text();
+}
+
+void MainWindow::clearSetupMetadata()
+{
+    m_setup.clear();
+    if (m_viewIndex < m_history.size())
+        m_history[m_viewIndex].setup.clear();
+    updateReport();
+    showStatus(tr("Setup metadata cleared"));
+}
+
+QString MainWindow::failureReport() const
+{
+    if (!m_failure)
+        return {};
+    const std::string board = m_device.isConnected() ? m_device.info().version.board : m_lastBoard;
+    const QString note = m_aiNote ? m_aiNote->text().trimmed() : QString{};
+    return QString::fromStdString(lt::timeoutForAi(m_failure->lineDump, m_failure->status, m_failure->error,
+                                                   str(m_failure->trigger), board, str(note),
+                                                   m_waveform->hasCapture() ? m_currentCaptureId : 0));
 }
 
 void MainWindow::onHover(bool has, double seconds, int channel, int level)
@@ -651,6 +847,14 @@ lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> mod
     options.triggerDescription = str(m_triggerDescription);
     options.setup = m_setup;
     options.warnings = m_warnings;
+    options.captureId = m_currentCaptureId;
+    if (m_waveform->displayState() == WaveformWidget::DisplayState::Armed)
+        options.banner = "ARMED: waiting for the trigger - this report describes the PREVIOUS capture #" +
+                         std::to_string(m_currentCaptureId) + ", not the new one";
+    else if (m_viewIndex + 1 < m_history.size())
+        options.banner = "HISTORY: capture #" + std::to_string(m_currentCaptureId) + " (" +
+                         std::to_string(m_viewIndex + 1) + " of " + std::to_string(m_history.size()) +
+                         "), not the newest capture #" + std::to_string(m_history.back().id);
     if (m_device.isConnected()) {
         options.deviceVersion = m_device.info().version.raw;
         options.board = m_device.info().version.board;
@@ -683,6 +887,8 @@ lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> mod
 
 QString MainWindow::aiReportForMode(lt::CopyMode mode) const
 {
+    if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale)
+        return failureReport();
     if (!m_waveform->hasCapture())
         return tr("No capture yet.");
     return QString::fromStdString(lt::copyForAi(m_waveform->capture(), buildReportOptions(mode)));
@@ -699,7 +905,7 @@ void MainWindow::updateReport()
     const QString text = aiReport();
     m_report->setPlainText(text);
     if (m_reportSize) {
-        if (!m_waveform->hasCapture()) {
+        if (!m_waveform->hasCapture() && !m_failure) {
             m_reportSize->clear();
         } else {
             const int chars = text.size();
@@ -877,6 +1083,16 @@ namespace {
 using json = nlohmann::json;
 namespace sess = lt::session;
 
+const char* displayStateName(WaveformWidget::DisplayState state)
+{
+    switch (state) {
+    case WaveformWidget::DisplayState::Armed: return "armed";
+    case WaveformWidget::DisplayState::Stale: return "stale";
+    case WaveformWidget::DisplayState::Live: break;
+    }
+    return "live";
+}
+
 std::optional<double> secondsFromParams(const json& p, std::string& error)
 {
     int given = 0;
@@ -938,6 +1154,9 @@ json MainWindow::stateJson() const
               {"connected", m_device.isConnected()},
               {"busy", m_device.isBusy()},
               {"has_capture", m_waveform->hasCapture()},
+              {"capture_id", m_currentCaptureId},
+              {"display_state", displayStateName(m_waveform->displayState())},
+              {"history_size", m_history.size()},
               {"annotation_count", m_waveform->annotations().size()}};
     if (m_device.isConnected())
         j["device"] = lt::toJson(m_device.info());
@@ -964,6 +1183,15 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
     } else if (method == "get_state") {
         reply.ok(stateJson());
     } else if (method == "get_report") {
+        if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale) {
+            reply.ok({{"report", failureReport().toStdString()},
+                      {"metadata",
+                       {{"display_state", "stale"},
+                        {"capture_id", m_currentCaptureId},
+                        {"status", m_failure->status},
+                        {"error", m_failure->error}}}});
+            return;
+        }
         if (!m_waveform->hasCapture()) {
             reply.fail(sess::error::NoCapture, "no capture is shown in the GUI");
             return;
@@ -1004,8 +1232,10 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
             }
             options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
         }
-        reply.ok({{"report", lt::copyForAi(m_waveform->capture(), options)},
-                  {"metadata", lt::jsonMetadata(m_waveform->capture(), options)}});
+        auto metadata = lt::jsonMetadata(m_waveform->capture(), options);
+        metadata["display_state"] = displayStateName(m_waveform->displayState());
+        metadata["viewing_history"] = m_viewIndex + 1 < m_history.size();
+        reply.ok({{"report", lt::copyForAi(m_waveform->capture(), options)}, {"metadata", metadata}});
     } else if (method == "annotate") {
         sessionAnnotate(params, std::move(reply));
     } else if (method == "list_annotations") {
@@ -1029,6 +1259,22 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
 
 void MainWindow::sessionAnnotate(const json& p, sess::Responder reply)
 {
+    if (p.contains("capture_id")) {
+        if (!p["capture_id"].is_number_unsigned()) {
+            reply.fail(sess::error::InvalidParams, "capture_id must be a positive integer");
+            return;
+        }
+        const auto wanted = p["capture_id"].get<uint64_t>();
+        if (wanted != m_currentCaptureId || !m_waveform->hasCapture()) {
+            reply.fail(sess::error::StaleCapture,
+                       "capture #" + std::to_string(wanted) + " is not on screen; the current capture is #" +
+                           std::to_string(m_waveform->hasCapture() ? m_currentCaptureId : 0) +
+                           ". Re-read the view (lt_get_view) and retry.",
+                       {{"requested_capture_id", wanted},
+                        {"current_capture_id", m_waveform->hasCapture() ? m_currentCaptureId : 0}});
+            return;
+        }
+    }
     if (!m_waveform->hasCapture()) {
         reply.fail(sess::error::NoCapture, "no capture is shown in the GUI; annotations are relative to its trigger");
         return;
@@ -1068,7 +1314,8 @@ void MainWindow::sessionAnnotate(const json& p, sess::Responder reply)
 
     const auto id = m_waveform->addAnnotation(a);
     showStatus(tr("Annotation #%1 by %2: %3").arg(id).arg(QString::fromStdString(a.author), trimmed));
-    reply.ok({{"id", id}, {"time_us", a.timeSeconds * 1e6}, {"label", a.label}, {"color", a.color}});
+    reply.ok({{"id", id}, {"time_us", a.timeSeconds * 1e6}, {"label", a.label}, {"color", a.color},
+              {"capture_id", m_currentCaptureId}});
 }
 
 void MainWindow::sessionCapture(const json& p, sess::Responder reply)
@@ -1130,7 +1377,10 @@ void MainWindow::sessionCapture(const json& p, sess::Responder reply)
         const auto failed = std::exchange(m_pending, std::nullopt);
         m_pendingTriggerDescription.clear();
         failed->reply.fail(sess::error::Busy, "could not start the capture");
+        return;
     }
+    if (cfg->trigger)
+        setArmed();
 }
 
 void MainWindow::sessionProbe(const json& p, sess::Responder reply)

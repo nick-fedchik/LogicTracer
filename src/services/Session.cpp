@@ -44,10 +44,14 @@ void Responder::ok(const json& result) const
         m_sink({{"id", m_id}, {"result", result}});
 }
 
-void Responder::fail(int code, const std::string& message) const
+void Responder::fail(int code, const std::string& message, const nlohmann::json& data) const
 {
-    if (m_sink)
-        m_sink({{"id", m_id}, {"error", {{"code", code}, {"message", message}}}});
+    if (!m_sink)
+        return;
+    json error = {{"code", code}, {"message", message}};
+    if (!data.is_null())
+        error["data"] = data;
+    m_sink({{"id", m_id}, {"error", std::move(error)}});
 }
 
 Server::Server(QObject* parent) : QObject(parent) {}
@@ -188,6 +192,7 @@ CallResult call(const QString& socketPath, const std::string& method, const json
     if (reply.contains("error")) {
         out.errorCode = reply["error"].value("code", 0);
         out.error = reply["error"].value("message", std::string("session error"));
+        out.errorData = reply["error"].value("data", json(nullptr));
         return out;
     }
     out.ok = true;

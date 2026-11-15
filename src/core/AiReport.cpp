@@ -1003,19 +1003,26 @@ std::string inputPhysicsNote(std::string_view board)
            "Inputs are 3.3 V only (not 5 V tolerant).";
 }
 
-std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view error, std::string_view triggerDescription,
+std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view status, std::string_view error,
+                         std::string_view triggerDescription,
                          std::string_view board, std::string_view userNote, uint64_t previousCaptureId)
 {
     std::ostringstream ss;
-    ss << "## LogicTracer capture failed: trigger timeout\n\n";
+    ss << "## LogicTracer capture failed (" << status << ")\n\n";
     if (!userNote.empty())
         ss << "> **Context / Question:** " << userNote << "\n\n";
-    ss << "- Status: **TIMEOUT** (" << error << ")\n";
+    ss << "- Status: **" << status << "** (" << error << ")\n";
     ss << "- Trigger: " << (triggerDescription.empty() ? "unknown" : std::string(triggerDescription)) << "\n";
     if (previousCaptureId != 0)
         ss << "- The waveform on screen is the previous capture #" << previousCaptureId
            << "; it does NOT describe this attempt.\n";
-    ss << "\nLine levels read right after the timeout:\n\n| Ch | Pin | Name | State | High % | Edges | Diagnosis |\n"
+    if (lineDump.size() == 0) {
+        ss << "\nThe device returned no line levels.\n";
+        if (const auto note = inputPhysicsNote(board); !note.empty())
+            ss << "\n" << note << "\n";
+        return ss.str();
+    }
+    ss << "\nLine levels read right after the failure:\n\n| Ch | Pin | Name | State | High % | Edges | Diagnosis |\n"
           "|---|---|---|---|---|---|---|\n";
     for (const auto& st : SignalAnalyzer{}.analyze(lineDump)) {
         const auto diag = SignalAnalyzer::diagnose(st);

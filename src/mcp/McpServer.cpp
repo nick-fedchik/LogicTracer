@@ -179,7 +179,12 @@ json McpServer::sessionOrError(const std::string& method, const json& params)
     std::string message = r.error;
     if (!r.connected)
         message += ". Start logictracer-gui (the engineer's window) so annotations and the live view are available.";
-    return errorResult(message);
+    json structured = {{"status", "ERROR"}, {"error", message}, {"code", r.errorCode}};
+    if (r.errorCode == session::error::StaleCapture)
+        structured["error_kind"] = "StaleCapture";
+    if (!r.errorData.is_null())
+        structured["details"] = r.errorData;
+    return textResult(structured, true);
 }
 
 json McpServer::runDeviceTool(const std::string& tool, const json& args)

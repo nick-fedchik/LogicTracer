@@ -84,9 +84,9 @@ struct AnomalyIncident {
 [[nodiscard]] std::string copyForAi(const CaptureBuffer& buffer, const ReportOptions& options);
 // Compact AI-ready Markdown summary for a triggerless `probe` JSON document.
 [[nodiscard]] std::string probeForAi(const nlohmann::json& probeDoc, std::string_view userNote = {});
-// AI-ready diagnosis for a capture that failed (trigger timeout): the current level of every line,
-// taken from the line dump the device returns on TIMEOUT.
-[[nodiscard]] std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view error,
+// AI-ready diagnosis for a capture that failed (`status` is e.g. "TIMEOUT" or "ERROR"): the current
+// level of every line, taken from the line dump the device returns on TIMEOUT (may be empty).
+[[nodiscard]] std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view status, std::string_view error,
                                        std::string_view triggerDescription, std::string_view board,
                                        std::string_view userNote = {}, uint64_t previousCaptureId = 0);
 // Explains what a LOW/HIGH reading can and cannot prove on this board ("" for unknown boards).

@@ -22,6 +22,12 @@ class WaveformWidget : public QWidget {
 public:
     explicit WaveformWidget(QWidget* parent = nullptr);
 
+    // Live: the capture on screen is current. Armed: a new capture is waiting for its trigger, so the
+    // old waveform is dimmed. Stale: the last attempt failed; the waveform on screen is old data.
+    enum class DisplayState { Live, Armed, Stale };
+    void setDisplayState(DisplayState state, const QString& banner = {});
+    [[nodiscard]] DisplayState displayState() const noexcept { return m_displayState; }
+
     void setCapture(const lt::CaptureBuffer& buffer);
     void clearCapture();
     [[nodiscard]] const lt::CaptureBuffer& capture() const noexcept { return m_buffer; }
@@ -96,6 +102,8 @@ private:
     std::optional<std::size_t> m_cursorA, m_cursorB;
     std::vector<lt::Annotation> m_annotations;
     uint64_t m_nextAnnotationId = 1;
+    DisplayState m_displayState = DisplayState::Live;
+    QString m_banner;
 
     bool m_snapToEdges = true;
     bool m_pressed = false;
