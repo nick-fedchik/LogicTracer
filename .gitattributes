@@ -1,0 +1,4 @@
+# Keep upstream firmware byte-identical (mixed CRLF/LF) so diffs against gusmanb stay minimal.
+firmware/rp2040/** -text
+
+* text=auto eol=lf
