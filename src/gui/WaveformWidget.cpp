@@ -113,8 +113,47 @@ QRectF WaveformWidget::plotRect() const
     return QRectF(kGutterWidth, kPlotTop, std::max(1, width() - kGutterWidth), std::max(1, height() - kPlotTop));
 }
 
+double WaveformWidget::maxScrollY() const
+{
+    return std::max(0.0, rowHeight() * static_cast<double>(m_rows.size()) - plotRect().height());
+}
+
+void WaveformWidget::clampScroll()
+{
+    m_scrollY = std::clamp(m_scrollY, 0.0, maxScrollY());
+}
+
+void WaveformWidget::setScrollY(double px)
+{
+    const double before = m_scrollY;
+    m_scrollY = px;
+    clampScroll();
+    if (m_scrollY != before)
+        update();
+}
+
+void WaveformWidget::setRowHeight(double px)
+{
+    m_rowHeightPx = px <= 0 ? 0.0 : std::clamp(px, 12.0, 160.0);
+    clampScroll();
+    update();
+}
+
+void WaveformWidget::zoomRows(double factor)
+{
+    const double current = rowHeight();
+    // Keep the row under the top edge of the plot fixed while scaling.
+    const double topRow = (m_scrollY) / current;
+    setRowHeight(current * factor);
+    m_scrollY = topRow * rowHeight();
+    clampScroll();
+    update();
+}
+
 double WaveformWidget::rowHeight() const
 {
+    if (m_rowHeightPx > 0)
+        return m_rowHeightPx;
     const auto n = std::max<std::size_t>(1, m_rows.size());
     return std::clamp(plotRect().height() / static_cast<double>(n), static_cast<double>(kMinRowHeight),
                       static_cast<double>(kMaxRowHeight));
@@ -130,6 +169,7 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     m_buffer = buffer;
     rebuildChannelState();
     updateEmptyCard();
+    m_scrollY = 0;
     m_cursorA.reset();
     m_cursorB.reset();
     m_annotations.clear();  // annotation times are relative to the trigger of the capture they were made on
@@ -178,6 +218,7 @@ void WaveformWidget::rebuildChannelState()
         if (!m_hideInactive || !any || m_active[ch])  // never hide everything
             m_rows.push_back(ch);
     m_densityWidth = 0;
+    clampScroll();
 }
 
 void WaveformWidget::setDisplayState(DisplayState state, const QString& banner)
@@ -389,7 +430,7 @@ std::optional<std::size_t> WaveformWidget::rowAtY(double y) const
 {
     if (y < kPlotTop)
         return std::nullopt;
-    const auto r = static_cast<std::size_t>((y - kPlotTop) / rowHeight());
+    const auto r = static_cast<std::size_t>((y - kPlotTop + m_scrollY) / rowHeight());
     return r < m_rows.size() ? std::optional<std::size_t>(r) : std::nullopt;
 }
 
@@ -518,13 +559,26 @@ void WaveformWidget::paintEvent(QPaintEvent*)
     }
 
     const double rh = rowHeight();
+    p.save();
+    p.setClipRect(QRectF(0, kPlotTop, width(), height() - kPlotTop));  // rows scroll under the pinned header
     for (std::size_t r = 0; r < m_rows.size(); ++r) {
-        const QRectF row(0, kPlotTop + static_cast<double>(r) * rh, width(), rh);
+        const QRectF row(0, kPlotTop + static_cast<double>(r) * rh - m_scrollY, width(), rh);
         if (row.top() >= height())
             break;
+        if (row.bottom() <= kPlotTop)
+            continue;
         if (r % 2)
             p.fillRect(row, kRowAlt);
         drawChannel(p, plot, m_rows[r], row);
+    }
+    p.restore();
+    if (const double maxScroll = maxScrollY(); maxScroll > 0) {  // scroll indicator
+        const double track = plot.height();
+        const double thumb = std::max(16.0, track * track / (track + maxScroll));
+        const double top = kPlotTop + (track - thumb) * (m_scrollY / maxScroll);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(200, 205, 215, 110));
+        p.drawRoundedRect(QRectF(width() - 6, top, 4, thumb), 2, 2);
     }
     drawOverview(p);
     drawRuler(p, plot);
@@ -749,6 +803,7 @@ void WaveformWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     updateEmptyCard();
+    clampScroll();
     const bool wasFit = m_view.isFit();
     const double firstSample = m_view.start(), visible = m_view.visibleSamples();
     updateViewWidth();
@@ -765,9 +820,19 @@ void WaveformWidget::wheelEvent(QWheelEvent* event)
         event->ignore();
         return;
     }
-    const double steps = event->angleDelta().y() / 120.0;
+    const auto delta = event->angleDelta();
+    const double steps = (delta.y() != 0 ? delta.y() : delta.x()) / 120.0;  // Shift may swap the axis
     if (steps == 0.0) {
         event->ignore();
+        return;
+    }
+    if (event->modifiers() & Qt::ShiftModifier) {
+        if (event->modifiers() & Qt::ControlModifier)
+            zoomRows(std::pow(1.15, steps));
+        else
+            setScrollY(m_scrollY - steps * rowHeight());
+        Q_EMIT viewChanged();
+        event->accept();
         return;
     }
     if (event->modifiers() & Qt::ControlModifier) {
@@ -915,6 +980,7 @@ QString WaveformWidget::hintAt(const QPointF& pos) const
     if (pos.y() < kPlotTop)
         return tr("Time ruler relative to the trigger.\nCtrl+wheel zooms around the pointer.");
     return tr("Ctrl+wheel: zoom at pointer  |  Wheel: scroll  |  Drag: pan\n"
+              "Shift+wheel: scroll channels  |  Ctrl+Shift+wheel: row height\n"
               "Click: Cursor A  |  Shift+click: Cursor B  |  Drag a cursor line: move it\n"
               "Right-click: menu  |  Double-click / Home: fit all  |  +/-: zoom  |  H: hide inactive");
 }

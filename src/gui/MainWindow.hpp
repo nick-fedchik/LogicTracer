@@ -73,6 +73,8 @@ public Q_SLOTS:
     void showPreviousCapture();
     void showNextCapture();
     void clearSetupMetadata();
+    void editSetupMetadata();
+    void setSetupMetadata(const lt::SetupInfo& setup);
     // Moves the view to the next (+1) / previous (-1) anomaly of the whole capture, wrapping around.
     void jumpToAnomaly(int direction);
     void copyForAi();
@@ -142,6 +144,10 @@ private:
     void buildUi();
     void buildMenus();
     void updateControls();
+    void updateSetupButton();
+    void stopRepeat(const QString& why = {});
+    QCheckBox* m_repeat = nullptr;
+    QPushButton* m_setupButton = nullptr;
     QWidget* withBuilder(QLineEdit* field, const char* buttonName, const std::function<void()>& open);
     std::vector<int> builderChannels() const;
     void showStatus(const QString& text, bool error = false);

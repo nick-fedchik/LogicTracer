@@ -14,7 +14,9 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPointer>
+#include <QHeaderView>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -282,6 +284,102 @@ QFrame* showLatencyBuilder(QWidget* anchor, QLineEdit* target, const std::vector
     });
     ok->setEnabled(!channels.empty());
     placeBelow(frame, anchor);
+    return frame;
+}
+
+QFrame* showSetupEditor(QWidget* parent, const lt::SetupInfo& current,
+                        const std::function<void(const lt::SetupInfo&)>& apply)
+{
+    auto* frame = new QFrame(parent->window(), Qt::Dialog);
+    frame->setObjectName("setupEditor");
+    frame->setWindowTitle(QObject::tr("Setup Metadata"));
+    frame->setAttribute(Qt::WA_DeleteOnClose);
+    frame->setWindowModality(Qt::NonModal);
+    auto* layout = new QVBoxLayout(frame);
+    layout->addWidget(new QLabel(QObject::tr("Describe the test setup. These pairs are attached to every AI report "
+                                             "and exported capture.")));
+    auto* table = new QTableWidget(0, 2);
+    table->setObjectName("setupTable");
+    table->setHorizontalHeaderLabels({QObject::tr("Key"), QObject::tr("Value")});
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->setMinimumSize(420, 200);
+    layout->addWidget(table, 1);
+    auto* status = new QLabel;
+    status->setObjectName("setupStatus");
+    status->setStyleSheet("color: #c0392b;");
+    layout->addWidget(status);
+
+    const auto addRow = [table](const QString& key, const QString& value) {
+        const int r = table->rowCount();
+        table->insertRow(r);
+        table->setItem(r, 0, new QTableWidgetItem(key));
+        table->setItem(r, 1, new QTableWidgetItem(value));
+    };
+    for (const auto& [k, v] : current)
+        addRow(QString::fromStdString(k), QString::fromStdString(v));
+
+    auto* quick = new QHBoxLayout;
+    quick->addWidget(new QLabel(QObject::tr("Quick add:")));
+    for (const char* key : {"dut.board", "dut.firmware", "wiring", "pullups"}) {
+        auto* b = new QPushButton(QString::fromLatin1(key));
+        b->setObjectName(QString("template_%1").arg(key));
+        QObject::connect(b, &QPushButton::clicked, frame, [table, addRow, key] {
+            for (int r = 0; r < table->rowCount(); ++r)
+                if (table->item(r, 0) && table->item(r, 0)->text() == key) {
+                    table->setCurrentCell(r, 1);
+                    return;
+                }
+            addRow(QString::fromLatin1(key), {});
+            table->setCurrentCell(table->rowCount() - 1, 1);
+            table->editItem(table->item(table->rowCount() - 1, 1));
+        });
+        quick->addWidget(b);
+    }
+    auto* addBlank = new QPushButton(QObject::tr("Add row"));
+    addBlank->setObjectName("addRow");
+    auto* remove = new QPushButton(QObject::tr("Remove row"));
+    remove->setObjectName("removeRow");
+    quick->addStretch(1);
+    quick->addWidget(addBlank);
+    quick->addWidget(remove);
+    layout->addLayout(quick);
+    QObject::connect(addBlank, &QPushButton::clicked, frame, [addRow] { addRow({}, {}); });
+    QObject::connect(remove, &QPushButton::clicked, frame, [table] {
+        if (table->currentRow() >= 0)
+            table->removeRow(table->currentRow());
+    });
+
+    auto* row = new QHBoxLayout;
+    row->addStretch(1);
+    auto* close = new QPushButton(QObject::tr("Close"));
+    close->setObjectName("cancel");
+    auto* ok = new QPushButton(QObject::tr("Apply"));
+    ok->setObjectName("apply");
+    ok->setDefault(true);
+    row->addWidget(close);
+    row->addWidget(ok);
+    layout->addLayout(row);
+    QObject::connect(close, &QPushButton::clicked, frame, &QWidget::close);
+    QObject::connect(ok, &QPushButton::clicked, frame, [frame, table, status, apply] {
+        lt::SetupInfo out;
+        for (int r = 0; r < table->rowCount(); ++r) {
+            const std::string key = table->item(r, 0) ? table->item(r, 0)->text().trimmed().toStdString() : "";
+            const std::string value = table->item(r, 1) ? table->item(r, 1)->text().trimmed().toStdString() : "";
+            if (key.empty() && value.empty())
+                continue;  // blank rows are ignored
+            std::string err;
+            if (!lt::cli::isValidSetupEntry(key, value, &err)) {
+                status->setText(QObject::tr("Row %1: %2").arg(r + 1).arg(QString::fromStdString(err)));
+                table->setCurrentCell(r, 0);
+                return;
+            }
+            lt::cli::setSetupEntry(out, key, value);
+        }
+        apply(out);
+        frame->close();
+    });
+    frame->resize(520, 340);
+    frame->show();
     return frame;
 }
 

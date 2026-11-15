@@ -3,8 +3,11 @@
 
 #pragma once
 
+#include "core/CaptureTypes.hpp"
+
 #include <QString>
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,5 +33,10 @@ namespace lt::gui {
 QFrame* showChannelsBuilder(QWidget* anchor, QLineEdit* target, const std::string& board, int maxChannels);
 QFrame* showTriggerBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels);
 QFrame* showLatencyBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels);
+
+// Non-modal key/value editor for the test-setup metadata. Apply validates every row and calls `apply`
+// with the cleaned list; invalid rows are reported inline and block Apply.
+QFrame* showSetupEditor(QWidget* parent, const lt::SetupInfo& current,
+                        const std::function<void(const lt::SetupInfo&)>& apply);
 
 }  // namespace lt::gui

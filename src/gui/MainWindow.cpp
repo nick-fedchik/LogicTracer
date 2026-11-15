@@ -67,7 +67,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     connect(&m_device, &lt::AsyncDevice::probeFinished, this, &MainWindow::onProbeFinished);
     connect(&m_device, &lt::AsyncDevice::progress, this, &MainWindow::onProgress);
     connect(&m_device, &lt::AsyncDevice::busyChanged, this, &MainWindow::onBusyChanged);
-    connect(&m_device, &lt::AsyncDevice::closed, this, [this] { updateControls(); });
+    connect(&m_device, &lt::AsyncDevice::closed, this, [this] {
+        stopRepeat(tr("Repeat stopped: device disconnected"));
+        updateControls();
+    });
 
     m_reportTimer = new QTimer(this);
     m_reportTimer->setSingleShot(true);
@@ -91,6 +94,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
 
     refreshPorts();
     updateControls();
+    updateSetupButton();
     updatePreflight();
     updateReport();
     showStatus(tr("Not connected"));
@@ -153,7 +157,11 @@ void MainWindow::buildUi()
     }), 0, col++);
     grid->addWidget(new QLabel(tr("Timeout")), 0, col++);
     grid->addWidget(m_timeout, 0, col++);
+    m_repeat = new QCheckBox(tr("Repeat"));
+    m_repeat->setObjectName("repeat");
+    m_repeat->setToolTip(tr("Re-arm automatically after each successful capture; stops on Cancel, timeout, error or disconnect"));
     grid->addWidget(m_capture, 0, col++);
+    grid->addWidget(m_repeat, 0, col++);
     grid->addWidget(m_probe, 0, col++);
     grid->addWidget(m_cancel, 0, col++);
     grid->setColumnStretch(1, 2);
@@ -221,6 +229,11 @@ void MainWindow::buildUi()
     m_copyButton->setToolTip(tr("Copy the report below to the clipboard (Ctrl+Shift+C)"));
 
     aiBar->addWidget(new QLabel(tr("Ask AI:")));
+    m_setupButton = new QPushButton;
+    m_setupButton->setObjectName("setupButton");
+    m_setupButton->setToolTip(tr("Edit test-setup metadata attached to the report"));
+    connect(m_setupButton, &QPushButton::clicked, this, &MainWindow::editSetupMetadata);
+    aiBar->addWidget(m_setupButton);
     aiBar->addWidget(m_aiNote, 1);
     aiBar->addWidget(m_notePin);
     aiBar->addWidget(withBuilder(m_latencySpec, "latencyBuilderButton", [this] {
@@ -257,6 +270,7 @@ void MainWindow::buildUi()
     connect(m_capture, &QPushButton::clicked, this, &MainWindow::startCapture);
     connect(m_probe, &QPushButton::clicked, this, &MainWindow::startProbe);
     connect(m_cancel, &QPushButton::clicked, &m_device, &lt::AsyncDevice::requestCancel);
+    connect(m_cancel, &QPushButton::clicked, this, [this] { stopRepeat(); });
     connect(m_copyButton, &QPushButton::clicked, this, &MainWindow::copyForAi);
     connect(m_prev, &QPushButton::clicked, this, &MainWindow::showPreviousCapture);
     connect(m_next, &QPushButton::clicked, this, &MainWindow::showNextCapture);
@@ -287,6 +301,8 @@ void MainWindow::buildMenus()
     copyAb->setToolTip(tr("Copy report zoomed strictly to the span between Cursors A and B"));
 
     edit->addSeparator();
+    edit->addAction(tr("&Setup Metadata..."), this, &MainWindow::editSetupMetadata)
+        ->setToolTip(tr("View and edit the test-setup metadata (DUT, wiring, ...) attached to reports"));
     edit->addAction(tr("Clear Setup &Metadata"), this, &MainWindow::clearSetupMetadata)
         ->setToolTip(tr("Forget the test-setup metadata (DUT, wiring, ...) attached to reports"));
 
@@ -306,6 +322,13 @@ void MainWindow::buildMenus()
     m_hideInactiveAction->setCheckable(true);
     m_hideInactiveAction->setShortcut(QKeySequence(Qt::Key_H));
     connect(m_hideInactiveAction, &QAction::toggled, m_waveform, &WaveformWidget::setHideInactive);
+    auto* taller = view->addAction(tr("&Taller Rows"), m_waveform, [this] { m_waveform->zoomRows(1.25); });
+    taller->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Up));
+    auto* shorter = view->addAction(tr("S&horter Rows"), m_waveform, [this] { m_waveform->zoomRows(0.8); });
+    shorter->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Down));
+    auto* fitRows = view->addAction(tr("&Fit Rows to Window"), m_waveform, [this] { m_waveform->setRowHeight(0); });
+    fitRows->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_0));
+    taller->setToolTip(tr("Make channel rows taller (Ctrl+Shift+wheel); Shift+wheel scrolls the channels"));
     m_snapAction = view->addAction(tr("&Snap cursors to edges"));
     m_snapAction->setCheckable(true);
     m_snapAction->setChecked(m_waveform->snapToEdges());
@@ -351,6 +374,8 @@ void MainWindow::updateControls()
 {
     const bool busy = m_device.isBusy();
     const bool connected = m_device.isConnected();
+    if (!connected)
+        stopRepeat(tr("Repeat stopped: device disconnected"));
     m_port->setEnabled(!connected && !busy);
     m_refresh->setEnabled(!connected && !busy);
     m_connect->setEnabled(!busy || connected);
@@ -633,13 +658,24 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         showNewCapture(*r.buffer, candidateTrigger, fromSession ? pending->options.setup : m_setup,
                        fromSession ? pending->warnings : std::move(pendingWarnings), false);
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
+        if (m_repeat->isChecked() && !fromSession) {
+            QTimer::singleShot(0, this, [this] {
+                if (m_repeat->isChecked() && m_device.isConnected() && !m_device.isBusy()) {
+                    startCapture();
+                    if (!m_device.isBusy())
+                        stopRepeat(tr("Repeat stopped: the capture could not be started"));
+                }
+            });
+        }
         break;
     case lt::CaptureStatus::Cancelled:
+        stopRepeat();
         restoreIdleState();
         showStatus(tr("Capture cancelled"));
         break;
     case lt::CaptureStatus::Timeout:
     case lt::CaptureStatus::Error: {
+        stopRepeat();
         QString statusMsg = QString::fromStdString(r.error);
         if (r.lineDump) {  // TIMEOUT carries the current line state
             QString summary;
@@ -668,6 +704,15 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
         pending->reply.ok(doc.doc);
     }
+}
+
+void MainWindow::stopRepeat(const QString& why)
+{
+    if (!m_repeat || !m_repeat->isChecked())
+        return;
+    m_repeat->setChecked(false);
+    if (!why.isEmpty())
+        showStatus(why, true);
 }
 
 void MainWindow::onProbeFinished(const lt::ProbeResult& r)
@@ -759,6 +804,7 @@ void MainWindow::showEntry(std::size_t index)
     const auto& e = m_history[index];
     m_triggerDescription = e.trigger;
     m_setup = e.setup;
+    updateSetupButton();
     m_warnings = e.warnings;
     m_currentCaptureId = e.id;
     m_lastAnomaly.reset();
@@ -878,11 +924,31 @@ void MainWindow::jumpToAnomaly(int direction)
 
 void MainWindow::clearSetupMetadata()
 {
-    m_setup.clear();
-    if (m_viewIndex < m_history.size())
-        m_history[m_viewIndex].setup.clear();
-    updateReport();
+    setSetupMetadata({});
     showStatus(tr("Setup metadata cleared"));
+}
+
+void MainWindow::setSetupMetadata(const lt::SetupInfo& setup)
+{
+    m_setup = setup;
+    if (m_viewIndex < m_history.size())
+        m_history[m_viewIndex].setup = setup;
+    updateSetupButton();
+    updateReport();
+}
+
+void MainWindow::updateSetupButton()
+{
+    if (m_setupButton)
+        m_setupButton->setText(tr("Setup (%1)").arg(m_setup.size()));
+}
+
+void MainWindow::editSetupMetadata()
+{
+    lt::gui::showSetupEditor(this, m_setup, [this](const lt::SetupInfo& s) {
+        setSetupMetadata(s);
+        showStatus(tr("Setup metadata updated (%1 entries)").arg(s.size()));
+    });
 }
 
 QString MainWindow::failureReport() const

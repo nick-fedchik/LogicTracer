@@ -44,6 +44,17 @@ public:
         return channel < m_active.size() && m_active[channel];
     }
 
+    // Vertical layout: row height in px (0 = auto-fit to the widget) and scroll offset of the channel rows.
+    // The overview and ruler stay pinned while the rows scroll.
+    void setRowHeight(double px);
+    void zoomRows(double factor);
+    [[nodiscard]] double rowHeightSetting() const noexcept { return m_rowHeightPx; }
+    [[nodiscard]] double effectiveRowHeight() const { return rowHeight(); }
+    void setScrollY(double px);
+    [[nodiscard]] double scrollY() const noexcept { return m_scrollY; }
+    [[nodiscard]] double maxScrollY() const;
+    [[nodiscard]] std::optional<std::size_t> rowAt(double y) const { return rowAtY(y); }
+
     void setCapture(const lt::CaptureBuffer& buffer);
     void clearCapture();
     [[nodiscard]] const lt::CaptureBuffer& capture() const noexcept { return m_buffer; }
@@ -129,6 +140,7 @@ private:
     void jumpFromOverview(double x);
     void rebuildChannelState();
     void updateEmptyCard();
+    void clampScroll();
     void drawOverview(QPainter& p) const;
     void drawRuler(QPainter& p, const QRectF& plot) const;
     void drawChannel(QPainter& p, const QRectF& plot, std::size_t channel, const QRectF& row) const;
@@ -145,6 +157,8 @@ private:
     QString m_banner;
 
     QWidget* m_emptyCard = nullptr;
+    double m_rowHeightPx = 0;  // 0 = auto
+    double m_scrollY = 0;
     std::string m_board;
     bool m_hideInactive = false;
     std::vector<bool> m_active;           // per channel: has at least one transition

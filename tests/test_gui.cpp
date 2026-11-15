@@ -14,6 +14,9 @@
 #include <QCheckBox>
 #include <QFrame>
 #include <QLabel>
+#include <QPlainTextEdit>
+#include <QTableWidget>
+#include <QWheelEvent>
 #include <QToolButton>
 #include <QMenu>
 #include <QLineEdit>
@@ -777,6 +780,118 @@ private Q_SLOTS:
         QCOMPARE(latency->text(), QString("1..2"));
         QTest::qWait(50);
         QVERIFY(latency->styleSheet().isEmpty());
+    }
+
+    void setupEditorSyncsWithSetupAndReport()
+    {
+        MainWindow win;
+        win.resize(1200, 700);
+        win.show();
+        win.loadDemo();
+        auto* btn = win.findChild<QPushButton*>("setupButton");
+        QVERIFY(btn);
+        QCOMPARE(btn->text(), QString("Setup (0)"));
+        QTest::mouseClick(btn, Qt::LeftButton);
+        auto* ed = win.findChild<QFrame*>("setupEditor");
+        QVERIFY(ed && ed->isVisible());
+        ed->findChild<QPushButton*>("template_dut.board")->click();
+        auto* table = ed->findChild<QTableWidget*>("setupTable");
+        QCOMPARE(table->rowCount(), 1);
+        QCOMPARE(table->item(0, 0)->text(), QString("dut.board"));
+        table->item(0, 1)->setText("ESP32");
+        ed->findChild<QPushButton*>("addRow")->click();
+        table->item(1, 0)->setText("bad key!");
+        table->item(1, 1)->setText("x");
+        ed->findChild<QPushButton*>("apply")->click();
+        QVERIFY(ed->isVisible());  // invalid row blocks Apply
+        QVERIFY(!ed->findChild<QLabel*>("setupStatus")->text().isEmpty());
+        table->item(1, 0)->setText("wiring");
+        table->item(1, 1)->setText("GP0-GP3");
+        ed->findChild<QPushButton*>("apply")->click();
+
+        QCOMPARE(win.setup().size(), std::size_t{2});
+        QCOMPARE(btn->text(), QString("Setup (2)"));
+        QTest::qWait(250);
+        QVERIFY(win.findChild<QPlainTextEdit*>() ? win.findChild<QPlainTextEdit*>()->toPlainText().contains("ESP32") : false);
+        win.clearSetupMetadata();
+        QCOMPARE(btn->text(), QString("Setup (0)"));
+    }
+
+    void shiftWheelScrollsRowsWhileHeaderStaysPinned()
+    {
+        MainWindow win;
+        win.resize(1200, 500);
+        win.show();
+        win.loadDemo();
+        auto* w = win.waveform();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        QCOMPARE(w->scrollY(), 0.0);
+        w->setRowHeight(w->height());  // far taller than the viewport allows for 4 rows
+        w->setRowHeight(60);
+        w->setRowHeight(w->height() / 2.0);
+        QVERIFY(w->maxScrollY() > 0);
+        QVERIFY(w->maxScrollY() > 0);
+        QVERIFY(w->rowAt(60) && *w->rowAt(60) == 0);
+
+        QWheelEvent down(QPointF(400, 100), QPointF(), QPoint(), QPoint(0, -120), Qt::NoButton, Qt::ShiftModifier,
+                         Qt::NoScrollPhase, false);
+        QApplication::sendEvent(w, &down);
+        QVERIFY(w->scrollY() > 0);
+        QVERIFY(!w->rowAt(10));  // overview / ruler are not rows
+        QVERIFY(!w->rowAt(WaveformWidget::kPlotTop - 1));
+        const auto row = w->rowAt(WaveformWidget::kPlotTop + 2);
+        QVERIFY(row && *row >= 1);  // scrolled past the first row
+
+        const double h = w->effectiveRowHeight();
+        QWheelEvent zoom(QPointF(400, 100), QPointF(), QPoint(), QPoint(0, 120), Qt::NoButton,
+                         Qt::ShiftModifier | Qt::ControlModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(w, &zoom);
+        QVERIFY(w->effectiveRowHeight() > h);
+        w->setRowHeight(0);
+        QCOMPARE(w->scrollY(), 0.0);  // auto-fit never needs scrolling for 4 rows
+    }
+
+    void repeatRearmsUntilCancelOrDisconnect()
+    {
+        int served = 0;
+        fake::Device dev([&served](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("V6_5", true));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.recordRequest(r);
+                d.send("CAPTURE_STARTED\n");
+                if (++served <= 3)  // then stay armed so Cancel can be pressed while busy
+                    d.send(fake::captureData(r, 0x01));
+            }
+        });
+        MainWindow win;
+        win.show();
+        win.device().setPollLatency(50ms);
+        win.setPortText(QString::fromStdString(dev.port()));
+        QTest::mouseClick(button(win, "Connect"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        field(win, "channels")->setText("1,2");
+        field(win, "samples")->setText("100");
+        auto* repeat = win.findChild<QCheckBox*>("repeat");
+        QVERIFY(repeat && !repeat->isChecked());
+        repeat->setChecked(true);
+        QTest::mouseClick(button(win, "Capture"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(dev.requests().size() >= 4, 8000);
+        QVERIFY(repeat->isChecked());
+        QTRY_VERIFY(win.device().isBusy());
+
+        QTest::mouseClick(button(win, "Cancel"), Qt::LeftButton);
+        QVERIFY(!repeat->isChecked());
+        QTRY_VERIFY_WITH_TIMEOUT(!win.device().isBusy(), 5000);
+        const auto count = dev.requests().size();
+        QTest::qWait(300);
+        QVERIFY(dev.requests().size() <= count + 1);
+
+        repeat->setChecked(true);
+        QTest::mouseClick(button(win, "Disconnect"), Qt::LeftButton);
+        QTRY_VERIFY(!win.device().isConnected());
+        QVERIFY(!repeat->isChecked());
     }
 };
 
