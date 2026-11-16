@@ -21,3 +21,26 @@ jobs:
         run: cmake --build --preset debug
       - name: Test
         run: ctest --preset debug
+
+  firmware:
+    # Compile-only check of the RP2040 firmware (nothing is flashed). Not yet a required check.
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi \
+            build-essential libusb-1.0-0-dev pkg-config git
+      - name: Fetch the Pico SDK
+        run: |
+          git clone --depth 1 --branch 2.1.1 https://github.com/raspberrypi/pico-sdk "$RUNNER_TEMP/pico-sdk"
+          git -C "$RUNNER_TEMP/pico-sdk" submodule update --init --depth 1 lib/tinyusb
+      - name: Build (Pico and Interceptor variants)
+        run: |
+          for board in BOARD_PICO BOARD_INTERCEPTOR; do
+            cmake -S firmware/rp2040 -B "build-fw-$board" -G Ninja -DPICO_SDK_PATH="$RUNNER_TEMP/pico-sdk" \
+              -DBOARD_TYPE=$board -DTURBO_MODE=0
+            cmake --build "build-fw-$board"
+          done

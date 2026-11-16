@@ -4,6 +4,7 @@ Name=LogicTracer
 GenericName=Logic Analyzer
 Comment=Evidence-grade logic analysis for humans and AI agents
 Exec=logictracer-gui
+Icon=logictracer
 Terminal=false
 Categories=Development;Electronics;Engineering;
 Keywords=logic;analyzer;rp2040;hil;waveform;

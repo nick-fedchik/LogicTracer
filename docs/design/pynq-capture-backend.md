@@ -36,7 +36,8 @@ probe. Both feed the same `CaptureBuffer`, analysis and AI reports.
 ```
 
 ### PL core `lt_capture`
-* Parameters: `PROBE_WIDTH` (≤ 32), `DEPTH` (power of two), `TIMESTAMP_BITS` (48).
+* Parameters: `PROBE_WIDTH` (≤ 32), `ADDR_WIDTH` (log2 of the record count, 13 = 8192), `TS_WIDTH` (33..63,
+  default 48), `SYNC_STAGES` (0 or 2), `CLOCK_HZ`.
 * **Edge encoding:** a record `{timestamp, probe value}` is written only when `probe` changes, plus
   one record at arm time. This matches the edge-based `logictracer-capture-v1` format and turns
   BRAM depth into *events*, not samples: a 100-transaction burst needs ~400 records instead of
@@ -44,9 +45,11 @@ probe. Both feed the same `CaptureBuffer`, analysis and AI reports.
 * **Trigger unit:** `(probe & mask) == value` combined with an edge mask (rising/falling per bit),
   plus an external trigger input. Pre-trigger history comes from the ring buffer; a post-trigger
   record or cycle count ends the capture.
-* **Registers (AXI-Lite):** `ID` ("LTRC"), `VERSION`, `CTRL` (arm, abort, clear), `STATUS`
-  (armed, triggered, done, overflow), `TRIG_MASK`, `TRIG_VALUE`, `TRIG_EDGE`, `POST_CYCLES`,
-  `WRITE_PTR`, `TRIGGER_PTR`, `CLOCK_HZ`, and a readout window. Every write is accepted with OKAY;
+* **Registers (AXI-Lite, offsets in `hdl/README.md`):** `ID` ("LTRC"), `VERSION`, `CTRL` (arm, abort,
+  force, external-trigger mode), `STATUS` (armed, triggered, done, overflow, wrapped, aborted),
+  `TRIG_MASK`, `TRIG_VALUE`, `TRIG_RISE`, `TRIG_FALL`, `POST_LO`/`POST_HI`, `WRITE_PTR`, `TRIG_PTR`,
+  `TRIG_TS`/`END_TS`, `CLOCK_HZ`, `CONFIG`, `RECORDS`, `OLDEST`, and the readout window
+  `READ_INDEX`/`READ_TS`/`READ_PROBE` (reading `READ_PROBE` advances the index). Every write is accepted with OKAY;
   unknown addresses return zero (no SLVERR, see backlog B-08).
 * **Resources (estimate):** 32-bit probe + 48-bit timestamp, 8 k records ≈ 640 Kib ≈ 18 BRAM36 of
   140; logic below 1 % of the device; closes timing at 100 MHz.

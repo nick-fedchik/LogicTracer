@@ -21,3 +21,5 @@ install(TARGETS logictracer-gui
     BUNDLE DESTINATION .)
 install(FILES ${PROJECT_SOURCE_DIR}/packaging/logictracer-gui.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES ${PROJECT_SOURCE_DIR}/packaging/logictracer.svg
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
