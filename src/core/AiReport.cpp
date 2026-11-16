@@ -206,24 +206,45 @@ std::optional<Motif> detectMotif(const CaptureBuffer& b, const std::vector<Chron
     if (cycle == 0)
         return std::nullopt;
 
+    // The reference cycle starts at the first position that repeats twice in a row, so a startup
+    // glitch before it is reported as a deviation instead of becoming part of the motif.
+    std::size_t refStart = 0;
+    for (std::size_t s = 0; s + 2 * cycle <= e; ++s) {
+        bool repeats = true;
+        for (std::size_t k = 0; k < cycle && repeats; ++k)
+            repeats = token(s + k) == token(s + k + cycle);
+        if (repeats) {
+            refStart = s;
+            break;
+        }
+    }
+
     Motif m;
     m.positions.resize(cycle);
     for (std::size_t k = 0; k < cycle; ++k) {
-        m.positions[k].channelIndex = trs[k].channelIndex;
-        m.positions[k].rising = trs[k].rising;
+        m.positions[k].channelIndex = trs[refStart + k].channelIndex;
+        m.positions[k].rising = trs[refStart + k].rising;
     }
     auto expectedToken = [&](std::size_t pos) { return m.positions[pos].channelIndex * 2 + (m.positions[pos].rising ? 1 : 0); };
 
     // Pass 1: follow the motif, resynchronising after an unexpected transition.
     std::vector<std::vector<uint32_t>> deltas(cycle);
-    std::vector<std::pair<std::size_t, std::size_t>> matchedAt;  // (transition index, position)
+    struct Matched {
+        std::size_t index;
+        std::size_t position;
+        uint32_t delta;  // samples since the previous matched transition
+    };
+    std::vector<Matched> matchedAt;
+    std::optional<std::size_t> lastMatchedSample;
     std::size_t phase = 0;
     for (std::size_t i = 0; i < e; ++i) {
         if (token(i) == expectedToken(phase)) {
-            if (i > 0) {
-                deltas[phase].push_back(static_cast<uint32_t>(trs[i].sample - trs[i - 1].sample));
-                matchedAt.emplace_back(i, phase);
+            if (lastMatchedSample) {
+                const auto d = static_cast<uint32_t>(trs[i].sample - *lastMatchedSample);
+                deltas[phase].push_back(d);
+                matchedAt.push_back({i, phase, d});
             }
+            lastMatchedSample = trs[i].sample;
             ++m.matched;
             phase = (phase + 1) % cycle;
             continue;
@@ -253,9 +274,8 @@ std::optional<Motif> detectMotif(const CaptureBuffer& b, const std::vector<Chron
         limit[k] = std::max<uint32_t>(2, 5 * medianOf(dev));
         pos.minDelta = pos.maxDelta = pos.medianDelta;
     }
-    for (const auto& [i, k] : matchedAt) {
+    for (const auto& [i, k, d] : matchedAt) {
         auto& pos = m.positions[k];
-        const uint32_t d = static_cast<uint32_t>(trs[i].sample - trs[i - 1].sample);
         const uint32_t dev = d > pos.medianDelta ? d - pos.medianDelta : pos.medianDelta - d;
         if (dev > limit[k]) {
             // A long pause before the first transition of a cycle separates bursts; it is not a fault.
@@ -313,30 +333,30 @@ Insights computeInsights(const CaptureBuffer& b, const Range& r, const std::vect
     }
 
     // One physical incident usually trips several detectors (a drop is also an unexpected edge and an
-    // irregular period). Chain findings closer than one motif cycle into a single incident.
+    // irregular period). Findings within one motif cycle of the incident's first finding form a single incident.
     std::size_t radius = 2;
     if (in.motif) {
         radius = 0;
         for (const auto& p : in.motif->positions)
             radius += p.medianDelta;
-        radius = std::max<std::size_t>(radius, 2);
+        // Strictly less than one cycle: failures in adjacent cycles are separate incidents.
+        radius = std::max<std::size_t>(radius > 0 ? radius - 1 : 0, 2);
     }
     std::sort(in.anomalies.begin(), in.anomalies.end(), [](const Anomaly& a, const Anomaly& c) { return a.sample < c.sample; });
     std::vector<Anomaly> merged;
-    std::size_t groupLast = 0, related = 0;
+    std::size_t groupFirst = 0, related = 0;
     auto flush = [&] {
         if (!merged.empty() && related > 0)
             merged.back().detail += " (+" + std::to_string(related) + " related finding" + (related > 1 ? "s" : "") + ")";
         related = 0;
     };
     for (auto& a : in.anomalies) {
-        if (merged.empty() || a.sample - groupLast > radius) {
+        if (merged.empty() || a.sample - groupFirst > radius) {
             flush();
-            groupLast = a.sample;
+            groupFirst = a.sample;
             merged.push_back(std::move(a));
             continue;
         }
-        groupLast = a.sample;
         auto& g = merged.back();
         if (g.kind.find(a.kind) == std::string::npos)
             g.kind += "+" + a.kind;

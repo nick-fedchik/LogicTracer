@@ -861,6 +861,49 @@ private Q_SLOTS:
         QCOMPARE(meta["motif"]["cycle_transitions"].get<int>(), 4);
     }
 
+    // A 1-sample glitch before 30 clean cycles must not become part of the motif or flag every cycle.
+    void startupGlitchDoesNotPoisonMotif()
+    {
+        const int cycles = 30, period = 8;
+        std::vector<uint32_t> s(4 + cycles * period, 0);
+        s[1] = 2;  // REACT glitch
+        for (int c = 0; c < cycles; ++c) {
+            const int b = 4 + c * period;
+            s[b] |= 1; s[b + 1] |= 1;
+            s[b + 2] |= 3; s[b + 3] |= 3;
+            s[b + 4] |= 2; s[b + 5] |= 2;
+        }
+        const lt::CaptureBuffer buf({{0, "STIM"}, {1, "REACT"}}, 1'000'000, 0, s);
+        lt::ReportOptions o;
+        const auto md = lt::markdownSummary(buf, o);
+        QVERIFY(md.find("STIM↑ +2 REACT↑ +2 STIM↓ +2") != std::string::npos);  // cycle may start at any rotation
+        const auto meta = lt::jsonMetadata(buf, o);
+        QVERIFY(meta["motif"]["unexpected_transitions"].get<int>() <= 2);
+        QVERIFY(meta["motif"]["repetitions"].get<int>() >= 29);
+        QVERIFY(lt::findAnomalies(buf, o).size() <= 2);
+    }
+
+    // Five consecutive dropped reactions are five incidents, not one chained cluster.
+    void consecutiveDropsStaySeparateIncidents()
+    {
+        const int cycles = 30, period = 8;
+        std::vector<uint32_t> s(cycles * period + 8, 0);
+        for (int c = 0; c < cycles; ++c) {
+            const int b = c * period;
+            s[b] |= 1; s[b + 1] |= 1;
+            if (c < 10 || c >= 15) {
+                s[b + 2] |= 2; s[b + 3] |= 2;
+            }
+        }
+        const lt::CaptureBuffer buf({{0, "STIM"}, {1, "REACT"}}, 1'000'000, 0, s);
+        lt::ReportOptions o;
+        o.latency = lt::LatencyPairSpec{0, false, 1, false, std::nullopt};
+        int drops = 0;
+        for (const auto& a : lt::findAnomalies(buf, o))
+            drops += a.kind.find("DroppedStimulus") != std::string::npos;
+        QCOMPARE(drops, 5);
+    }
+
     void probeForAiFormatsPinAndState()
     {
         const nlohmann::json doc = {
