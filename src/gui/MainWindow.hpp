@@ -108,8 +108,15 @@ private:
         std::chrono::milliseconds probeWindow{0};
     };
 
+    // Which device produced a capture; empty for demo captures and files.
+    struct DeviceStamp {
+        std::string version;
+        std::string board;
+    };
+
     struct CaptureEntry {
         uint64_t id = 0;
+        DeviceStamp stamp;
         lt::CaptureBuffer buffer;
         QString trigger;
         lt::SetupInfo setup;
@@ -127,7 +134,14 @@ private:
     };
 
     void showNewCapture(const lt::CaptureBuffer& buffer, const QString& trigger, lt::SetupInfo setup,
-                        std::vector<std::string> warnings, bool isProbe);
+                        std::vector<std::string> warnings, bool isProbe, DeviceStamp stamp = {});
+    [[nodiscard]] DeviceStamp liveStamp() const;
+    // Remembers the failed operation, returns to the newest capture and marks the display stale.
+    void recordFailure(FailureInfo failure);
+    void rearmRepeat();
+    // Non-blocking file dialog; `onChosen` runs only if the capture on screen is still the one it was opened for.
+    void askFile(bool save, const QString& title, const QString& name, const QString& filter,
+                 std::function<void(const QString&)> onChosen);
     void showEntry(std::size_t index);
     void saveViewState();
     void trimHistory();
@@ -210,6 +224,7 @@ private:
     QString m_triggerDescription;
     QString m_pendingTriggerDescription;
     lt::SetupInfo m_setup;
+    DeviceStamp m_stamp;  // device that produced the capture on screen
     QAction* m_copyAction = nullptr;
     QAction* m_hideInactiveAction = nullptr;
     QAction* m_snapAction = nullptr;

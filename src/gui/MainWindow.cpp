@@ -451,7 +451,6 @@ void MainWindow::onOpened(bool ok, const QString& error)
         if (!m_lastBoard.empty() && board != m_lastBoard)
             clearSetupMetadata();  // setup text describes wiring of another board
         m_lastBoard = board;
-        m_waveform->setBoard(board);
         showStatus(tr("Connected: %1").arg(QString::fromStdString(m_device.info().version.raw)));
     } else {
         showStatus(tr("Connection failed: %1").arg(error), true);
@@ -657,22 +656,20 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     auto pendingWarnings = std::exchange(m_pendingWarnings, {});
     const bool fromSession = pending && !pending->isProbe;
     switch (r.status) {
-    case lt::CaptureStatus::Ok:
+    case lt::CaptureStatus::Ok: {
         consumeNote();
         m_failure.reset();
-        showNewCapture(*r.buffer, candidateTrigger, fromSession ? pending->options.setup : m_setup,
-                       fromSession ? pending->warnings : std::move(pendingWarnings), false);
+        lt::SetupInfo setup = m_setup;  // a session capture without meta keeps the engineer's setup
+        if (fromSession)
+            for (const auto& [k, v] : pending->options.setup)
+                lt::cli::setSetupEntry(setup, k, v);
+        showNewCapture(*r.buffer, candidateTrigger, std::move(setup),
+                       fromSession ? pending->warnings : std::move(pendingWarnings), false, liveStamp());
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
-        if (m_repeat->isChecked() && !fromSession) {
-            QTimer::singleShot(0, this, [this] {
-                if (m_repeat->isChecked() && m_device.isConnected() && !m_device.isBusy()) {
-                    startCapture();
-                    if (!m_device.isBusy())
-                        stopRepeat(tr("Repeat stopped: the capture could not be started"));
-                }
-            });
-        }
+        if (m_repeat->isChecked() && !fromSession)
+            QTimer::singleShot(0, this, &MainWindow::rearmRepeat);
         break;
+    }
     case lt::CaptureStatus::Cancelled:
         stopRepeat();
         restoreIdleState();
@@ -692,10 +689,8 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
             }
             statusMsg += tr(" [line state: %1]").arg(summary);
         }
-        m_failure = FailureInfo{r.lineDump ? *r.lineDump : lt::CaptureBuffer{}, std::string(lt::toString(r.status)),
-                                r.error, candidateTrigger};
-        restoreIdleState();
-        updateReport();
+        recordFailure(FailureInfo{r.lineDump ? *r.lineDump : lt::CaptureBuffer{}, std::string(lt::toString(r.status)),
+                                  r.error, candidateTrigger});
         showStatus(statusMsg, true);
         break;
     }
@@ -709,6 +704,37 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
         pending->reply.ok(doc.doc);
     }
+}
+
+void MainWindow::recordFailure(FailureInfo failure)
+{
+    m_failure = std::move(failure);
+    // A failure started from an older history entry must still be reported: go back to the newest capture.
+    if (!m_history.empty() && m_viewIndex + 1 < m_history.size()) {
+        saveViewState();
+        showEntry(m_history.size() - 1);
+        return;
+    }
+    restoreIdleState();
+    updateReport();
+}
+
+// Re-arms Repeat; waits while a session capture occupies the device instead of silently giving up.
+void MainWindow::rearmRepeat()
+{
+    if (!m_repeat->isChecked())
+        return;
+    if (!m_device.isConnected()) {
+        stopRepeat(tr("Repeat stopped: device disconnected"));
+        return;
+    }
+    if (m_device.isBusy() || m_pending) {
+        QTimer::singleShot(250, this, &MainWindow::rearmRepeat);
+        return;
+    }
+    startCapture();
+    if (!m_device.isBusy())
+        stopRepeat(tr("Repeat stopped: the capture could not be started"));
 }
 
 void MainWindow::stopRepeat(const QString& why)
@@ -729,11 +755,12 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
     if (ok) {
         consumeNote();
         m_failure.reset();
-        showNewCapture(*r.buffer, candidateTrigger, m_setup, {}, true);
+        showNewCapture(*r.buffer, candidateTrigger, m_setup, {}, true, liveStamp());
         showStatus(tr("Probe complete (%1 ms)").arg(r.elapsed.count()));
     } else if (r.status == lt::CaptureStatus::Cancelled) {
         showStatus(tr("Probe cancelled"));
     } else {
+        recordFailure(FailureInfo{lt::CaptureBuffer{}, std::string(lt::toString(r.status)), r.error, candidateTrigger});
         showStatus(QString::fromStdString(r.error), true);
     }
     if (pending && pending->isProbe) {
@@ -746,6 +773,7 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
 
 void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup)
 {
+    consumeNote();
     m_failure.reset();
     showNewCapture(buffer, triggerDescription, std::move(setup), {}, false);
 }
@@ -759,12 +787,19 @@ void MainWindow::setHistoryLimits(std::size_t entries, std::size_t bytes)
         showEntry(std::min(m_viewIndex, m_history.size() - 1));
 }
 
+MainWindow::DeviceStamp MainWindow::liveStamp() const
+{
+    return m_device.isConnected() ? DeviceStamp{m_device.info().version.raw, m_device.info().version.board}
+                                  : DeviceStamp{};
+}
+
 void MainWindow::showNewCapture(const lt::CaptureBuffer& buffer, const QString& trigger, lt::SetupInfo setup,
-                                std::vector<std::string> warnings, bool isProbe)
+                                std::vector<std::string> warnings, bool isProbe, DeviceStamp stamp)
 {
     saveViewState();
     CaptureEntry entry;
     entry.id = ++m_nextCaptureId;
+    entry.stamp = std::move(stamp);
     entry.buffer = buffer;
     entry.trigger = trigger;
     entry.setup = std::move(setup);
@@ -812,6 +847,8 @@ void MainWindow::showEntry(std::size_t index)
     updateSetupButton();
     m_warnings = e.warnings;
     m_currentCaptureId = e.id;
+    m_stamp = e.stamp;
+    m_waveform->setBoard(e.stamp.board);
     m_lastAnomaly.reset();
     m_waveform->setCapture(e.buffer);
     m_waveform->setAnnotations(e.annotations);
@@ -1022,10 +1059,8 @@ lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> mod
         options.banner = "HISTORY: capture #" + std::to_string(m_currentCaptureId) + " (" +
                          std::to_string(m_viewIndex + 1) + " of " + std::to_string(m_history.size()) +
                          "), not the newest capture #" + std::to_string(m_history.back().id);
-    if (m_device.isConnected()) {
-        options.deviceVersion = m_device.info().version.raw;
-        options.board = m_device.info().version.board;
-    }
+    options.deviceVersion = m_stamp.version;  // the capture's own device, not whatever is connected now
+    options.board = m_stamp.board;
     if (m_aiNote) {
         const QString note = m_aiNote->text().trimmed();
         if (!note.isEmpty())
@@ -1093,6 +1128,7 @@ void MainWindow::updateReport()
 void MainWindow::copyWithMode(lt::CopyMode mode)
 {
     const QString text = aiReportForMode(mode);
+    m_consumedNote = m_aiNote->text();  // this note has now been handed to an AI; the next capture clears it
     QGuiApplication::clipboard()->setText(text);
     const int approxTok = (text.size() + 3) / 4;
     showStatus(tr("Copied %1 chars (~%2 tokens) for AI [%3]")
@@ -1131,15 +1167,28 @@ void MainWindow::showWaveformContextMenu(const QPoint& globalPos, std::size_t sa
     a->setEnabled(has);
     b->setEnabled(has);
     menu->addAction(tr("Add Annotation Here..."), this, [this, sample] {
-        bool ok = false;
-        const auto text = QInputDialog::getText(this, tr("Add Annotation"), tr("Label:"), QLineEdit::Normal, {}, &ok).trimmed();
-        if (!ok || text.isEmpty())
-            return;
-        lt::Annotation note;
-        note.timeSeconds = m_waveform->capture().timeOfSample(sample);
-        note.label = str(text);
-        note.author = "user";
-        m_waveform->addAnnotation(std::move(note));
+        // Non-blocking, and bound to the capture the click was made on.
+        auto* dialog = new QInputDialog(this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setObjectName("annotationDialog");
+        dialog->setWindowTitle(tr("Add Annotation"));
+        dialog->setLabelText(tr("Label:"));
+        const uint64_t captureId = m_currentCaptureId;
+        connect(dialog, &QInputDialog::textValueSelected, this, [this, sample, captureId](const QString& value) {
+            const QString text = value.trimmed();
+            if (text.isEmpty())
+                return;
+            if (captureId != m_currentCaptureId || !m_waveform->hasCapture()) {
+                showStatus(tr("The capture changed while the dialog was open; annotation discarded"), true);
+                return;
+            }
+            lt::Annotation note;
+            note.timeSeconds = m_waveform->capture().timeOfSample(sample);
+            note.label = str(text);
+            note.author = "user";
+            m_waveform->addAnnotation(std::move(note));
+        });
+        dialog->open();
     })->setEnabled(has);
     if (annotationId != 0)
         menu->addAction(tr("Delete Annotation #%1").arg(annotationId), this,
@@ -1184,13 +1233,32 @@ bool MainWindow::openCaptureFile(const QString& path, QString* error)
     return true;
 }
 
+void MainWindow::askFile(bool save, const QString& title, const QString& name, const QString& filter,
+                         std::function<void(const QString&)> onChosen)
+{
+    auto* dialog = new QFileDialog(this, title, name, filter);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setObjectName("fileDialog");
+    dialog->setAcceptMode(save ? QFileDialog::AcceptSave : QFileDialog::AcceptOpen);
+    dialog->setFileMode(save ? QFileDialog::AnyFile : QFileDialog::ExistingFile);
+    const uint64_t captureId = m_currentCaptureId;
+    connect(dialog, &QFileDialog::fileSelected, this, [this, save, captureId, onChosen = std::move(onChosen)](const QString& path) {
+        if (path.isEmpty())
+            return;
+        if (save && captureId != m_currentCaptureId) {
+            showStatus(tr("The capture changed while the dialog was open; nothing was saved"), true);
+            return;
+        }
+        onChosen(path);
+    });
+    dialog->open();
+}
+
 void MainWindow::openCapture()
 {
-    const auto path = QFileDialog::getOpenFileName(
-        this, tr("Open Capture"), QString{},
-        tr("Captures (*.json *.vcd *.lac);;JSON (*.json);;VCD (*.vcd);;Legacy LAC (*.lac);;All files (*)"));
-    if (!path.isEmpty())
-        openCaptureFile(path);
+    askFile(false, tr("Open Capture"), {},
+            tr("Captures (*.json *.vcd *.lac);;JSON (*.json);;VCD (*.vcd);;Legacy LAC (*.lac);;All files (*)"),
+            [this](const QString& path) { openCaptureFile(path); });
 }
 
 void MainWindow::saveVcd()
@@ -1199,14 +1267,13 @@ void MainWindow::saveVcd()
         showStatus(tr("Nothing to save"), true);
         return;
     }
-    const auto path = QFileDialog::getSaveFileName(this, tr("Save VCD"), "capture.vcd", tr("VCD (*.vcd)"));
-    if (path.isEmpty())
-        return;
-    std::string err;
-    if (lt::writeVcdFile(str(path), m_waveform->capture(), &err))
-        showStatus(tr("Saved %1").arg(path));
-    else
-        showStatus(QString::fromStdString(err), true);
+    askFile(true, tr("Save VCD"), "capture.vcd", tr("VCD (*.vcd)"), [this](const QString& path) {
+        std::string err;
+        if (lt::writeVcdFile(str(path), m_waveform->capture(), &err))
+            showStatus(tr("Saved %1").arg(path));
+        else
+            showStatus(QString::fromStdString(err), true);
+    });
 }
 
 void MainWindow::saveJson()
@@ -1215,36 +1282,34 @@ void MainWindow::saveJson()
         showStatus(tr("Nothing to save"), true);
         return;
     }
-    const auto path = QFileDialog::getSaveFileName(this, tr("Save JSON"), "capture.json", tr("JSON (*.json)"));
-    if (path.isEmpty())
-        return;
-    lt::SignalAnalyzer::Options opts;
-    opts.collectEdges = true;
-    const auto& buf = m_waveform->capture();
-    const auto stats = lt::SignalAnalyzer(opts).analyze(buf);
-    const std::string board = m_device.isConnected() ? m_device.info().version.board : std::string{};
-    nlohmann::json doc = lt::captureToJson(buf, stats, true, board);
-    if (!m_triggerDescription.isEmpty())
-        doc["trigger_description"] = str(m_triggerDescription);
-    if (!m_setup.empty())
-        doc["setup"] = lt::toJson(m_setup);
-    if (!m_waveform->annotations().empty()) {
-        auto notes = nlohmann::json::array();
-        for (const auto& a : m_waveform->annotations()) {
-            notes.push_back({{"id", a.id},
-                             {"time_us", a.timeSeconds * 1e6},
-                             {"duration_us", a.durationSeconds * 1e6},
-                             {"label", a.label},
-                             {"color", a.color},
-                             {"author", a.author}});
+    askFile(true, tr("Save JSON"), "capture.json", tr("JSON (*.json)"), [this](const QString& path) {
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        const auto& buf = m_waveform->capture();
+        const auto stats = lt::SignalAnalyzer(opts).analyze(buf);
+        nlohmann::json doc = lt::captureToJson(buf, stats, true, m_stamp.board);
+        if (!m_triggerDescription.isEmpty())
+            doc["trigger_description"] = str(m_triggerDescription);
+        if (!m_setup.empty())
+            doc["setup"] = lt::toJson(m_setup);
+        if (!m_waveform->annotations().empty()) {
+            auto notes = nlohmann::json::array();
+            for (const auto& a : m_waveform->annotations()) {
+                notes.push_back({{"id", a.id},
+                                 {"time_us", a.timeSeconds * 1e6},
+                                 {"duration_us", a.durationSeconds * 1e6},
+                                 {"label", a.label},
+                                 {"color", a.color},
+                                 {"author", a.author}});
+            }
+            doc["annotations"] = std::move(notes);
         }
-        doc["annotations"] = std::move(notes);
-    }
-    std::string err;
-    if (lt::writeJsonFile(str(path), doc, &err))
-        showStatus(tr("Saved %1").arg(path));
-    else
-        showStatus(QString::fromStdString(err), true);
+        std::string err;
+        if (lt::writeJsonFile(str(path), doc, &err))
+            showStatus(tr("Saved %1").arg(path));
+        else
+            showStatus(QString::fromStdString(err), true);
+    });
 }
 
 void MainWindow::saveCsv()
@@ -1253,14 +1318,13 @@ void MainWindow::saveCsv()
         showStatus(tr("Nothing to save"), true);
         return;
     }
-    const auto path = QFileDialog::getSaveFileName(this, tr("Save CSV"), "capture.csv", tr("CSV (*.csv)"));
-    if (path.isEmpty())
-        return;
-    std::string err;
-    if (lt::writeCsvFile(str(path), m_waveform->capture(), &err))
-        showStatus(tr("Saved %1").arg(path));
-    else
-        showStatus(QString::fromStdString(err), true);
+    askFile(true, tr("Save CSV"), "capture.csv", tr("CSV (*.csv)"), [this](const QString& path) {
+        std::string err;
+        if (lt::writeCsvFile(str(path), m_waveform->capture(), &err))
+            showStatus(tr("Saved %1").arg(path));
+        else
+            showStatus(QString::fromStdString(err), true);
+    });
 }
 
 void MainWindow::loadDemo()

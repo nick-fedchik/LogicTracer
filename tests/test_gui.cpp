@@ -900,6 +900,84 @@ private Q_SLOTS:
         QCOMPARE(w->scrollY(), 0.0);  // auto-fit never needs scrolling for 4 rows
     }
 
+    void noteCopiedAfterACaptureIsNotCarriedToTheNext()
+    {
+        MainWindow win;
+        auto* note = field(win, "aiNote");
+        Q_EMIT win.device().captureFinished(okResult(toggling()));
+        note->setText("about capture one");
+        win.copyForAi();
+        Q_EMIT win.device().captureFinished(okResult(toggling()));
+        QVERIFY2(note->text().isEmpty(), "a question already sent about #1 must not ride into #2");
+    }
+
+    void failureStartedFromHistoryIsStillReported()
+    {
+        MainWindow win;
+        win.show();
+        win.setCapture(toggling(), "CH1 rising");
+        win.setCapture(toggling(300), "CH1 rising");
+        win.showPreviousCapture();
+        QCOMPARE(win.historyIndex(), std::size_t{0});
+
+        lt::CaptureResult timeout;
+        timeout.status = lt::CaptureStatus::Timeout;
+        timeout.error = "Trigger timeout";
+        timeout.lineDump = lt::CaptureBuffer({{0, "CLK"}}, 1'000'000, 0, std::vector<uint32_t>(16, 0));
+        Q_EMIT win.device().captureFinished(timeout);
+        QCOMPARE(win.displayState(), WaveformWidget::DisplayState::Stale);
+        QCOMPARE(win.historyIndex(), std::size_t{1});  // back on the newest capture
+        QVERIFY(win.aiReport().contains("TIMEOUT"));
+    }
+
+    void failedProbeReplacesTheOlderFailure()
+    {
+        MainWindow win;
+        win.show();
+        win.setCapture(toggling(), "CH1 rising");
+        lt::CaptureResult timeout;
+        timeout.status = lt::CaptureStatus::Timeout;
+        timeout.error = "Trigger timeout";
+        Q_EMIT win.device().captureFinished(timeout);
+        QVERIFY(win.aiReport().contains("Trigger timeout"));
+
+        lt::ProbeResult failed;
+        failed.status = lt::CaptureStatus::Error;
+        failed.error = "usb cable unplugged";
+        Q_EMIT win.device().probeFinished(failed);
+        const QString report = win.aiReport();
+        QVERIFY(report.contains("usb cable unplugged"));
+        QVERIFY(!report.contains("Trigger timeout"));  // the older failure is no longer presented as current
+    }
+
+    void reportsNameTheCapturesDeviceNotTheConnectedOne()
+    {
+        fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("V6_5", true));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.send("CAPTURE_STARTED\n");
+                d.send(fake::captureData(r, 0x01));
+            }
+        });
+        MainWindow win;
+        win.show();
+        win.device().setPollLatency(50ms);
+        win.setPortText(QString::fromStdString(dev.port()));
+        QTest::mouseClick(button(win, "Connect"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        field(win, "channels")->setText("1");
+        field(win, "samples")->setText("100");
+        QTest::mouseClick(button(win, "Capture"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.waveform()->hasCapture(), 5000);
+        QVERIFY(win.aiReport().contains("GPIO map"));
+
+        win.loadDemo();  // a synthetic capture must not inherit the connected board's pin map
+        QVERIFY(!win.aiReport().contains("GPIO map"));
+        QVERIFY(!win.aiReport().contains("LOGIC_ANALYZER"));
+    }
+
     void repeatRearmsUntilCancelOrDisconnect()
     {
         int served = 0;
