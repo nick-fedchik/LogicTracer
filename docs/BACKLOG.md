@@ -103,6 +103,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       fabricated rising edge at `trigger_sample - 1` and the host heuristic (`sawOppositeIdle`) is fooled
       by the zeros. Needs a validity count for the pre-trigger samples from the firmware (protocol
       extension) or a short level probe of the trigger channel before arming.
-- [ ] HIL with the PYNQ-Z1 burst bitstream needs a physical BTN1 press (software start is B-08); two
-      armed runs (90 s, 240 s) ended in TIMEOUT with both lines idle LOW, so the latency path was not
-      re-verified on hardware after the audit fixes.
+- [x] HIL on the PYNQ-Z1 burst bitstream after the audit fixes (2026-11-16, Pico firmware rebuilt from this
+      tree): 100 STIM/REACT pulse pairs captured at 100 MHz, JSON/VCD/events CSV round-trip, setup and device
+      identity recorded. With the lines as wired CH2 leads CH1: `2..1` gives 100 pairs, 0 drops, rising
+      delay 50-60 ns, falling 70 ns (constant); the default `1..2` pairs each STIM with the *next* REACT
+      (about one period, 4.94 us) and reports one false drop. Earlier BTN1 runs timed out because nobody
+      pressed the button.
+- [ ] Hint for swapped latency direction: when every pair delay is close to the stimulus period (here 494-495
+      of 500 samples) and the reverse direction gives a tiny constant delay, say so in the report.
