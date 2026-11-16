@@ -50,6 +50,11 @@ bool PicoConnection::open(const std::string& port, milliseconds handshakeTimeout
 {
     close();
     m_error.clear();
+    // Opt-in guard for audits and automated harnesses: never touch a serial device by accident.
+    if (qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE")) {
+        m_error = "serial access is denied by LOGICTRACER_DENY_HARDWARE";
+        return false;
+    }
     m_portLost = false;
     m_cancelRequested = false;
     m_info = DeviceInfo{};

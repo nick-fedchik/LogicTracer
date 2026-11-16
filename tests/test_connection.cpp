@@ -122,6 +122,18 @@ private Q_SLOTS:
         QCOMPARE(conn.info().channels, uint8_t{28});
     }
 
+    void denyHardwareGuardBlocksSerialAccess()
+    {
+        Device dev(device("V6_5", true, answerWith(0x01)));
+        qputenv("LOGICTRACER_DENY_HARDWARE", "1");
+        lt::PicoConnection conn;
+        const bool opened = conn.open(dev.port());
+        qunsetenv("LOGICTRACER_DENY_HARDWARE");
+        QVERIFY(!opened);
+        QVERIFY(conn.lastError().find("LOGICTRACER_DENY_HARDWARE") != std::string::npos);
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());  // works again once the guard is off
+    }
+
     void handshakeV5UsesDefaults()
     {
         Device dev(device("V5_2", false));

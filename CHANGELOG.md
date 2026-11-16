@@ -5,6 +5,9 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `LOGICTRACER_DENY_HARDWARE=1` refuses all serial device access (for audits and harnesses).
+
 ### Fixed (independent audit, tags `audit-base` -> `audit-fixes` and follow-ups)
 - Handshake: LogicTracer 0.x firmware now reports its real frequency, blast rate, buffer and channels.
 - AI reports: the motif reference comes from the longest periodic stretch (startup glitches no longer

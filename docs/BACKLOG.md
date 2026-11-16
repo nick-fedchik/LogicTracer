@@ -96,5 +96,5 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       could still redirect the write. Open the parent directory by descriptor (`O_DIRECTORY|O_NOFOLLOW`)
       and use `openat`/`renameat`.
 - [ ] Replay: a failure report for a session request ignores `mode`/`latency` (only `note` is honoured).
-- [ ] Never auto-detect a physical device when a test or audit passes no `--port`: add an opt-in
-      `LOGICTRACER_DENY_HARDWARE=1` guard so harnesses cannot touch a live Pico by accident.
+- [x] `LOGICTRACER_DENY_HARDWARE=1` makes every serial open fail, so test/audit harnesses cannot touch a
+      live Pico by accident (replay devices are unaffected).
