@@ -65,7 +65,9 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       stale-capture guard, pre-flight window and inline validation, locale-independent numbers, standard
       mouse model (cursor drag, right-click menu), overview strip, `CHx (GPx) Name` gutter, `H` hides
       inactive channels.
-- [ ] Compact report for idle captures (merge identical constant channels, skip the ASCII timeline).
+- [x] Compact report for idle captures: constant channels with the same level (3 or more) share one table row,
+      one observation and one timeline row; the timeline is omitted when nothing toggles (a real 24-channel
+      idle capture: about 1.1 kB of Markdown). The JSON stays per channel.
 
 ## B-05. Device abstraction and PYNQ-Z1 capture backend
 - [x] B1: `IDevice` interface + `createDevice(port)`; `ReplayDevice` (`replay:<file>`) for tests,

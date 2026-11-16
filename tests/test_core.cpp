@@ -1112,6 +1112,31 @@ private Q_SLOTS:
         QCOMPARE(d["verdict"].get<std::string>(), std::string("improved"));
     }
 
+    // Idle lines are merged so a 24-channel capture with two active signals stays short.
+    void constantChannelsAreMergedInReports()
+    {
+        std::vector<lt::ChannelInfo> chans;
+        for (uint8_t c = 0; c < 24; ++c)
+            chans.push_back({c, {}});
+        std::vector<uint32_t> s(400, 0);
+        for (std::size_t i = 0; i < s.size(); ++i)
+            s[i] = ((i / 10) % 2 ? 1u : 0u) | ((i / 20) % 2 ? 2u : 0u) | (1u << 23);  // CH24 constant HIGH
+        const lt::CaptureBuffer buf(chans, 1'000'000, 0, s);
+        lt::ReportOptions o;
+        const auto md = lt::markdownSummary(buf, o);
+        QVERIFY(md.find("| 3-23 | 21 constant channels | 0 |") != std::string::npos);
+        QVERIFY(md.find("CH 3-23 (21 channels): no activity, constant LOW") != std::string::npos);
+        QVERIFY(md.find("| 24 | CH24 | 1 |") != std::string::npos);  // a single constant HIGH line keeps its row
+        QVERIFY(md.find("| 5 | CH5 |") == std::string::npos);
+        const auto timeline = lt::asciiTimeline(buf, o);
+        QVERIFY(timeline.find("CH 3-23") != std::string::npos);
+        QVERIFY(std::count(timeline.begin(), timeline.end(), '\n') <= 7);
+        QCOMPARE(lt::jsonMetadata(buf, o)["channels"].size(), std::size_t{24});  // JSON stays per channel
+
+        const lt::CaptureBuffer idle(chans, 1'000'000, 0, std::vector<uint32_t>(400, 0));
+        QVERIFY(lt::asciiTimeline(idle, o).find("omitted: no channel changes level") != std::string::npos);
+    }
+
     // Five consecutive dropped reactions are five incidents, not one chained cluster.
     void consecutiveDropsStaySeparateIncidents()
     {

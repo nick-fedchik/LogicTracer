@@ -110,6 +110,50 @@ std::string channelPinTag(std::string_view board, const ChannelInfo& ch)
     return {};
 }
 
+// "3-8, 10, 12-14" for a sorted list of 1-based channel numbers.
+std::string compactChannelList(std::vector<int> numbers)
+{
+    std::sort(numbers.begin(), numbers.end());
+    std::string out;
+    for (std::size_t i = 0; i < numbers.size();) {
+        std::size_t j = i;
+        while (j + 1 < numbers.size() && numbers[j + 1] == numbers[j] + 1)
+            ++j;
+        out += (out.empty() ? "" : ", ") + std::to_string(numbers[i]);
+        if (j > i)
+            out += (j == i + 1 ? ", " : "-") + std::to_string(numbers[j]);
+        i = j + 1;
+    }
+    return out;
+}
+
+// Constant (edge-free) channels with the same level, merged so idle lines do not flood a report.
+struct ConstantGroup {
+    int level = 0;
+    std::vector<std::size_t> indexes;  // into the channel list
+    std::vector<int> numbers;          // 1-based
+};
+
+constexpr std::size_t kMinMergedConstantChannels = 3;
+
+std::vector<ConstantGroup> constantGroups(const std::vector<ChannelStats>& stats)
+{
+    ConstantGroup low, high;
+    high.level = 1;
+    for (std::size_t i = 0; i < stats.size(); ++i) {
+        if (stats[i].transitions != 0 || stats[i].sampleCount == 0)
+            continue;
+        auto& g = stats[i].idleLevel ? high : low;
+        g.indexes.push_back(i);
+        g.numbers.push_back(stats[i].channel.displayNumber());
+    }
+    std::vector<ConstantGroup> out;
+    for (auto* g : {&low, &high})
+        if (g->indexes.size() >= kMinMergedConstantChannels)
+            out.push_back(std::move(*g));
+    return out;
+}
+
 std::vector<ChannelStats> analyzeRange(const CaptureBuffer& b, const Range& r)
 {
     SignalAnalyzer::Options opts;
@@ -528,7 +572,16 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
     if (o.mode == CopyMode::CursorsOnly && (!o.cursorA || !o.cursorB))
         notes.push_back("Cursors A..B mode requested, but both cursors are not set; showing the visible range");
 
-    for (const auto& st : stats) {
+    const auto groups = r.size() ? constantGroups(stats) : std::vector<ConstantGroup>{};
+    std::vector<bool> merged(stats.size(), false);
+    for (const auto& g : groups)
+        for (const auto i : g.indexes)
+            merged[i] = true;
+
+    for (std::size_t si = 0; si < stats.size(); ++si) {
+        const auto& st = stats[si];
+        if (merged[si])
+            continue;
         std::optional<double> minW, maxW;
         for (const auto& w : {st.highWidth, st.lowWidth}) {
             if (!w)
@@ -580,6 +633,13 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
         if (o.mode != CopyMode::Brief && st.edges.size() > o.maxEdgesPerChannel)
             notes.push_back(st.channel.label() + ": JSON edge_times_us truncated to first " +
                             std::to_string(o.maxEdgesPerChannel) + " of " + std::to_string(st.edges.size()) + " edges");
+    }
+
+    for (const auto& g : groups) {
+        ss << "| " << compactChannelList(g.numbers) << " | " << g.indexes.size() << " constant channels | " << g.level
+           << " | " << g.level << " | 0 (0/0) | 0/0 | - | - | - | - | 0 |" << (showPinCol ? " see GPIO map |" : "") << "\n";
+        notes.push_back("CH " + compactChannelList(g.numbers) + " (" + std::to_string(g.indexes.size()) +
+                        " channels): no activity, constant " + (g.level ? "HIGH" : "LOW") + " in the visible range");
     }
 
     const auto lat = computeLatency(b, r, o);
@@ -741,6 +801,35 @@ std::string asciiTimeline(const CaptureBuffer& b, const ReportOptions& o)
     for (const auto& ch : b.channels())
         labelWidth = std::max(labelWidth, ch.label().size());
 
+    // Constant channels (no edge in the range) carry no timing: merge rows with the same level, and omit the
+    // timeline entirely when nothing toggles.
+    std::vector<int> constLevel(b.channels().size(), -1);
+    {
+        const std::size_t nCh = b.channels().size();
+        const uint32_t mask = nCh >= 32 ? 0xFFFFFFFFu : ((1u << nCh) - 1u);
+        uint32_t changed = 0;
+        for (std::size_t i = r.first + 1; i < r.last; ++i)
+            changed |= (b.samples()[i] ^ b.samples()[i - 1]) & mask;
+        for (std::size_t ch = 0; ch < nCh; ++ch)
+            if (!((changed >> ch) & 1u))
+                constLevel[ch] = b.bit(r.first, ch) ? 1 : 0;
+        if (std::none_of(constLevel.begin(), constLevel.end(), [](int v) { return v < 0; }))
+            return "(omitted: no channel changes level in this range; every line is constant, see the table)\n";
+    }
+    std::vector<int> constNumbers[2];
+    for (std::size_t ch = 0; ch < b.channels().size(); ++ch)
+        if (constLevel[ch] >= 0)
+            constNumbers[constLevel[ch]].push_back(b.channels()[ch].displayNumber());
+    const bool mergeConst[2] = {constNumbers[0].size() >= kMinMergedConstantChannels,
+                                constNumbers[1].size() >= kMinMergedConstantChannels};
+    std::string mergedLabel[2];
+    for (int lv = 0; lv < 2; ++lv)
+        if (mergeConst[lv]) {
+            mergedLabel[lv] = "CH " + compactChannelList(constNumbers[lv]);
+            labelWidth = std::max(labelWidth, mergedLabel[lv].size());
+        }
+
+
     // Cursor marker row.
     auto colOf = [&](std::size_t sample) -> std::optional<std::size_t> {
         if (sample < r.first || sample >= r.last)
@@ -774,7 +863,18 @@ std::string asciiTimeline(const CaptureBuffer& b, const ReportOptions& o)
 
     std::vector<std::string> rows;
     std::size_t busyColumns = 0;
+    bool mergedEmitted[2] = {false, false};
     for (std::size_t ch = 0; ch < b.channels().size(); ++ch) {
+        if (constLevel[ch] >= 0 && mergeConst[constLevel[ch]]) {
+            const int lv = constLevel[ch];
+            if (!mergedEmitted[lv]) {
+                std::string label = mergedLabel[lv];
+                label.resize(labelWidth, ' ');
+                rows.push_back(label + " |" + std::string(cols, lv ? '#' : '_') + "|\n");
+                mergedEmitted[lv] = true;
+            }
+            continue;
+        }
         std::string line;
         for (std::size_t c = 0; c < cols; ++c) {
             const std::size_t s0 = colStart(c), s1 = std::max(s0 + 1, colStart(c + 1));
@@ -790,7 +890,7 @@ std::string asciiTimeline(const CaptureBuffer& b, const ReportOptions& o)
         busyColumns += static_cast<std::size_t>(std::count(line.begin(), line.end(), '|'));
     }
     // When nearly every column holds transitions the picture carries no information: save the tokens.
-    if (o.mode == CopyMode::Brief && cols >= 20 && busyColumns * 10 >= cols * b.channels().size() * 9)
+    if (o.mode == CopyMode::Brief && cols >= 20 && busyColumns * 10 >= cols * rows.size() * 9)
         return "(omitted: " + std::to_string(r.size() / cols) +
                " samples per column hide the timing; zoom in or use cursors, see the motif above)\n";
     for (const auto& row : rows)
