@@ -705,9 +705,7 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     if (fromSession) {  // the request came over the session socket
         auto docOptions = pending->options;
         docOptions.setup = effectiveSetup;
-        auto docWarnings = pending->warnings;
-        docWarnings.insert(docWarnings.end(), r.warnings.begin(), r.warnings.end());
-        auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, docWarnings, docOptions);
+        auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, pending->warnings, docOptions);
         if (r.status == lt::CaptureStatus::Ok)
             doc.doc["capture_id"] = m_currentCaptureId;
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
@@ -785,7 +783,8 @@ void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& trig
 {
     consumeNote();
     m_failure.reset();
-    m_nextSetup = setup;  // a loaded/provided setup is the engineer's context for the captures that follow
+    if (!setup.empty())  // a file with a setup is the engineer's context; one without must not erase the pending setup
+        m_nextSetup = setup;
     showNewCapture(buffer, triggerDescription, std::move(setup), std::move(warnings), false,
                    DeviceStamp{std::move(deviceVersion), std::move(board)});
 }
@@ -979,13 +978,17 @@ void MainWindow::jumpToAnomaly(int direction)
 void MainWindow::clearSetupMetadata()
 {
     setSetupMetadata({});
+    m_nextSetup.clear();  // "clear" also resets what new captures start with, whichever entry is on screen
     showStatus(tr("Setup metadata cleared"));
 }
 
 void MainWindow::setSetupMetadata(const lt::SetupInfo& setup)
 {
     m_setup = setup;
-    m_nextSetup = setup;
+    // Edits change the entry on screen; they become the engineer's setup for the next captures only when that
+    // entry is the newest one, so correcting an old capture's record never rewrites the current wiring.
+    if (m_history.empty() || m_viewIndex + 1 >= m_history.size())
+        m_nextSetup = setup;
     if (m_viewIndex < m_history.size())
         m_history[m_viewIndex].setup = setup;
     updateSetupButton();

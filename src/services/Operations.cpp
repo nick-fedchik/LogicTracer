@@ -235,6 +235,7 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
                                 const DocumentOptions& options)
 {
     std::vector<std::string> allWarnings = warnings;
+    allWarnings.insert(allWarnings.end(), result.warnings.begin(), result.warnings.end());  // data-source caveats
     std::vector<uint8_t> numbers;
     auto channels = json::array();
     for (const auto& ch : cfg.channels) {

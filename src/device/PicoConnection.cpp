@@ -51,7 +51,8 @@ bool PicoConnection::open(const std::string& port, milliseconds handshakeTimeout
     close();
     m_error.clear();
     // Opt-in guard for audits and automated harnesses: never touch a serial device by accident.
-    if (qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE")) {
+    // Pseudo-terminals (/dev/pts/*, used by the test emulators) are not hardware and stay allowed.
+    if (qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE") && !port.starts_with("/dev/pts/")) {
         m_error = "serial access is denied by LOGICTRACER_DENY_HARDWARE";
         return false;
     }

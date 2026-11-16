@@ -327,7 +327,13 @@ json McpServer::callTool(const std::string& name, const json& arguments)
 json McpServer::dispatchTool(const std::string& name, const json& args)
 {
     if (name == "lt_detect_devices") {
-        const auto timeout = std::chrono::milliseconds(args.value("timeout_ms", 3000));
+        std::chrono::milliseconds timeout{3000};
+        if (args.contains("timeout_ms")) {
+            const auto& v = args["timeout_ms"];
+            if (!v.is_number() || !(v.get<double>() >= 1.0 && v.get<double>() <= 60000.0))
+                return errorResult("timeout_ms must be a number in 1..60000");
+            timeout = std::chrono::milliseconds(static_cast<int>(v.get<double>()));
+        }
         const QString sock = m_options.useSession ? m_options.socketPath : QString{};
         return textResult(detectDocument(args.value("include_all", false), args.value("handshake", true), timeout, sock),
                           false);

@@ -83,7 +83,14 @@ design; modifications of the core itself must be shared under the same licence.
 3. Poll `STATUS` until `done` (bit 2); `CTRL = 2` aborts.
 4. Read `RECORDS`, `OLDEST`, `TRIGGER_PTR`, `TRIG_TS`; write `READ_INDEX = OLDEST`; then per record
    read `READ_TS` lo/hi and `READ_PROBE` (indices wrap modulo the depth).
-5. A record's timestamp minus `TRIG_TS` is its time relative to the trigger, in cycles of `CLOCK_HZ`.
+5. A record's timestamp minus `TRIG_TS` is its time relative to the trigger, in cycles of `CLOCK_HZ`. The
+   subtraction must be done **modulo 2^`TS_WIDTH`**: the timestamp counter wraps (at 100 MHz, 2^33 cycles
+   is 86 s, the 48-bit default is 32 days), so a record from before a wrap can look larger than `TRIG_TS`.
+
+`CTRL` bits are applied with a fixed precedence per clock: **arm > abort > force**. Writing `arm` and
+`force` together arms the core and drops the force (issue them in two writes); writing `abort` together with
+`arm` re-arms instead of aborting. `CTRL` pulses are one clock wide; `ext_mode` (bit 3) is stored with every
+`CTRL` write.
 
 ## Resources
 

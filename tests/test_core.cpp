@@ -12,12 +12,14 @@
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
 
 #include "core/Format.hpp"
 
 #include <cstring>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <limits>
 #include <locale>
@@ -887,6 +889,59 @@ private Q_SLOTS:
         QVERIFY(meta["motif"]["unexpected_transitions"].get<int>() <= 2);
         QVERIFY(meta["motif"]["repetitions"].get<int>() >= 29);
         QVERIFY(lt::findAnomalies(buf, o).size() <= 2);
+    }
+
+    // One glitch in the first half must not turn the healthy first edge into a phantom fault.
+    void glitchInTheFirstHalfDoesNotFlagTheFirstEdge()
+    {
+        std::vector<uint32_t> s;
+        const uint32_t clean[8] = {1, 1, 3, 3, 2, 2, 0, 0};
+        const uint32_t glitch[10] = {1, 1, 3, 1, 3, 3, 2, 2, 0, 0};
+        for (int c = 0; c < 40; ++c)
+            s.insert(s.end(), clean, clean + 8);
+        s.insert(s.end(), glitch, glitch + 10);
+        for (int c = 0; c < 60; ++c)
+            s.insert(s.end(), clean, clean + 8);
+        const lt::CaptureBuffer buf({{0, "STIM"}, {1, "REACT"}}, 1'000'000, 0, s);
+        const auto anomalies = lt::findAnomalies(buf, lt::ReportOptions{});
+        QVERIFY(!anomalies.empty());
+        for (const auto& a : anomalies)
+            QVERIFY2(a.sample >= 300, "the first healthy edge must not be reported");
+    }
+
+    void exportFollowsUmaskAndKeepsExistingMode()
+    {
+        QTemporaryDir dir;
+        const mode_t old = ::umask(077);
+        std::string err;
+        const QString path = dir.filePath("private.json");
+        const bool wrote = lt::writeJsonFile(path.toStdString(), {{"a", 1}}, &err);
+        ::umask(old);
+        QVERIFY(wrote);
+        QCOMPARE(int(QFileInfo(path).permissions() & (QFile::ReadGroup | QFile::ReadOther)), 0);  // not world-readable
+        QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup);
+        QVERIFY(lt::writeJsonFile(path.toStdString(), {{"a", 2}}, &err));
+        QVERIFY(QFileInfo(path).permissions() & QFile::ReadGroup);  // the replaced file's mode is kept
+        QVERIFY(!QFile::exists(dir.filePath(".lt-XXXXXX")));
+    }
+
+    void vcdTimeBaseIsValidated()
+    {
+        std::string err;
+        for (const char* ts : {"0 fs", "-1 ns", "nan s", "1e400 s", "1 xs", "100 s"}) {
+            std::istringstream in(std::string("$timescale ") + ts + " $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n0!\n#100\n1!\n");
+            lt::LoadedCapture out;
+            QVERIFY2(!lt::readVcd(in, out, &err), ts);
+        }
+        std::istringstream ok("$timescale 1 ns $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n0!\n#10\n1!\n");
+        lt::LoadedCapture out;
+        QVERIFY2(lt::readVcd(ok, out, &err), err.c_str());
+        std::istringstream bigTrigger("$comment logictracer-cli capture: 1000000 Hz, 4 samples, trigger at #18446744073709551615 $end\n"
+                                      "$timescale 1 us $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n0!\n#2\n1!\n#4\n");
+        lt::LoadedCapture trig;
+        QVERIFY2(lt::readVcd(bigTrigger, trig, &err), err.c_str());
+        QCOMPARE(trig.buffer.triggerIndex(), int64_t{0});
+        QVERIFY(!trig.warnings.empty());
     }
 
     // Even a startup transient that repeats twice must not define the motif: the dominant pattern wins.

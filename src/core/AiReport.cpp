@@ -252,7 +252,15 @@ std::optional<Motif> detectMotif(const CaptureBuffer& b, const std::vector<Chron
     };
     std::vector<Matched> matchedAt;
     std::optional<std::size_t> lastMatchedSample;
+    // Start at the motif position matching the first transition: extra or missing edges before the reference
+    // stretch shift the phase, so positions cannot be derived from indexes alone.
     std::size_t phase = 0;
+    for (std::size_t k = 0; k < cycle; ++k) {
+        if (expectedToken(k) == token(0)) {
+            phase = k;
+            break;
+        }
+    }
     for (std::size_t i = 0; i < e; ++i) {
         if (token(i) == expectedToken(phase)) {
             if (lastMatchedSample) {

@@ -18,7 +18,9 @@
 #include <map>
 #include <numeric>
 #include <sstream>
+#include <streambuf>
 
+#include <cerrno>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -134,53 +136,121 @@ std::string vcdId(std::size_t index)
 }
 
 
-// Writes through a sibling temp file and renames it over the target, so a failed or partial write
-// (disk full, quota) never destroys the previous file. Special files (pipes, devices) are written in place.
+// Unbuffered-on-error stream buffer over a file descriptor we already own (from mkstemp), so the data is
+// written through the very descriptor that was created exclusively instead of reopening a pathname.
+class FdStreamBuf : public std::streambuf {
+public:
+    explicit FdStreamBuf(int fd) : m_fd(fd) { setp(m_buf, m_buf + sizeof m_buf); }
+    [[nodiscard]] bool failed() const { return m_failed; }
+
+protected:
+    int_type overflow(int_type ch) override
+    {
+        if (!flushBuffer())
+            return traits_type::eof();
+        if (!traits_type::eq_int_type(ch, traits_type::eof())) {
+            *pptr() = traits_type::to_char_type(ch);
+            pbump(1);
+        }
+        return traits_type::not_eof(ch);
+    }
+    int sync() override { return flushBuffer() ? 0 : -1; }
+
+private:
+    bool flushBuffer()
+    {
+        const char* p = pbase();
+        std::ptrdiff_t left = pptr() - pbase();
+        while (left > 0 && !m_failed) {
+            const ssize_t n = ::write(m_fd, p, static_cast<std::size_t>(left));
+            if (n < 0 && errno == EINTR)
+                continue;
+            if (n <= 0) {
+                m_failed = true;
+                break;
+            }
+            p += n;
+            left -= n;
+        }
+        setp(m_buf, m_buf + sizeof m_buf);
+        return !m_failed;
+    }
+
+    int m_fd;
+    bool m_failed = false;
+    char m_buf[1 << 16];
+};
+
+// The process umask without the racy umask(0) round trip (Linux exposes it in /proc/self/status).
+mode_t currentUmask()
+{
+    std::ifstream status("/proc/self/status");
+    for (std::string line; std::getline(status, line);) {
+        if (line.rfind("Umask:", 0) == 0)
+            return static_cast<mode_t>(std::strtoul(line.c_str() + 6, nullptr, 8));
+    }
+    return 022;
+}
+
+// Writes through a random, exclusively created sibling file and renames it over the target, so a failed or
+// partial write (disk full, quota) never destroys the previous file and a pre-planted file or symlink with a
+// guessable name cannot be followed. The result keeps the mode of the file it replaces, or follows the umask.
+// Special files (pipes, devices) are written in place.
 template <typename Fn>
 bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::string* error, Fn&& write)
 {
+    (void)mode;  // text and binary are identical on POSIX
     namespace fs = std::filesystem;
     std::error_code ec;
     const bool inPlace = fs::exists(path, ec) && !fs::is_regular_file(path, ec);
-    // The temp name is random and created exclusively (mkstemp), so a pre-planted file or symlink with a
-    // predictable name can neither be followed nor clobbered.
-    std::string target = path;
-    if (!inPlace) {
-        std::string pattern = path + ".XXXXXX";
-        const int fd = ::mkstemp(pattern.data());
-        if (fd < 0) {
-            if (error)
-                *error = "cannot write " + path;
-            return false;
-        }
-        ::fchmod(fd, 0644);
-        ::close(fd);
-        target = pattern;
-    }
-    auto fail = [&](const std::string& msg) {
-        if (!inPlace)
-            fs::remove(target, ec);
+    auto failWith = [&](const std::string& msg) {
         if (error)
             *error = msg + " " + path;
         return false;
     };
-    try {
-        std::ofstream f(target, mode | std::ios::trunc);
+
+    if (inPlace) {
+        std::ofstream f(path, std::ios::trunc);
         if (!f)
-            return fail("cannot write");
+            return failWith("cannot write");
         write(f);
         f.flush();
         f.close();
-        if (f.fail())
-            return fail("failed while writing");
+        return f.fail() ? failWith("failed while writing") : true;
+    }
+
+    // ".lt-XXXXXX" in the same directory: short (independent of the file name length) and hidden.
+    const fs::path parent = fs::path(path).parent_path();
+    std::string pattern = ((parent.empty() ? fs::path(".") : parent) / ".lt-XXXXXX").string();
+    const int fd = ::mkstemp(pattern.data());
+    if (fd < 0)
+        return failWith("cannot write");
+    struct stat existing{};
+    const mode_t perms = ::stat(path.c_str(), &existing) == 0 ? (existing.st_mode & 07777)
+                                                              : static_cast<mode_t>(0666 & ~currentUmask());
+    ::fchmod(fd, perms);
+
+    bool ok = false;
+    try {
+        FdStreamBuf buf(fd);
+        std::ostream out(&buf);
+        write(out);
+        out.flush();
+        ok = out.good() && !buf.failed() && ::fsync(fd) == 0;
     } catch (...) {
-        fail("failed while writing");
+        ::close(fd);
+        fs::remove(pattern, ec);
         throw;
     }
-    if (!inPlace) {
-        fs::rename(target, path, ec);
-        if (ec)
-            return fail("cannot replace");
+    const bool closed = ::close(fd) == 0;
+    if (!ok || !closed) {
+        fs::remove(pattern, ec);
+        return failWith("failed while writing");
+    }
+    fs::rename(pattern, path, ec);
+    if (ec) {
+        fs::remove(pattern, ec);
+        return failWith("cannot replace");
     }
     return true;
 }
@@ -790,15 +860,17 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
             double mult = 0.0;
             const char* tsEnd = ts.data() + ts.size();
             const auto [p, ec] = std::from_chars(ts.data(), tsEnd, mult);
-            if (ec == std::errc{} && mult > 0) {
-                const std::string unit(p, tsEnd);
-                if (unit == "fs") timescaleSeconds = mult * 1e-15;
-                else if (unit == "ps") timescaleSeconds = mult * 1e-12;
-                else if (unit == "ns") timescaleSeconds = mult * 1e-9;
-                else if (unit == "us") timescaleSeconds = mult * 1e-6;
-                else if (unit == "ms") timescaleSeconds = mult * 1e-3;
-                else if (unit == "s") timescaleSeconds = mult;
-            }
+            const std::string unit(p, tsEnd);
+            double scale = 0.0;
+            if (unit == "fs") scale = 1e-15;
+            else if (unit == "ps") scale = 1e-12;
+            else if (unit == "ns") scale = 1e-9;
+            else if (unit == "us") scale = 1e-6;
+            else if (unit == "ms") scale = 1e-3;
+            else if (unit == "s") scale = 1.0;
+            if (ec != std::errc{} || !std::isfinite(mult) || mult <= 0 || scale == 0.0)
+                return fail("invalid $timescale '" + ts + "' in VCD header");
+            timescaleSeconds = mult * scale;
         } else if (tok == "$var") {
             std::string type, widthStr, id, name;
             if (!(in >> type >> widthStr >> id >> name))
@@ -879,8 +951,13 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
         frequency = *commentFreq;
         totalSamples = std::min<std::size_t>(*commentSamples, 16'777'216);
         unitsPerSample = 1.0 / (static_cast<double>(frequency) * timescaleSeconds);
-        if (commentTriggerTime && unitsPerSample > 0)
-            triggerSample = static_cast<int64_t>(std::llround(static_cast<double>(*commentTriggerTime) / unitsPerSample));
+        if (commentTriggerTime && unitsPerSample > 0) {
+            const double position = static_cast<double>(*commentTriggerTime) / unitsPerSample;
+            if (position > static_cast<double>(kMaxTriggerOffset))
+                warnings.push_back("the trigger position in the VCD comment is out of range and was ignored");
+            else
+                triggerSample = static_cast<int64_t>(std::llround(position));
+        }
     } else {
         uint64_t stepUnits = 0;
         uint64_t prevT = 0;
@@ -905,7 +982,10 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
         if (rate > 2e9)
             return fail("VCD time resolution is too fine (" + formatNumber(rate, 3) +
                         " Hz > 2 GHz): re-export it with a coarser timescale");
-        frequency = static_cast<uint32_t>(std::max(1.0, std::round(rate)));
+        if (rate < 1.0)
+            return fail("VCD time base is slower than 1 Hz (" + formatNumber(rate, 3) +
+                        " Hz): re-export it with a finer timescale");
+        frequency = static_cast<uint32_t>(std::round(rate));
         unitsPerSample = static_cast<double>(stepUnits);
         // The last change at #maxTime is itself a sample.
         totalSamples = changes.empty() ? 0 : static_cast<std::size_t>(maxTime / stepUnits) + 1;

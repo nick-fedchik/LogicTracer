@@ -726,7 +726,7 @@ int cmdCapture(const QStringList& args, Output o)
             const json* assertionsPtr = doc.contains("assertions") ? &doc["assertions"] : nullptr;
             aiText = buildBufferAiReport(*result.buffer, *aiMode, "LogicTracer capture (" + info.port + ")", trigDesc,
                                          info.version.raw, info.version.board, str(p.value("note")), latencyArg, {},
-                                         assertionsPtr, *setup);
+                                         assertionsPtr, *setup, doc["warnings"].get<std::vector<std::string>>());
         } else if (result.status == lt::CaptureStatus::Timeout) {
             aiText = lt::timeoutForAi(result.lineDump ? *result.lineDump : lt::CaptureBuffer{},
                                       lt::toString(result.status), result.error, trigDesc, info.version.board,

@@ -145,6 +145,9 @@ err_t serverReceiveData(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t e
         left -= copy;
     }
 
+    //Reopen the TCP receive window: without this the advertised window shrinks until the connection stalls
+    tcp_recved(tpcb, p->tot_len);
+
     pbuf_free(p);
 
     return ERR_OK;

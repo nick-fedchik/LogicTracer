@@ -978,6 +978,27 @@ private Q_SLOTS:
         QVERIFY(!win.aiReport().contains("LOGIC_ANALYZER"));
     }
 
+    // Correcting an old capture's setup must not become the wiring recorded on new captures.
+    void editingAnOldEntrysSetupDoesNotChangeTheNextCapture()
+    {
+        MainWindow win;
+        win.setSetupMetadata({{"wiring", "OLD"}});
+        Q_EMIT win.device().captureFinished(okResult(toggling()));     // #1 records OLD
+        Q_EMIT win.device().captureFinished(okResult(toggling(300)));  // #2 inherits OLD
+        win.setSetupMetadata({{"wiring", "NEW"}});                    // newest entry: also the next capture's setup
+        win.showPreviousCapture();
+        QVERIFY(win.setup().size() == 1 && win.setup().front().second == "OLD");
+        win.setSetupMetadata({{"wiring", "OLD-corrected"}});         // history edit only
+        win.showNextCapture();
+        Q_EMIT win.device().captureFinished(okResult(toggling(350)));  // #3
+        QCOMPARE(QString::fromStdString(win.setup().front().second), QString("NEW"));
+
+        // Loading a file without a setup must not erase the pending one either.
+        win.loadDemo();
+        Q_EMIT win.device().captureFinished(okResult(toggling(360)));
+        QCOMPARE(QString::fromStdString(win.setup().front().second), QString("NEW"));
+    }
+
     void loadedFilesKeepTheirDeviceAndImportWarnings()
     {
         QTemporaryDir dir;

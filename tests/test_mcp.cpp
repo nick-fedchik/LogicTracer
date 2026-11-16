@@ -260,6 +260,8 @@ private Q_SLOTS:
         QVERIFY(client.tool("lt_clear_annotations", {{"capture_id", id + 1}}).dump().find("StaleCapture") != std::string::npos);
         QCOMPARE(win.waveform()->annotations().size(), std::size_t{2});  // a stale clear wipes nothing
         QVERIFY(client.tool("lt_get_view", {{"capture_id", id + 1}}).dump().find("StaleCapture") != std::string::npos);
+        QVERIFY(client.tool("lt_detect_devices", {{"timeout_ms", 1e100}})["result"]["isError"].get<bool>());
+        QVERIFY(client.tool("lt_detect_devices", {{"timeout_ms", -5}})["result"]["isError"].get<bool>());
         QVERIFY(!client.tool("lt_clear_annotations", {})["result"]["isError"].get<bool>());
         const auto cleared = client.tool("lt_clear_annotations", {});
         QVERIFY(!cleared["result"]["isError"].get<bool>());

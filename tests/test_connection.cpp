@@ -124,14 +124,23 @@ private Q_SLOTS:
 
     void denyHardwareGuardBlocksSerialAccess()
     {
-        Device dev(device("V6_5", true, answerWith(0x01)));
+        // Restore whatever the caller had: an audit may run the whole suite with the guard exported.
+        const bool hadGuard = qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE");
+        const QByteArray previous = qgetenv("LOGICTRACER_DENY_HARDWARE");
         qputenv("LOGICTRACER_DENY_HARDWARE", "1");
         lt::PicoConnection conn;
-        const bool opened = conn.open(dev.port());
-        qunsetenv("LOGICTRACER_DENY_HARDWARE");
-        QVERIFY(!opened);
-        QVERIFY(conn.lastError().find("LOGICTRACER_DENY_HARDWARE") != std::string::npos);
-        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());  // works again once the guard is off
+        const bool denied = !conn.open("/dev/ttyACM9");  // refused before the path is even touched
+        const std::string message = conn.lastError();
+        Device dev(device("V6_5", true, answerWith(0x01)));
+        lt::PicoConnection emulated;
+        const bool ptyAllowed = emulated.open(dev.port());  // pseudo-terminals are not hardware
+        if (hadGuard)
+            qputenv("LOGICTRACER_DENY_HARDWARE", previous);
+        else
+            qunsetenv("LOGICTRACER_DENY_HARDWARE");
+        QVERIFY(denied);
+        QVERIFY(message.find("LOGICTRACER_DENY_HARDWARE") != std::string::npos);
+        QVERIFY2(ptyAllowed, emulated.lastError().c_str());
     }
 
     void handshakeV5UsesDefaults()
