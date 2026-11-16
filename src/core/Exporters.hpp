@@ -49,6 +49,9 @@ struct LoadedCapture {
     std::string triggerDescription;
     std::vector<Annotation> annotations;
     SetupInfo setup;
+    // Identity of the device that produced the capture, when the file records it ("device" object).
+    std::string deviceVersion;
+    std::string board;
     // Non-fatal import problems the user must see (e.g. unknown x/z levels, coarsened time base).
     std::vector<std::string> warnings;
 };

@@ -12,6 +12,7 @@
 #include <QByteArray>
 #include <QDir>
 #include <QFile>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include "core/Format.hpp"
@@ -887,6 +888,70 @@ private Q_SLOTS:
         QVERIFY(lt::findAnomalies(buf, o).size() <= 2);
     }
 
+    // Even a startup transient that repeats twice must not define the motif: the dominant pattern wins.
+    void repeatedStartupTransientDoesNotDefineTheMotif()
+    {
+        std::vector<uint32_t> s;
+        s.push_back(0);
+        const uint32_t startup[8] = {2, 2, 0, 0, 1, 1, 0, 0};
+        const uint32_t clean[8] = {1, 1, 3, 3, 2, 2, 0, 0};
+        for (int c = 0; c < 2; ++c)
+            s.insert(s.end(), startup, startup + 8);
+        for (int c = 0; c < 100; ++c)
+            s.insert(s.end(), clean, clean + 8);
+        const lt::CaptureBuffer buf({{0, "STIM"}, {1, "REACT"}}, 1'000'000, 0, s);
+        const auto meta = lt::jsonMetadata(buf, lt::ReportOptions{});
+        QVERIFY(meta["motif"]["repetitions"].get<int>() >= 95);
+        QVERIFY(meta["motif"]["unexpected_transitions"].get<int>() <= 12);
+        QVERIFY(lt::findAnomalies(buf, lt::ReportOptions{}).size() <= 12);
+    }
+
+    // The export temp file is random: a pre-planted symlink with a predictable name must not be followed.
+    void exportDoesNotFollowPlantedTempSymlink()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString victim = dir.filePath("victim.json");
+        QFile v(victim);
+        QVERIFY(v.open(QIODevice::WriteOnly));
+        v.write("PRESERVE");
+        v.close();
+        for (const char* suffix : {".lt-tmp", ".tmp", ".XXXXXX"})
+            QFile::link(victim, dir.filePath("output.json") + suffix);
+        std::string err;
+        QVERIFY(lt::writeJsonFile(dir.filePath("output.json").toStdString(), {{"replacement", true}}, &err));
+        QFile check(victim);
+        QVERIFY(check.open(QIODevice::ReadOnly));
+        QCOMPARE(check.readAll(), QByteArray("PRESERVE"));
+        QFile out(dir.filePath("output.json"));
+        QVERIFY(out.open(QIODevice::ReadOnly));
+        QVERIFY(out.readAll().contains("replacement"));
+    }
+
+    void numericImportFieldsNeverCastOutOfRangeFloats()
+    {
+        std::string err;
+        lt::LoadedCapture out;
+        nlohmann::json doc = {{"sample_rate_hz", 1e100}, {"samples", 4u}};
+        nlohmann::json channel = {{"channel", 1}, {"idle_level", 0}};
+        channel["edge_samples"] = nlohmann::json::array();
+        doc["channels"] = nlohmann::json::array();
+        doc["channels"].push_back(channel);
+        QVERIFY(!lt::readCaptureJson(doc, out, &err));
+        QVERIFY(err.find("sample_rate_hz") != std::string::npos);
+
+        doc["sample_rate_hz"] = 1000000;
+        doc["channels"][0]["idle_level"] = 1e100;
+        QVERIFY(!lt::readCaptureJson(doc, out, &err));
+        doc["channels"][0]["idle_level"] = 0;
+        doc["channels"][0]["channel"] = 1e100;
+        QVERIFY(!lt::readCaptureJson(doc, out, &err));
+
+        std::istringstream tiny("$timescale 1e-20fs $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n0!\n#1\n1!\n");
+        lt::LoadedCapture vcd;
+        QVERIFY(!lt::readVcd(tiny, vcd, &err));  // rejected cleanly (and without an overflowing cast)
+    }
+
     // Five consecutive dropped reactions are five incidents, not one chained cluster.
     void consecutiveDropsStaySeparateIncidents()
     {
@@ -953,12 +1018,14 @@ private Q_SLOTS:
         bad["channels"] = nlohmann::json::array();
         bad["channels"].push_back(channel);
         QVERIFY(!lt::readCaptureJson(bad, out, &err));
-        QVERIFY(err.find("malformed") != std::string::npos);
+        QVERIFY(err.find("idle_level") != std::string::npos);
 
         nlohmann::json minChannel = bad;
         minChannel["channels"][0]["idle_level"] = 0;
         minChannel["channels"][0]["channel"] = std::numeric_limits<int>::min();
-        QVERIFY2(lt::readCaptureJson(minChannel, out, &err), err.c_str());  // clamped, no overflow
+        QVERIFY(!lt::readCaptureJson(minChannel, out, &err));  // absurd channel numbers are rejected, no overflow
+        minChannel["channels"][0]["channel"] = -5;
+        QVERIFY2(lt::readCaptureJson(minChannel, out, &err), err.c_str());  // small negatives clamp
         QCOMPARE(int(out.buffer.channels()[0].number), 0);
 
         nlohmann::json hugeTrigger = minChannel;

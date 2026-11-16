@@ -4,6 +4,7 @@
 #include "core/Exporters.hpp"
 
 #include "core/ArgParsing.hpp"
+#include "core/Format.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -17,6 +18,10 @@
 #include <map>
 #include <numeric>
 #include <sstream>
+
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace lt {
 
@@ -55,6 +60,31 @@ std::vector<uint8_t> decodeBase64(std::string_view text)
 }
 
 constexpr double kUs = 1e6;
+
+// Reads a JSON number as an integer in [lo, hi] without ever converting an out-of-range or fractional
+// value (a float-to-integer cast of such a value is undefined behaviour).
+std::optional<int64_t> integerIn(const nlohmann::json& v, int64_t lo, int64_t hi)
+{
+    int64_t x = 0;
+    if (v.is_number_unsigned()) {
+        const auto u = v.get<uint64_t>();
+        if (u > static_cast<uint64_t>(INT64_MAX))
+            return std::nullopt;
+        x = static_cast<int64_t>(u);
+    } else if (v.is_number_integer()) {
+        x = v.get<int64_t>();
+    } else if (v.is_number_float()) {
+        const double d = v.get<double>();
+        if (!std::isfinite(d) || d != std::floor(d) || d < -9.2e18 || d > 9.2e18)
+            return std::nullopt;
+        x = static_cast<int64_t>(d);
+    } else {
+        return std::nullopt;
+    }
+    if (x < lo || x > hi)
+        return std::nullopt;
+    return x;
+}
 
 std::string utcNowIso8601()
 {
@@ -112,7 +142,21 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
     namespace fs = std::filesystem;
     std::error_code ec;
     const bool inPlace = fs::exists(path, ec) && !fs::is_regular_file(path, ec);
-    const std::string target = inPlace ? path : path + ".lt-tmp";
+    // The temp name is random and created exclusively (mkstemp), so a pre-planted file or symlink with a
+    // predictable name can neither be followed nor clobbered.
+    std::string target = path;
+    if (!inPlace) {
+        std::string pattern = path + ".XXXXXX";
+        const int fd = ::mkstemp(pattern.data());
+        if (fd < 0) {
+            if (error)
+                *error = "cannot write " + path;
+            return false;
+        }
+        ::fchmod(fd, 0644);
+        ::close(fd);
+        target = pattern;
+    }
     auto fail = [&](const std::string& msg) {
         if (!inPlace)
             fs::remove(target, ec);
@@ -120,7 +164,7 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
             *error = msg + " " + path;
         return false;
     };
-    {
+    try {
         std::ofstream f(target, mode | std::ios::trunc);
         if (!f)
             return fail("cannot write");
@@ -129,6 +173,9 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
         f.close();
         if (f.fail())
             return fail("failed while writing");
+    } catch (...) {
+        fail("failed while writing");
+        throw;
     }
     if (!inPlace) {
         fs::rename(target, path, ec);
@@ -454,8 +501,15 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
         const auto& s = doc["Settings"];
         if (!s.contains("Frequency") || !s.contains("CaptureChannels") || !s["CaptureChannels"].is_array())
             return fail("invalid .lac Settings object");
-        const uint64_t freq = s["Frequency"].get<uint64_t>();
-        const int64_t pre = s.value("PreTriggerSamples", int64_t{0});
+        const auto freqValue = integerIn(s["Frequency"], 1, UINT32_MAX);
+        if (!freqValue)
+            return fail("invalid Frequency in .lac file");
+        const uint64_t freq = static_cast<uint64_t>(*freqValue);
+        const auto preValue = s.contains("PreTriggerSamples") ? integerIn(s["PreTriggerSamples"], -kMaxTriggerOffset, kMaxTriggerOffset)
+                                                              : std::optional<int64_t>(0);
+        if (!preValue)
+            return fail("PreTriggerSamples is out of range in .lac file");
+        const int64_t pre = *preValue;
         const auto& chArr = s["CaptureChannels"];
         if (freq == 0 || freq > UINT32_MAX || chArr.empty() || chArr.size() > 32)
             return fail("invalid frequency or channel count in .lac file");
@@ -465,11 +519,17 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
         std::size_t sampleCount = 0;
         for (std::size_t c = 0; c < chArr.size(); ++c) {
             const auto& cj = chArr[c];
-            const int hw = cj.value("ChannelNumber", static_cast<int>(c));
+            int64_t hw = static_cast<int64_t>(c);
+            if (cj.is_object() && cj.contains("ChannelNumber")) {
+                const auto n = integerIn(cj["ChannelNumber"], -1'000'000, 1'000'000);
+                if (!n)
+                    return fail("invalid ChannelNumber in .lac channel");
+                hw = *n;
+            }
             std::string name = cj.is_object() && cj.contains("ChannelName") && cj["ChannelName"].is_string()
                                    ? cj["ChannelName"].get<std::string>()
                                    : std::string{};
-            channels.push_back({static_cast<uint8_t>(std::clamp(hw, 0, 31)), std::move(name)});
+            channels.push_back({static_cast<uint8_t>(std::clamp<int64_t>(hw, 0, 31)), std::move(name)});
             if (!cj.contains("Samples") || !cj["Samples"].is_string())
                 return fail("missing Base64 Samples in .lac channel");
             const auto& b64 = cj["Samples"].get_ref<const std::string&>();
@@ -491,12 +551,15 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
         }
         out = {};
         out.buffer = CaptureBuffer(std::move(channels), static_cast<uint32_t>(freq), 0, std::move(samples));
-        if (pre < -kMaxTriggerOffset || pre > kMaxTriggerOffset)
-            return fail("PreTriggerSamples is out of range in .lac file");
         out.buffer.setTriggerIndex(pre);
-        if (s.value("TriggerType", 0) == 0 && s.contains("TriggerChannel")) {
-            out.triggerDescription = "CH" + std::to_string(int64_t{s.value("TriggerChannel", 0)} + 1) + " " +
-                                     (s.value("TriggerInverted", false) ? "falling" : "rising");
+        const auto trigType = s.contains("TriggerType") ? integerIn(s["TriggerType"], 0, 1000) : std::optional<int64_t>(0);
+        const auto trigChannel = s.contains("TriggerChannel") ? integerIn(s["TriggerChannel"], 0, 1'000'000) : std::nullopt;
+        if (trigType == 0 && trigChannel) {
+            out.triggerDescription = "CH" + std::to_string(*trigChannel + 1) + " " +
+                                     (s.contains("TriggerInverted") && s["TriggerInverted"].is_boolean() &&
+                                              s["TriggerInverted"].get<bool>()
+                                          ? "falling"
+                                          : "rising");
         }
         return true;
     }
@@ -509,18 +572,28 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
         return fail("JSON does not contain a valid capture object (missing sample_rate_hz/samples/channels)");
     }
 
-    const uint64_t rate = cap["sample_rate_hz"].get<uint64_t>();
-    const std::size_t sampleCount = cap["samples"].get<std::size_t>();
-    if (rate == 0 || rate > UINT32_MAX)
+    const auto rateValue = integerIn(cap["sample_rate_hz"], 1, UINT32_MAX);
+    if (!rateValue)
         return fail("invalid sample_rate_hz in capture JSON");
+    const uint64_t rate = static_cast<uint64_t>(*rateValue);
+    const std::size_t sampleCount = cap["samples"].get<std::size_t>();
     if (sampleCount > 16'777'216)
         return fail("capture sample count exceeds 16M limit");
     if (cap["channels"].empty() || cap["channels"].size() > 32)
         return fail("capture must contain 1..32 channels");
 
-    const int64_t triggerSample = cap.contains("trigger_sample") && cap["trigger_sample"].is_number_integer()
-                                      ? cap["trigger_sample"].get<int64_t>()
-                                      : static_cast<int64_t>(cap.value("pre_trigger_samples", 0u));
+    int64_t triggerSample = 0;
+    if (cap.contains("trigger_sample") && cap["trigger_sample"].is_number_integer()) {
+        const auto t = integerIn(cap["trigger_sample"], INT64_MIN, INT64_MAX);
+        if (!t)
+            return fail("trigger_sample is out of range in capture JSON");
+        triggerSample = *t;
+    } else if (cap.contains("pre_trigger_samples")) {
+        const auto t = integerIn(cap["pre_trigger_samples"], 0, INT64_MAX);
+        if (!t)
+            return fail("pre_trigger_samples is out of range in capture JSON");
+        triggerSample = *t;
+    }
 
     std::vector<ChannelInfo> channels;
     std::vector<uint32_t> samples(sampleCount, 0u);
@@ -530,8 +603,14 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
             !cj["edge_samples"].is_array()) {
             return fail("channel entry missing idle_level or lossless edge_samples[] (re-save with --out-json)");
         }
-        const int chNum1 = cj.value("channel", static_cast<int>(c + 1));
-        const uint8_t hwNum = static_cast<uint8_t>(std::clamp<int64_t>(int64_t{chNum1} - 1, 0, 31));
+        int64_t chNum1 = static_cast<int64_t>(c + 1);
+        if (cj.contains("channel")) {
+            const auto n = integerIn(cj["channel"], -1'000'000, 1'000'000);
+            if (!n)
+                return fail("invalid channel number in capture JSON");
+            chNum1 = *n;
+        }
+        const uint8_t hwNum = static_cast<uint8_t>(std::clamp<int64_t>(chNum1 - 1, 0, 31));
         std::string name = cj.value("name", std::string{});
         if (name == "CH" + std::to_string(hwNum + 1))
             name.clear();
@@ -548,7 +627,11 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
         }
         std::sort(edges.begin(), edges.end());
 
-        bool level = cj["idle_level"].get<int>() != 0;
+        const auto idle = cj["idle_level"].is_boolean() ? std::optional<int64_t>(cj["idle_level"].get<bool>() ? 1 : 0)
+                                                        : integerIn(cj["idle_level"], 0, 1);
+        if (!idle)
+            return fail("idle_level must be 0 or 1");
+        bool level = *idle != 0;
         std::size_t ePos = 0;
         const uint32_t bitMask = 1u << c;
         for (std::size_t i = 0; i < sampleCount; ++i) {
@@ -572,9 +655,18 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
     } else if (doc.contains("config") && doc["config"].is_object() && doc["config"].contains("trigger")) {
         const auto& tr = doc["config"]["trigger"];
         if (tr.is_object() && tr.value("type", "") == "edge") {
-            out.triggerDescription = "CH" + std::to_string(tr.value("channel", 1)) + " " +
+            const auto trChannel = tr.contains("channel") ? integerIn(tr["channel"], 1, 1'000'000) : std::optional<int64_t>(1);
+            out.triggerDescription = "CH" + std::to_string(trChannel.value_or(1)) + " " +
                                      tr.value("edge", std::string("rising"));
         }
+    }
+
+    if (doc.contains("device") && doc["device"].is_object()) {  // provenance written by the CLI and the GUI
+        const auto& dev = doc["device"];
+        if (dev.contains("version") && dev["version"].is_string())
+            out.deviceVersion = dev["version"].get<std::string>();
+        if (dev.contains("board") && dev["board"].is_string())
+            out.board = dev["board"].get<std::string>();
     }
 
     if (doc.contains("setup"))
@@ -592,7 +684,7 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
             if (!n.is_object())
                 continue;
             Annotation a;
-            a.id = n.value("id", uint64_t{0});
+            a.id = n.contains("id") ? static_cast<uint64_t>(integerIn(n["id"], 0, INT64_MAX).value_or(0)) : 0;
             a.timeSeconds = n.value("time_us", 0.0) * 1e-6;
             a.durationSeconds = n.value("duration_us", 0.0) * 1e-6;
             a.label = n.value("label", std::string{});
@@ -811,7 +903,7 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
             return fail("VCD has no usable $timescale");
         const double rate = 1.0 / periodS;
         if (rate > 2e9)
-            return fail("VCD time resolution is too fine (" + std::to_string(static_cast<uint64_t>(rate)) +
+            return fail("VCD time resolution is too fine (" + formatNumber(rate, 3) +
                         " Hz > 2 GHz): re-export it with a coarser timescale");
         frequency = static_cast<uint32_t>(std::max(1.0, std::round(rate)));
         unitsPerSample = static_cast<double>(stepUnits);

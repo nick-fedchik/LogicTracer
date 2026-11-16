@@ -224,16 +224,14 @@ std::optional<Motif> detectMotif(const CaptureBuffer& b, const std::vector<Chron
     if (cycle == 0)
         return std::nullopt;
 
-    // The reference cycle starts at the first position that repeats twice in a row, so a startup
-    // glitch before it is reported as a deviation instead of becoming part of the motif.
-    std::size_t refStart = 0;
-    for (std::size_t s = 0; s + 2 * cycle <= e; ++s) {
-        bool repeats = true;
-        for (std::size_t k = 0; k < cycle && repeats; ++k)
-            repeats = token(s + k) == token(s + k + cycle);
-        if (repeats) {
-            refStart = s;
-            break;
+    // The reference cycle comes from the longest uninterrupted periodic stretch, so any number of startup
+    // transients (even ones that happen to repeat) are reported as deviations instead of defining the motif.
+    std::size_t refStart = 0, bestRun = 0, run = 0;
+    for (std::size_t i = 0; i + cycle < e; ++i) {
+        run = token(i) == token(i + cycle) ? run + 1 : 0;
+        if (run > bestRun) {
+            bestRun = run;
+            refStart = i + 1 - run;
         }
     }
 
