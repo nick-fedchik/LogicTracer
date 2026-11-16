@@ -29,6 +29,7 @@ inline constexpr int ParseError = -32700;
 inline constexpr int InvalidRequest = -32600;
 inline constexpr int MethodNotFound = -32601;
 inline constexpr int InvalidParams = -32602;
+inline constexpr int InternalError = -32603;
 inline constexpr int NoCapture = -32000;
 inline constexpr int Busy = -32001;
 inline constexpr int NoDevice = -32002;

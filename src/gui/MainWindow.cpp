@@ -1328,8 +1328,8 @@ std::optional<double> secondsFromParams(const json& p, std::string& error)
         error = "give exactly one of time_us, time_s, time";
         return std::nullopt;
     }
-    if (!std::isfinite(*value)) {
-        error = "time must be finite";
+    if (!std::isfinite(*value) || std::abs(*value) > 1e6) {
+        error = "time must be finite and within +-1e6 seconds";
         return std::nullopt;
     }
     return value;
@@ -1386,8 +1386,17 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                   {"version", QCoreApplication::applicationVersion().toStdString()},
                   {"pid", QCoreApplication::applicationPid()}});
     } else if (method == "get_state") {
+        if (!checkCaptureId(params, reply))
+            return;
         reply.ok(stateJson());
     } else if (method == "get_report") {
+        if (!checkCaptureId(params, reply))
+            return;
+        for (const char* key : {"note", "latency"})
+            if (params.contains(key) && !params[key].is_string()) {
+                reply.fail(sess::error::InvalidParams, std::string(key) + " must be a string");
+                return;
+            }
         if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale) {
             reply.ok({{"report", failureReport().toStdString()},
                       {"metadata",
@@ -1448,12 +1457,16 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
     } else if (method == "annotate") {
         sessionAnnotate(params, std::move(reply));
     } else if (method == "list_annotations") {
+        if (!checkCaptureId(params, reply))
+            return;
         auto list = json::array();
         for (const auto& a : m_waveform->annotations())
             list.push_back({{"id", a.id}, {"time_us", a.timeSeconds * 1e6}, {"duration_us", a.durationSeconds * 1e6},
                             {"label", a.label}, {"color", a.color}, {"author", a.author}});
         reply.ok({{"annotations", list}});
     } else if (method == "clear_annotations") {
+        if (!checkCaptureId(params, reply))
+            return;
         const auto n = m_waveform->annotations().size();
         m_waveform->clearAnnotations();
         reply.ok({{"cleared", n}});
@@ -1537,7 +1550,7 @@ void MainWindow::sessionSetView(const json& p, sess::Responder reply)
         }
         range = {sampleAt(*center - *span / 2), sampleAt(*center + *span / 2)};
     }
-    if (range && (range->second < 0 || range->first > static_cast<double>(buf.size()))) {
+    if (range && (range->second < 0 || range->first >= static_cast<double>(buf.size()))) {
         reply.fail(sess::error::InvalidParams, "the requested window is outside the capture");
         return;
     }
@@ -1576,6 +1589,10 @@ void MainWindow::sessionGetAnomalies(const json& p, sess::Responder reply)
         return;
     if (!m_waveform->hasCapture()) {
         reply.fail(sess::error::NoCapture, "no capture is shown in the GUI");
+        return;
+    }
+    if (p.contains("latency") && !p["latency"].is_string()) {
+        reply.fail(sess::error::InvalidParams, "latency must be a string");
         return;
     }
     std::size_t maxCount = 20;
@@ -1667,7 +1684,7 @@ void MainWindow::sessionAnnotate(const json& p, sess::Responder reply)
         a.durationSeconds = p["duration_us"].get<double>() * 1e-6;
     }
     if (p.contains("author") && p["author"].is_string() && !p["author"].get<std::string>().empty())
-        a.author = p["author"].get<std::string>().substr(0, 40);
+        a.author = str(QString::fromStdString(p["author"].get<std::string>()).left(40));  // by characters, not bytes
 
     const auto id = m_waveform->addAnnotation(a);
     showStatus(tr("Annotation #%1 by %2: %3").arg(id).arg(QString::fromStdString(a.author), trimmed));
@@ -1700,6 +1717,12 @@ void MainWindow::sessionCapture(const json& p, sess::Responder reply)
     static constexpr std::array<std::string_view, 1> kVcdExt{".vcd"};
     static constexpr std::array<std::string_view, 1> kJsonExt{".json"};
     static constexpr std::array<std::string_view, 1> kCsvExt{".csv"};
+    for (const char* key : {"out_vcd", "out_json", "out_csv", "out_events_csv"}) {
+        if (p.contains(key) && !p[key].is_string()) {
+            reply.fail(sess::error::InvalidParams, std::string(key) + " must be a string");
+            return;
+        }
+    }
     const auto vcd = lt::resolveSafeOutputPath(p.value("out_vcd", std::string()), kVcdExt, {}, &err);
     const auto jsn = vcd ? lt::resolveSafeOutputPath(p.value("out_json", std::string()), kJsonExt, {}, &err) : std::nullopt;
     const auto csv = jsn ? lt::resolveSafeOutputPath(p.value("out_csv", std::string()), kCsvExt, {}, &err) : std::nullopt;
@@ -1751,14 +1774,15 @@ void MainWindow::sessionProbe(const json& p, sess::Responder reply)
         return;
     }
     std::string err;
-    auto params = lt::probeParamsFromJson(p, m_device.info().channels, err);
+    const int probeChannels = std::min<int>(kMaxProtocolChannels, m_device.info().channels);
+    auto params = lt::probeParamsFromJson(p, probeChannels, err);
     if (!params) {
         reply.fail(sess::error::InvalidParams, err);
         return;
     }
     if (params->channels.empty())
-        for (uint8_t i = 0; i < m_device.info().channels; ++i)
-            params->channels.push_back({i, {}});
+        for (int i = 0; i < probeChannels; ++i)
+            params->channels.push_back({static_cast<uint8_t>(i), {}});
     Pending pending;
     pending.isProbe = true;
     pending.reply = std::move(reply);

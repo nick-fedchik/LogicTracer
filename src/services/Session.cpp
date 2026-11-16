@@ -120,7 +120,8 @@ void Server::onReadyRead(QLocalSocket* socket)
     auto sink = [guard, alive = std::weak_ptr<int>(m_alive)](const json& message) {
         if (alive.expired() || !guard)
             return;
-        guard->write(QByteArray::fromStdString(message.dump()) + '\n');
+        // Invalid UTF-8 inside a string must never throw out of a Qt slot.
+        guard->write(QByteArray::fromStdString(message.dump(-1, ' ', false, json::error_handler_t::replace)) + '\n');
     };
 
     if (guard && !guard->canReadLine() && guard->bytesAvailable() > 1024 * 1024) {
@@ -133,6 +134,11 @@ void Server::onReadyRead(QLocalSocket* socket)
         const QByteArray line = guard->readLine().trimmed();
         if (line.isEmpty())
             continue;
+        if (line.size() > 1024 * 1024) {
+            Responder(sink, nullptr).fail(error::InvalidRequest, "request line exceeds 1 MiB limit");
+            guard->disconnectFromServer();
+            return;
+        }
         const json msg = json::parse(line.toStdString(), nullptr, false);
         if (msg.is_discarded() || !msg.is_object()) {
             Responder(sink, nullptr).fail(error::ParseError, "invalid JSON");
@@ -153,13 +159,24 @@ void Server::onReadyRead(QLocalSocket* socket)
             reply.fail(error::MethodNotFound, "no handler");
             continue;
         }
-        m_handler(msg["method"].get<std::string>(), params, reply);
+        try {
+            m_handler(msg["method"].get<std::string>(), params, reply);
+        } catch (const std::exception& e) {  // wrongly typed parameters must not take the GUI down
+            reply.fail(error::InternalError, std::string("request failed: ") + e.what());
+        }
     }
 }
 
 CallResult call(const QString& socketPath, const std::string& method, const json& params, int timeoutMs)
 {
     CallResult out;
+    // Never talk to (and trust reports from) a socket that another user could have created.
+    struct stat st{};
+    const QByteArray pathBytes = socketPath.toLocal8Bit();
+    if (::lstat(pathBytes.constData(), &st) == 0 && (!S_ISSOCK(st.st_mode) || st.st_uid != ::getuid())) {
+        out.error = "refusing the session socket " + socketPath.toStdString() + ": not a socket owned by the current user";
+        return out;
+    }
     QLocalSocket socket;
     socket.connectToServer(socketPath);
     if (!socket.waitForConnected(std::min(timeoutMs, 1000))) {

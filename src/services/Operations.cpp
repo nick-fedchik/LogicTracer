@@ -9,6 +9,7 @@
 #include "services/Session.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace lt {
@@ -48,8 +49,11 @@ std::optional<uint64_t> quantityOf(const json& v)
         return v.get<int64_t>() >= 0 ? std::optional<uint64_t>(static_cast<uint64_t>(v.get<int64_t>())) : std::nullopt;
     if (v.is_number_float()) {
         const double d = v.get<double>();
-        return d >= 0 && d == static_cast<double>(static_cast<uint64_t>(d)) ? std::optional<uint64_t>(static_cast<uint64_t>(d))
-                                                                            : std::nullopt;
+        // 2^64 is not representable as uint64_t: range-check before casting.
+        if (!std::isfinite(d) || d < 0 || d >= 18446744073709551616.0)
+            return std::nullopt;
+        const auto u = static_cast<uint64_t>(d);
+        return d == static_cast<double>(u) ? std::optional<uint64_t>(u) : std::nullopt;
     }
     if (v.is_string())
         return cli::parseQuantity(v.get<std::string>());

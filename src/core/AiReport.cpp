@@ -15,6 +15,24 @@
 
 namespace lt {
 
+namespace {
+
+// Free text from users/agents is embedded in Markdown: collapse line breaks and control characters so a
+// label or note cannot start a forged section ("\n## Verdict"), and cap its length.
+std::string inlineText(std::string_view text, std::size_t maxChars = 300)
+{
+    std::string out;
+    out.reserve(std::min(text.size(), maxChars));
+    for (const char c : text) {
+        if (out.size() >= maxChars)
+            break;
+        out.push_back(static_cast<unsigned char>(c) < 0x20 || c == 0x7F ? ' ' : c);
+    }
+    return out;
+}
+
+}  // namespace
+
 std::string_view toString(CopyMode mode) noexcept
 {
     switch (mode) {
@@ -455,7 +473,7 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
     if (!o.banner.empty())
         ss << "> **" << o.banner << "**\n\n";
     if (!o.userNote.empty())
-        ss << "> **Context / Question:** " << o.userNote << "\n\n";
+        ss << "> **Context / Question:** " << inlineText(o.userNote, 2000) << "\n\n";
 
     if (o.captureId != 0)
         ss << "- Capture ID: " << o.captureId << "\n";
@@ -688,7 +706,7 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
             ss << "- #" << a.id << " t = " << formatTime(a.timeSeconds);
             if (a.durationSeconds > 0)
                 ss << " for " << formatTime(a.durationSeconds);
-            ss << " [" << a.author << "] \"" << a.label << "\"" << (annotationVisible(b, r, a) ? "" : " (outside the visible range)")
+            ss << " [" << inlineText(a.author, 40) << "] \"" << inlineText(a.label) << "\"" << (annotationVisible(b, r, a) ? "" : " (outside the visible range)")
                << "\n";
         }
     }
@@ -776,7 +794,7 @@ std::string asciiTimeline(const CaptureBuffer& b, const ReportOptions& o)
        << (shown.empty() ? "" : ", 1-9 annotations") << "\n";
     for (std::size_t i = 0; i < shown.size(); ++i)
         ss << "  [" << (i < 9 ? std::to_string(i + 1) : "+") << "] t = " << formatTime(shown[i]->timeSeconds) << " ["
-           << shown[i]->author << "] " << shown[i]->label << "\n";
+           << inlineText(shown[i]->author, 40) << "] " << inlineText(shown[i]->label) << "\n";
     return ss.str();
 }
 
@@ -955,7 +973,7 @@ std::string probeForAi(const nlohmann::json& doc, std::string_view userNote)
     std::ostringstream ss;
     ss << "## LogicTracer input probe\n\n";
     if (!userNote.empty())
-        ss << "> **Context / Question:** " << userNote << "\n\n";
+        ss << "> **Context / Question:** " << inlineText(userNote, 2000) << "\n\n";
     std::string board;
     if (doc.contains("device") && doc["device"].is_object()) {
         const auto ver = doc["device"].value("version", std::string{});
@@ -1030,7 +1048,7 @@ std::string timeoutForAi(const CaptureBuffer& lineDump, std::string_view status,
     std::ostringstream ss;
     ss << "## LogicTracer capture failed (" << status << ")\n\n";
     if (!userNote.empty())
-        ss << "> **Context / Question:** " << userNote << "\n\n";
+        ss << "> **Context / Question:** " << inlineText(userNote, 2000) << "\n\n";
     ss << "- Status: **" << status << "** (" << error << ")\n";
     ss << "- Trigger: " << (triggerDescription.empty() ? "unknown" : std::string(triggerDescription)) << "\n";
     if (previousCaptureId != 0)

@@ -267,40 +267,6 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
     return out;
 }
 
-std::string buildTimeoutAiReport(const json& doc, const lt::CaptureBuffer* lineDump, std::string_view userNote)
-{
-    std::ostringstream ss;
-    ss << "## LogicTracer capture TIMEOUT\n\n";
-    if (!userNote.empty())
-        ss << "> **Context / Question:** " << userNote << "\n\n";
-    if (doc.contains("device") && doc["device"].is_object())
-        ss << "- Device: " << doc["device"].value("version", std::string{}) << " on `"
-           << doc.value("port", std::string{"?"}) << "`\n";
-    ss << "- Error: **" << doc.value("error", std::string{"Timed out waiting for trigger"}) << "** ("
-       << doc.value("elapsed_ms", 0ll) << " ms)\n";
-    if (lineDump && lineDump->size() > 0) {
-        const std::string board =
-            doc.contains("device") && doc["device"].is_object() ? doc["device"].value("board", std::string{}) : "";
-        ss << "\nCurrent input state (post-timeout probe):\n\n"
-              "| Ch | Pin | Name | State | High % | Edges | Diagnosis |\n"
-              "|---|---|---|---|---|---|---|\n";
-        for (const auto& st : lt::SignalAnalyzer{}.analyze(*lineDump)) {
-            const auto d = lt::SignalAnalyzer::diagnose(st);
-            std::string pin = "-";
-            if (!board.empty()) {
-                if (const auto gp = lt::gpioForChannel(board, st.channel.number))
-                    pin = "GP" + std::to_string(*gp);
-            }
-            std::ostringstream hp;
-            hp << std::fixed << std::setprecision(1) << st.highTimePercent << "%";
-            ss << "| " << st.channel.displayNumber() << " | " << pin << " | " << st.channel.label() << " | **"
-               << lt::toString(d.state) << "** | " << hp.str() << " | " << st.transitions << " | " << d.message
-               << " |\n";
-        }
-    }
-    return ss.str();
-}
-
 // ---------------------------------------------------------------------------------------------
 int cmdDetect(const QStringList& args, Output o)
 {
@@ -605,10 +571,14 @@ int cmdCapture(const QStringList& args, Output o)
         if (p.isSet("measure-latency")) params["latency"] = str(p.value("measure-latency"));
         if (p.isSet("expect")) params["expect"] = str(p.value("expect"));
         if (!setup->empty()) params["meta"] = lt::toJson(*setup);
-        if (p.isSet("out-vcd")) params["out_vcd"] = str(p.value("out-vcd"));
-        if (p.isSet("out-json")) params["out_json"] = str(p.value("out-json"));
-        if (p.isSet("out-csv")) params["out_csv"] = str(p.value("out-csv"));
-        if (p.isSet("out-events-csv")) params["out_events_csv"] = str(p.value("out-events-csv"));
+        // The GUI resolves relative paths against its own working directory: send the caller's.
+        const auto absolutePath = [](const QString& path) {
+            return std::filesystem::absolute(std::filesystem::path(str(path))).lexically_normal().string();
+        };
+        if (p.isSet("out-vcd")) params["out_vcd"] = absolutePath(p.value("out-vcd"));
+        if (p.isSet("out-json")) params["out_json"] = absolutePath(p.value("out-json"));
+        if (p.isSet("out-csv")) params["out_csv"] = absolutePath(p.value("out-csv"));
+        if (p.isSet("out-events-csv")) params["out_events_csv"] = absolutePath(p.value("out-events-csv"));
 
         const int64_t capMs = static_cast<int64_t>((*samples * 1000ull) / std::max<uint64_t>(1, *freq));
         const int ipcWait = static_cast<int>(std::clamp<int64_t>(timeout->count() + capMs + 20'000, 120'000, 3'700'000));
@@ -623,8 +593,10 @@ int cmdCapture(const QStringList& args, Output o)
         const int rc = st == "OK" ? (expectOk ? ExitOk : ExitExpectFailed) : st == "TIMEOUT" ? ExitTimeout : ExitError;
 
         std::string sessionAi;
-        if ((p.isSet("ai") || (p.isSet("copy") && !o.json)) && st == "OK") {
+        if (p.isSet("ai") || (p.isSet("copy") && !o.json)) {
             json repParams = {{"mode", std::string(lt::toString(*aiMode))}};
+            if (doc.contains("capture_id"))
+                repParams["capture_id"] = doc["capture_id"];  // the report must describe this very capture
             if (p.isSet("note"))
                 repParams["note"] = str(p.value("note"));
             if (p.isSet("measure-latency"))
@@ -744,7 +716,9 @@ int cmdCapture(const QStringList& args, Output o)
                                          info.version.raw, info.version.board, str(p.value("note")), latencyArg, {},
                                          assertionsPtr, *setup);
         } else if (result.status == lt::CaptureStatus::Timeout) {
-            aiText = buildTimeoutAiReport(doc, result.lineDump ? &*result.lineDump : nullptr, str(p.value("note")));
+            aiText = lt::timeoutForAi(result.lineDump ? *result.lineDump : lt::CaptureBuffer{},
+                                      lt::toString(result.status), result.error, trigDesc, info.version.board,
+                                      str(p.value("note")), 0);
         }
     }
 
@@ -1059,8 +1033,16 @@ int cmdAnnotate(const QStringList& args, Output o)
         return *rc;
     const QString socket = socketPathFrom(p);
 
+    json idGuard = json::object();
+    if (p.isSet("capture-id")) {
+        bool ok = false;
+        const auto id = p.value("capture-id").toULongLong(&ok);
+        if (!ok || id == 0)
+            return report(o, ExitUsage, "invalid --capture-id '" + str(p.value("capture-id")) + "' (expected a positive integer)");
+        idGuard["capture_id"] = static_cast<uint64_t>(id);
+    }
     if (p.isSet("list"))
-        return finishSessionCall(o, lt::session::call(socket, "list_annotations"), [](const json& r) {
+        return finishSessionCall(o, lt::session::call(socket, "list_annotations", idGuard), [](const json& r) {
             for (const auto& a : r["annotations"])
                 std::cout << "#" << a["id"].get<int>() << "  " << lt::formatTime(a["time_us"].get<double>() * 1e-6)
                           << "  [" << a["author"].get<std::string>() << "] " << a["label"].get<std::string>() << '\n';
@@ -1068,7 +1050,7 @@ int cmdAnnotate(const QStringList& args, Output o)
                 std::cout << "No annotations.\n";
         });
     if (p.isSet("clear"))
-        return finishSessionCall(o, lt::session::call(socket, "clear_annotations"), [](const json& r) {
+        return finishSessionCall(o, lt::session::call(socket, "clear_annotations", idGuard), [](const json& r) {
             std::cout << "Removed " << r["cleared"].get<int>() << " annotation(s).\n";
         });
 
@@ -1201,8 +1183,14 @@ int cmdView(const QStringList& args, Output o)
     }
     const QString socket = socketPathFrom(p);
 
+    json guard = json::object();  // capture_id from the steering block above
+    if (p.isSet("capture-id"))
+        guard["capture_id"] = p.value("capture-id").toULongLong();
+
     if (p.isSet("report") || (p.isSet("copy") && !o.json)) {
-        json params = json::object();
+        json params = guard;
+        if (p.isSet("latency"))
+            params["latency"] = str(p.value("latency"));
         if (p.isSet("ai-mode"))
             params["mode"] = str(p.value("ai-mode"));
         if (p.isSet("note"))
@@ -1210,8 +1198,10 @@ int cmdView(const QStringList& args, Output o)
         const auto sr = lt::session::call(socket, "get_report", params);
         if (!sr.ok) {
             const ExitCode code = sr.errorCode == lt::session::error::InvalidParams ? ExitUsage : ExitError;
-            return report(o, code, sr.error + (sr.connected ? "" : " (start logictracer-gui first)"),
-                          {{"session_connected", sr.connected}});
+            json extra = {{"session_connected", sr.connected}};
+            if (sr.errorCode == lt::session::error::StaleCapture)
+                extra["error_kind"] = "StaleCapture";
+            return report(o, code, sr.error + (sr.connected ? "" : " (start logictracer-gui first)"), extra);
         }
         if (o.json) {
             json doc = sr.result;
@@ -1230,7 +1220,7 @@ int cmdView(const QStringList& args, Output o)
         }
         return ExitOk;
     }
-    const auto sr = lt::session::call(socket, "get_state");
+    const auto sr = lt::session::call(socket, "get_state", guard);
     if (p.isSet("copy") && sr.ok && o.json) {
         json doc = sr.result;
         doc["command"] = o.command;

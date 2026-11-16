@@ -335,6 +335,10 @@ ProbeResult PicoConnection::probe(const std::vector<ChannelInfo>& channels, mill
     for (const auto& ch : channels)
         numbers.push_back(ch.number);
     const auto lim = m_info.limits(captureModeFor(numbers));
+    if (lim.maxTotalSamples < lim.minPreSamples + lim.minPostSamples) {
+        pr.error = "the device buffer is too small to probe";
+        return pr;
+    }
     c.preSamples = lim.minPreSamples;
     const uint64_t wanted = static_cast<uint64_t>(window.count()) * c.frequency / 1000;
     c.postSamples = static_cast<uint32_t>(std::clamp<uint64_t>(

@@ -58,6 +58,17 @@ CliRun runCli(const QStringList& args, const QString& socket)
 
 }  // namespace
 
+// The GUI answers on this thread's event loop, so the blocking client call runs on another thread.
+lt::session::CallResult callInThread(const QString& socketPath, const std::string& method,
+                                     const nlohmann::json& params = nlohmann::json::object())
+{
+    auto future = std::async(std::launch::async,
+                             [=] { return lt::session::call(socketPath, method, params, 5000); });
+    while (future.wait_for(std::chrono::milliseconds(5)) != std::future_status::ready)
+        QCoreApplication::processEvents();
+    return future.get();
+}
+
 class SessionTests : public QObject {
     Q_OBJECT
 
@@ -182,6 +193,53 @@ private Q_SLOTS:
         QCOMPARE(win.waveform()->annotations().size(), std::size_t{1});
 
         QCOMPARE(runCli({"annotate", "--time", "5us", "--label", "x", "--capture-id", "0", "--json"}, s).exitCode, 64);
+    }
+
+    // Reads and destructive calls honour capture_id too, so a newer capture is never wiped or misreported.
+    void readsAndClearsHonourTheCaptureId()
+    {
+        lt::gui::MainWindow win;
+        win.show();
+        win.loadDemo();
+        QVERIFY(win.startSession(socket("guard.sock")));
+        const QString s = socket("guard.sock");
+        const auto id = runCli({"view", "--json"}, s).doc["capture_id"].get<std::uint64_t>();
+        QVERIFY(runCli({"annotate", "--time", "5us", "--label", "keep", "--json"}, s).exitCode == 0);
+
+        const auto wrong = QString::number(id + 5);
+        auto r = runCli({"view", "--report", "--capture-id", wrong, "--json"}, s);
+        QVERIFY(r.exitCode != 0);
+        QCOMPARE(r.doc["error_kind"].get<std::string>(), std::string("StaleCapture"));
+        r = runCli({"annotate", "--clear", "--capture-id", wrong, "--json"}, s);
+        QCOMPARE(r.doc["error_kind"].get<std::string>(), std::string("StaleCapture"));
+        QCOMPARE(win.waveform()->annotations().size(), std::size_t{1});  // nothing was wiped
+        QCOMPARE(runCli({"view", "--report", "--capture-id", QString::number(id), "--json"}, s).exitCode, 0);
+    }
+
+    // Wrongly typed or non-UTF-8-safe parameters are answered with an error and never terminate the GUI.
+    void malformedRequestsDoNotCrashTheSession()
+    {
+        lt::gui::MainWindow win;
+        win.show();
+        win.loadDemo();
+        QVERIFY(win.startSession(socket("fuzz.sock")));
+        const QString s = socket("fuzz.sock");
+
+        std::string author(39, 'x');
+        author += "\xD0\x90";  // a 2-byte character that byte-wise truncation to 40 would split
+        auto r = callInThread(s, "annotate", {{"time_us", 5}, {"label", "n"}, {"author", author}});
+        QVERIFY2(r.ok, r.error.c_str());
+        QVERIFY(callInThread(s, "list_annotations").ok);
+        QVERIFY(callInThread(s, "get_report").ok);
+
+        r = callInThread(s, "annotate", {{"time_s", 1e308}, {"label", "far"}});
+        QVERIFY(!r.ok);
+        QCOMPARE(r.errorCode, lt::session::error::InvalidParams);
+        r = callInThread(s, "get_report", {{"latency", 5}});
+        QCOMPARE(r.errorCode, lt::session::error::InvalidParams);
+        r = callInThread(s, "capture", {{"out_vcd", 12345}});
+        QVERIFY(!r.ok);
+        QVERIFY(callInThread(s, "ping").ok);  // still alive
     }
 
     void viewCanBeSteeredAndAnomaliesListed()

@@ -156,7 +156,8 @@ json McpServer::toolList()
              "chronological transition log, ASCII timeline, and optional JSON edge list) of that view. The result "
              "carries capture_id (pass it to lt_add_annotation) and display_state (live / armed / stale): when "
              "stale, the report is a failure diagnosis, not a description of the waveform on screen.",
-             schema({{"report", prop("boolean", "Include the report for the visible range (default true).")},
+             schema({{"capture_id", prop("integer", "Refuse with StaleCapture unless this capture is on screen.")},
+                     {"report", prop("boolean", "Include the report for the visible range (default true).")},
                      {"mode", prop("string", "Report detail: 'brief' (compact, no raw JSON), 'cursors' (A..B only), or 'full'.")},
                      {"latency", prop("string", "Optional cross-channel STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")}})),
         tool("lt_set_view",
@@ -182,7 +183,10 @@ json McpServer::toolList()
              schema({{"capture_id", prop("integer", "Capture id from lt_get_view; refused with StaleCapture on mismatch.")},
                      {"latency", prop("string", "Optional STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")},
                      {"max_count", prop("integer", "Maximum incidents to return (default 20, max 1000).")}})),
-        tool("lt_clear_annotations", "Remove every annotation from the GUI timeline.", schema(json::object())),
+        tool("lt_clear_annotations",
+             "Remove every annotation from the GUI timeline of the capture on screen.",
+             schema({{"capture_id", prop("integer", "Capture id from lt_get_view; refused with StaleCapture on mismatch, "
+                                                    "so annotations of a newer capture are never wiped.")}})),
     });
 }
 
@@ -344,9 +348,11 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
         return sessionOrError("annotate", params);
     }
     if (name == "lt_get_view") {
-        if (!args.value("report", true))
-            return sessionOrError("get_state", json::object());
         json params = json::object();
+        if (args.contains("capture_id"))
+            params["capture_id"] = args["capture_id"];
+        if (!args.value("report", true))
+            return sessionOrError("get_state", params);
         for (const char* key : {"mode", "latency", "note"})
             if (args.contains(key))
                 params[key] = args[key];
@@ -360,8 +366,12 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
                 params[key] = args[key];
         return sessionOrError(name == "lt_set_view" ? "set_view" : "get_anomalies", params);
     }
-    if (name == "lt_clear_annotations")
-        return sessionOrError("clear_annotations", json::object());
+    if (name == "lt_clear_annotations") {
+        json params = json::object();
+        if (args.contains("capture_id"))
+            params["capture_id"] = args["capture_id"];
+        return sessionOrError("clear_annotations", params);
+    }
 
     return errorResult("unknown tool '" + name + "'");
 }

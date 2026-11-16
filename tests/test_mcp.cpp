@@ -257,6 +257,9 @@ private Q_SLOTS:
         const auto fresh = client.tool("lt_add_annotation", {{"time_us", 5}, {"text", "y"}, {"capture_id", id}});
         QVERIFY2(!fresh["result"]["isError"].get<bool>(), fresh.dump().c_str());
         QCOMPARE(win.waveform()->annotations().size(), std::size_t{2});
+        QVERIFY(client.tool("lt_clear_annotations", {{"capture_id", id + 1}}).dump().find("StaleCapture") != std::string::npos);
+        QCOMPARE(win.waveform()->annotations().size(), std::size_t{2});  // a stale clear wipes nothing
+        QVERIFY(client.tool("lt_get_view", {{"capture_id", id + 1}}).dump().find("StaleCapture") != std::string::npos);
         QVERIFY(!client.tool("lt_clear_annotations", {})["result"]["isError"].get<bool>());
         const auto cleared = client.tool("lt_clear_annotations", {});
         QVERIFY(!cleared["result"]["isError"].get<bool>());
