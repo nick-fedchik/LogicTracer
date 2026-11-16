@@ -659,6 +659,18 @@ class CliTests : public QObject {
     }
 
 private Q_SLOTS:
+    void diffComparesTwoFilesAndHonoursStrict()
+    {
+        QTemporaryDir dir;
+        const auto base = writeRecording(dir);
+        QVERIFY(!base.isEmpty());
+        nlohmann::json j;
+        QCOMPARE(run({"diff", base, base, "--measure-latency", "1..2", "--strict", "--json"}, &j), 0);
+        QCOMPARE(j["verdict"].get<std::string>(), std::string("equivalent"));
+        QCOMPARE(run({"diff", base, "--json"}, &j), 64);
+        QCOMPARE(run({"diff", base, dir.filePath("missing.json"), "--json"}, &j), 1);
+    }
+
     void unknownCommandYieldsJson()
     {
         nlohmann::json j;

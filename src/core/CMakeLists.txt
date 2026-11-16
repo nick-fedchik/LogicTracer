@@ -6,6 +6,7 @@ add_library(logictracer_core STATIC
     AiReport.cpp AiReport.hpp
     ArgParsing.cpp ArgParsing.hpp
     CaptureBuffer.cpp CaptureBuffer.hpp
+    CaptureDiff.cpp CaptureDiff.hpp
     CaptureTypes.cpp CaptureTypes.hpp
     DeviceProtocol.cpp DeviceProtocol.hpp
     Exporters.cpp Exporters.hpp

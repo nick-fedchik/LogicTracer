@@ -8,6 +8,7 @@
 //   0 = OK, 1 = error / nothing found, 2 = TIMEOUT, 3 = --expect assertion failed, 64 = usage error.
 
 #include "core/AiReport.hpp"
+#include "core/CaptureDiff.hpp"
 #include "core/ArgParsing.hpp"
 #include "services/Clipboard.hpp"
 #include "core/Exporters.hpp"
@@ -961,6 +962,70 @@ int cmdAnalyze(const QStringList& args, Output o)
     return rc;
 }
 
+int cmdDiff(const QStringList& args, Output o)
+{
+    QCommandLineParser p;
+    p.setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
+    const auto helpOption = p.addHelpOption();
+    p.setApplicationDescription(
+        "Compare two saved captures of the same test (A = baseline, B = candidate): latency distribution,\n"
+        "drops/spurious reactions, anomaly incidents and per-channel activity. Latency differences within the\n"
+        "+-1 sample quantization of both captures are reported as sampling phase, not as a change.\n"
+        "Example: diff baseline.json candidate.json --measure-latency 1..2 --strict");
+    p.addPositionalArgument("a", "Baseline capture (.json, .vcd or .lac).");
+    p.addPositionalArgument("b", "Candidate capture (.json, .vcd or .lac).");
+    p.addOptions({
+        {"json", "Machine-readable JSON output."},
+        {"measure-latency", "STIM[:edge]..REACT[:edge] pair compared in both captures, e.g. 1..2.", "spec"},
+        {"strict", "Exit 3 when the verdict is 'regression' (for CI and HIL scripts)."},
+        {"copy", "Copy the Markdown (or JSON with --json) to the clipboard."},
+    });
+    if (!p.parse(args))
+        return report(o, ExitUsage, str(p.errorText()));
+    if (p.isSet(helpOption)) {
+        std::cout << str(p.helpText());
+        return ExitOk;
+    }
+    const auto files = p.positionalArguments();
+    if (files.size() != 2)
+        return report(o, ExitUsage, "pass exactly two capture files: A (baseline) and B (candidate)");
+
+    std::string error;
+    lt::DiffOptions options;
+    if (p.isSet("measure-latency")) {
+        const auto lat = lt::cli::parseLatencyArg(str(p.value("measure-latency")), kMaxProtocolChannels, &error);
+        if (!lat)
+            return report(o, ExitUsage, error);
+        options.latency = lt::DiffOptions::Latency{lat->stimChannel, lat->stimFalling, lat->reactChannel, lat->reactFalling};
+    }
+    lt::LoadedCapture a, b;
+    if (!lt::loadCaptureFile(str(files[0]), a, &error))
+        return report(o, ExitError, "A: " + error);
+    if (!lt::loadCaptureFile(str(files[1]), b, &error))
+        return report(o, ExitError, "B: " + error);
+
+    json doc = lt::diffCaptures(a.buffer, b.buffer, options);
+    for (const auto& w : a.warnings)
+        doc["notes"].push_back("A: " + w);
+    for (const auto& w : b.warnings)
+        doc["notes"].push_back("B: " + w);
+    const int rc = p.isSet("strict") && doc["verdict"] == "regression" ? ExitExpectFailed : ExitOk;
+    std::string text;
+    if (o.json) {
+        doc["command"] = "diff";
+        doc["status"] = "OK";
+        doc["a"]["file"] = str(files[0]);
+        doc["b"]["file"] = str(files[1]);
+        text = doc.dump(2) + "\n";
+    } else {
+        text = lt::diffToMarkdown(doc, str(files[0]), str(files[1]));
+    }
+    std::cout << text;
+    if (p.isSet("copy") && !copyAndConfirm(text, error))
+        return rc == ExitOk ? ExitError : rc;
+    return rc;
+}
+
 int cmdBootloader(const QStringList& args, Output o)
 {
     QCommandLineParser p;
@@ -1268,6 +1333,7 @@ void printUsage()
                  "  probe       Snapshot current pin levels without a trigger (pull-up / stuck-at-0 check)\n"
                  "  capture     Capture with trigger, latency analysis, --expect assertions, and exports\n"
                  "  analyze     Analyze, verify (--expect), or convert saved .json / .vcd / .lac files\n"
+                 "  diff        Compare two saved captures (latency shift, drops, anomalies; --strict for CI)\n"
                  "  annotate    Place a marker on the timeline of the running GUI (--list / --clear)\n"
                  "  view        Read what the GUI currently shows (visible range, cursors, annotations)\n"
                  "  bootloader  Reboot the RP2040 into USB UF2 bootloader mode (requires --yes)\n\n"
@@ -1300,6 +1366,8 @@ int main(int argc, char* argv[])
         return cmdCapture(args, o);
     if (command == "analyze")
         return cmdAnalyze(args, o);
+    if (command == "diff")
+        return cmdDiff(args, o);
     if (command == "annotate")
         return cmdAnnotate(args, o);
     if (command == "view")
@@ -1317,7 +1385,7 @@ int main(int argc, char* argv[])
     if (o.json) {
         return report(o, ExitUsage,
                       "missing or unknown command '" + str(command) +
-                          "' (expected detect|probe|capture|analyze|annotate|view|bootloader)");
+                          "' (expected detect|probe|capture|analyze|diff|annotate|view|bootloader)");
     }
     std::cerr << "logictracer-cli: unknown command '" << str(command) << "'\n\n";
     printUsage();

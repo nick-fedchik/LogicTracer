@@ -6,6 +6,9 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `logictracer-cli diff A B [--measure-latency S..R] [--strict] [--json]`: compares two captures of one test
+  (latency shift beyond the ±1-sample quantization, drops, spurious reactions, anomaly kinds, channel activity)
+  with a `regression` / `improved` / `equivalent` verdict; `--strict` exits 3 on a regression.
 - Edge-sensitive trigger: LogicTracer firmware reports `FEATURES:1` and accepts trigger type 4, which fires only
   on a real transition (a rising trigger on a line that is already HIGH waits for the next edge). The host uses
   it for every user trigger when available; the capture JSON records `trigger.sensitivity` (`edge`/`level`).

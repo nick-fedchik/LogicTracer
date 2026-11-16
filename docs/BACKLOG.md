@@ -47,7 +47,9 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 
 ## B-04. Analyzer P1
 - [ ] `--invariant` rules (never / within / stable / onehot / bus + settle), O(E) over transitions.
-- [ ] `logictracer-cli diff A B` (histogram shift, Δp99, Δmax, new anomalies, sampling-phase verdict).
+- [x] `logictracer-cli diff A B` (latency p50/p99/max against the ±quantization of both captures, drops,
+      spurious reactions, anomaly kinds, channel activity, sampling-phase verdict; `--strict` exits 3 on a
+      regression).
 - [x] Firmware: edge-sensitive trigger (type 4, `FEATURES:1`) with re-arm for `loopCount` (the same pulse
       cannot re-trigger). Verified on the live Pico: a falling trigger on an idle-LOW line now waits
       (TIMEOUT) instead of firing at once; immediate captures and probes unchanged.

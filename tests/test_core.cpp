@@ -5,6 +5,7 @@
 #include "core/ArgParsing.hpp"
 #include "services/Operations.hpp"
 #include "core/CaptureBuffer.hpp"
+#include "core/CaptureDiff.hpp"
 #include "core/DeviceProtocol.hpp"
 #include "core/Exporters.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -1072,6 +1073,43 @@ private Q_SLOTS:
         lt::ReportOptions o;
         o.latency = lt::LatencyPairSpec{0, false, 1, false, std::nullopt};
         QVERIFY(lt::markdownSummary(buf, o).find("Direction check") != std::string::npos);
+    }
+
+    // diff: sampling-phase differences are not a change; a dropped reaction and a slower tail are regressions.
+    void diffSeparatesSamplingPhaseFromRealChanges()
+    {
+        auto make = [](std::size_t extraDelayAt, std::size_t dropAt, std::size_t phaseSplit) {
+            const std::size_t period = 100;
+            std::vector<uint32_t> s(50 * period + 20, 0u);
+            for (std::size_t k = 0; k < 50; ++k) {
+                const std::size_t t0 = 10 + k * period;
+                for (std::size_t w = 0; w < 30; ++w)
+                    s[t0 + w] |= 1u;
+                if (k == dropAt)
+                    continue;
+                const std::size_t d = (k == extraDelayAt ? 9 : 5) + (k < phaseSplit ? 1 : 0);
+                for (std::size_t w = 0; w < 30; ++w)
+                    s[t0 + d + w] |= 2u;
+            }
+            return lt::CaptureBuffer({{0, "STIM"}, {1, "REACT"}}, 100'000'000, 0, s);
+        };
+        lt::DiffOptions o;
+        o.latency = lt::DiffOptions::Latency{0, false, 1, false};
+        const auto base = make(999, 999, 0);
+        const auto phase = make(999, 999, 25);  // 5 vs 6 samples: one fixed delay can explain both
+        auto d = lt::diffCaptures(base, phase, o);
+        QCOMPARE(d["verdict"].get<std::string>(), std::string("equivalent"));
+        QVERIFY(d["latency"]["same_fixed_delay_possible"].get<bool>());
+
+        d = lt::diffCaptures(base, make(20, 30, 0), o);
+        QCOMPARE(d["verdict"].get<std::string>(), std::string("regression"));
+        const auto regressions = d["regressions"].dump();
+        QVERIFY(regressions.find("dropped stimuli increased (0 -> 1)") != std::string::npos);
+        QVERIFY(regressions.find("latency max increased") != std::string::npos);
+        QVERIFY(lt::diffToMarkdown(d, "a.json", "b.json").find("Verdict: **regression**") != std::string::npos);
+
+        d = lt::diffCaptures(make(20, 30, 0), base, o);
+        QCOMPARE(d["verdict"].get<std::string>(), std::string("improved"));
     }
 
     // Five consecutive dropped reactions are five incidents, not one chained cluster.
