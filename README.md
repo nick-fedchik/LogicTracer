@@ -29,7 +29,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | `src/core` | Pure C++20 (no Qt): wire protocol, capture model, `SignalAnalyzer`, AI reports, file formats |
 | `src/device` | Qt SerialPort driver (`PicoConnection`) and its worker-thread wrapper (`AsyncDevice`) |
 | `src/services` | Operations shared by all front-ends, IPC session, clipboard |
-| `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `annotate`, `view`, `bootloader` |
+| `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `diff`, `annotate`, `view`, `bootloader` |
 | `src/gui` | `logictracer-gui`: waveform viewer with cursors, snap-to-edge and the AI grounding bar |
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
 | `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
@@ -116,10 +116,12 @@ build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 
     --out-json run.json --out-vcd run.vcd --ai --copy
 
 build/src/cli/logictracer-cli analyze run.json --measure-latency 1:falling..2:falling --ai
+build/src/cli/logictracer-cli diff baseline.json run.json --measure-latency 1..2 --strict   # exit 3 on a regression
 build/src/gui/logictracer-gui --port /dev/ttyACM0
 ```
 
-Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` failed, `64` usage error.
+Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` failed (or `diff --strict` found a
+regression), `64` usage error.
 
 `--port replay:<file>` plays a saved capture (`.json`, `.vcd`, `.lac`) back as if it were a device:
 triggered captures find the next real edge in the recording, so the CLI, GUI, MCP and HIL scripts
