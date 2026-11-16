@@ -242,6 +242,24 @@ private Q_SLOTS:
         QVERIFY(callInThread(s, "ping").ok);  // still alive
     }
 
+    // A stale-state report honours the request's own note, like a normal report does.
+    void failureReportHonoursTheRequestNote()
+    {
+        lt::gui::MainWindow win;
+        win.show();
+        win.loadDemo();
+        QVERIFY(win.startSession(socket("failnote.sock")));
+        const QString s = socket("failnote.sock");
+        lt::CaptureResult timeout;
+        timeout.status = lt::CaptureStatus::Timeout;
+        timeout.error = "Trigger timeout";
+        Q_EMIT win.device().captureFinished(timeout);
+        QVERIFY(win.displayState() == lt::gui::WaveformWidget::DisplayState::Stale);
+        const auto r = callInThread(s, "get_report", {{"note", "is the pull-up fitted?"}});
+        QVERIFY2(r.ok, r.error.c_str());
+        QVERIFY(r.result["report"].get<std::string>().find("is the pull-up fitted?") != std::string::npos);
+    }
+
     void viewCanBeSteeredAndAnomaliesListed()
     {
         lt::gui::MainWindow win;

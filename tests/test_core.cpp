@@ -18,6 +18,7 @@
 #include "core/Format.hpp"
 
 #include <cstring>
+#include <unistd.h>
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -926,6 +927,30 @@ private Q_SLOTS:
         QFile out(dir.filePath("output.json"));
         QVERIFY(out.open(QIODevice::ReadOnly));
         QVERIFY(out.readAll().contains("replacement"));
+    }
+
+    // A write that cannot even create its temp file must leave the previous output untouched.
+    void failedExportKeepsThePreviousFile()
+    {
+        QTemporaryDir dir;
+        const QString out = dir.filePath("keep.csv");
+        std::string err;
+        QVERIFY(lt::writeCsvFile(out.toStdString(), twoChannelBuffer(), &err));
+        QFile before(out);
+        QVERIFY(before.open(QIODevice::ReadOnly));
+        const QByteArray original = before.readAll();
+        before.close();
+        QVERIFY(!original.isEmpty());
+
+        QFile::setPermissions(dir.path(), QFile::ReadOwner | QFile::ExeOwner);  // no new files can be created
+        const bool wrote = lt::writeCsvFile(out.toStdString(), lt::CaptureBuffer({{0, "Z"}}, 1000, 0, {0u, 1u}), &err);
+        QFile::setPermissions(dir.path(), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        if (::geteuid() != 0)  // root ignores directory permissions
+            QVERIFY(!wrote);
+        QFile after(out);
+        QVERIFY(after.open(QIODevice::ReadOnly));
+        if (!wrote)
+            QCOMPARE(after.readAll(), original);
     }
 
     void numericImportFieldsNeverCastOutOfRangeFloats()

@@ -73,6 +73,7 @@ struct CaptureResult {
     std::chrono::milliseconds elapsed{0};
     std::optional<CaptureBuffer> lineDump;  // filled on TIMEOUT when probeOnTimeout is set
     bool portLost = false;                  // true when the serial device disconnected mid-operation
+    std::vector<std::string> warnings;      // caveats of the data source (e.g. a replayed VCD with x/z levels)
 };
 
 struct ProbeResult {

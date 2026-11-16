@@ -54,6 +54,7 @@ private:
     }
 
     CaptureBuffer m_recording;
+    std::vector<std::string> m_warnings;  // import caveats of the recording, attached to every capture
     DeviceInfo m_info;
     std::string m_error;
     bool m_open = false;

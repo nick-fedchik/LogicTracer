@@ -1,8 +1,10 @@
 # Backlog
 
-Updated: 2026-11-15.
+Updated: 2026-11-16.
 
 ## Done recently
+- Independent audit by four models plus a re-audit (`docs/audit/`): all confirmed P0/P1 findings fixed
+  (tags `audit-fixes`, `audit-fixes-2`); consolidated triage in the session notes.
 - Analyzer metrology (P0): censored edge events, spurious reactions, Δs histogram, ±1-sample bounds,
   guard-banded `*_ub_ns` assertions, burst-aware frequency, edge motif and anomaly incidents in AI
   reports.
@@ -84,3 +86,15 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       Qt equivalents / named pipes, and give the pty-based test emulator a Windows alternative or
       skip those suites; add a `windows-latest` CI job (MSVC 2022, Qt via `install-qt-action`).
 - [ ] macOS: add a `macos-latest` CI job (Homebrew Qt) to turn "expected to build" into "tested".
+
+## B-09. Audit leftovers (accepted, not fixed)
+- [ ] P3: annotations are drawn at the continuous-time position of a sample (`xAt(sample)`, consistent
+      with the ruler) while cursors sit at the cell centre (`xAt(sample + 0.5)`); at very high zoom an
+      annotation placed "at cursor A" appears half a sample to the left. Pick one convention.
+- [ ] P2 (hypothesis): `resolveSafeOutputPath` validates a path before the writer creates its temp file in
+      the same directory; a different user who can swap a parent directory in a shared writable location
+      could still redirect the write. Open the parent directory by descriptor (`O_DIRECTORY|O_NOFOLLOW`)
+      and use `openat`/`renameat`.
+- [ ] Replay: a failure report for a session request ignores `mode`/`latency` (only `note` is honoured).
+- [ ] Never auto-detect a physical device when a test or audit passes no `--port`: add an opt-in
+      `LOGICTRACER_DENY_HARDWARE=1` guard so harnesses cannot touch a live Pico by accident.

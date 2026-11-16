@@ -445,6 +445,28 @@ private Q_SLOTS:
         QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
     }
 
+    // Import caveats of a replayed recording (e.g. x/z levels in a VCD) travel with every capture.
+    void replayCarriesImportWarnings()
+    {
+        QTemporaryDir dir;
+        const QString vcd = dir.filePath("xz.vcd");
+        QFile f(vcd);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("$timescale 1us $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n0!\n#1\nz!\n#2\n1!\n#3\n0!\n#4\n1!\n#5\n0!\n");
+        f.close();
+        auto dev = lt::createDevice("replay:" + vcd.toStdString());
+        QVERIFY2(dev->open("replay:" + vcd.toStdString(), 100ms), dev->lastError().c_str());
+        lt::CaptureConfig c;
+        c.channels = {{0, {}}};
+        c.frequency = 1'000'000;
+        c.preSamples = 2;
+        c.postSamples = 4;
+        const auto r = dev->capture(c);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(!r.warnings.empty());
+        QVERIFY(r.warnings.front().find("x/z") != std::string::npos);
+    }
+
     void replayDeviceReplaysConsecutiveEvents()
     {
         QTemporaryDir dir;

@@ -666,8 +666,9 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     case lt::CaptureStatus::Ok: {
         consumeNote();
         m_failure.reset();
-        showNewCapture(*r.buffer, candidateTrigger, effectiveSetup,
-                       fromSession ? pending->warnings : std::move(pendingWarnings), false, liveStamp());
+        auto entryWarnings = fromSession ? pending->warnings : std::move(pendingWarnings);
+        entryWarnings.insert(entryWarnings.end(), r.warnings.begin(), r.warnings.end());
+        showNewCapture(*r.buffer, candidateTrigger, effectiveSetup, std::move(entryWarnings), false, liveStamp());
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
         if (m_repeat->isChecked() && !fromSession) {
             const auto generation = m_repeatGeneration;
@@ -704,8 +705,9 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     if (fromSession) {  // the request came over the session socket
         auto docOptions = pending->options;
         docOptions.setup = effectiveSetup;
-        auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, pending->warnings,
-                                       docOptions);
+        auto docWarnings = pending->warnings;
+        docWarnings.insert(docWarnings.end(), r.warnings.begin(), r.warnings.end());
+        auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, docWarnings, docOptions);
         if (r.status == lt::CaptureStatus::Ok)
             doc.doc["capture_id"] = m_currentCaptureId;
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
@@ -1004,12 +1006,12 @@ void MainWindow::editSetupMetadata()
     });
 }
 
-QString MainWindow::failureReport() const
+QString MainWindow::failureReport(const std::optional<QString>& noteOverride) const
 {
     if (!m_failure)
         return {};
     const std::string board = m_device.isConnected() ? m_device.info().version.board : m_lastBoard;
-    const QString note = m_aiNote ? m_aiNote->text().trimmed() : QString{};
+    const QString note = noteOverride ? noteOverride->trimmed() : (m_aiNote ? m_aiNote->text().trimmed() : QString{});
     return QString::fromStdString(lt::timeoutForAi(m_failure->lineDump, m_failure->status, m_failure->error,
                                                    str(m_failure->trigger), board, str(note),
                                                    m_waveform->hasCapture() ? m_currentCaptureId : 0));
@@ -1491,7 +1493,10 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                 return;
             }
         if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale) {
-            reply.ok({{"report", failureReport().toStdString()},
+            std::optional<QString> note;
+            if (params.contains("note"))
+                note = QString::fromStdString(params["note"].get<std::string>());
+            reply.ok({{"report", failureReport(note).toStdString()},
                       {"metadata",
                        {{"display_state", "stale"},
                         {"capture_id", m_currentCaptureId},

@@ -151,7 +151,8 @@ private:
     void setArmed();
     void restoreIdleState();
     void consumeNote();
-    [[nodiscard]] QString failureReport() const;
+    // `noteOverride` replaces the GUI note (a session request may carry its own).
+    [[nodiscard]] QString failureReport(const std::optional<QString>& noteOverride = std::nullopt) const;
     void handleSession(const std::string& method, const nlohmann::json& params, lt::session::Responder reply);
     void sessionAnnotate(const nlohmann::json& params, lt::session::Responder reply);
     void sessionSetView(const nlohmann::json& params, lt::session::Responder reply);

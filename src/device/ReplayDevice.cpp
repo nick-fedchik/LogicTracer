@@ -40,6 +40,7 @@ bool ReplayDevice::open(const std::string& port, milliseconds /*handshakeTimeout
         return false;
     }
     m_recording = std::move(loaded.buffer);
+    m_warnings = std::move(loaded.warnings);
 
     uint8_t highest = 0;
     for (const auto& ch : m_recording.channels())
@@ -65,6 +66,7 @@ void ReplayDevice::close()
 {
     m_open = false;
     m_recording = {};
+    m_warnings.clear();
     m_info = {};
     m_cursor = 0;
 }
@@ -149,6 +151,7 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
     auto finish = [&](CaptureStatus status, std::string error = {}) {
         r.status = status;
         r.error = std::move(error);
+        r.warnings = m_warnings;
         r.elapsed = duration_cast<milliseconds>(steady_clock::now() - start);
         m_cancelRequested = false;
         return r;
