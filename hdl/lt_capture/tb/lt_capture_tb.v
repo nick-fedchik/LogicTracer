@@ -163,6 +163,10 @@ module tb;
 
     // ---------------------------------------------------------------------------------------------
 
+    // Free-running toggle of probe bit 2 (one record per cycle).
+    reg tog_en = 1'b0;
+    always @(posedge clk) if (tog_en) probe[2] <= ~probe[2];
+
     reg [31:0] v, st;
     integer i, j, events, stim_ups;
     reg [47:0] tts;
@@ -291,6 +295,58 @@ module tb;
         check((st & ST_TRIG) != 0 && trig_pulses == 1, "T7: external trigger");
         axi_read(A_TTS_LO, v);
         check(v >= 15, "T7: trigger after the external pulse");
+
+        // T8: abort on a cycle where the probe changes, after the ring wrapped: the oldest record survives ---
+        axi_write(A_MASK, 32'h0);
+        axi_write(A_RISE, 32'h80);  // never fires
+        axi_write(A_FALL, 32'h0);
+        axi_write(A_POST_LO, 32'd100000);
+        axi_write(A_CTRL, 32'h1);
+        @(posedge clk); #1 tog_en = 1'b1;
+        axi_read(A_STATUS, st);
+        while (!(st & ST_WRAP)) axi_read(A_STATUS, st);
+        axi_write(A_CTRL, 32'h2);  // abort while records are written every cycle
+        #1 tog_en = 1'b0;
+        axi_read(A_STATUS, st);
+        check((st & ST_ABORT) && (st & ST_WRAP), "T8: aborted after wrap");
+        read_records;
+        check(n_rec == DEPTH, "T8: ring full");
+        for (i = 1; i < n_rec; i = i + 1)
+            check(rec_ts[i] > rec_ts[i-1], "T8: abort must not overwrite the oldest record");
+
+        // T9: a bus write landing on the READ_PROBE auto-increment cycle must not drop the increment ------
+        axi_write(A_RIDX, 32'd0);
+        @(posedge clk); #1;
+        araddr = A_RPROBE; arvalid = 1; rready = 1;
+        @(posedge clk); #1;
+        while (!arready) begin @(posedge clk); #1; end
+        arvalid = 0;
+        @(posedge clk); #1;  // rd_advance is high during this cycle: the next edge applies it
+        awaddr = A_MASK; wdata = 32'h0; awvalid = 1; wvalid = 1; bready = 1;
+        @(posedge clk); #1;
+        while (!(awready && wready)) begin @(posedge clk); #1; end
+        awvalid = 0; wvalid = 0;
+        while (!bvalid) begin @(posedge clk); #1; end
+        @(posedge clk); #1; bready = 0; rready = 0;
+        repeat (4) @(posedge clk);
+        axi_read(A_RIDX, v);
+        check(v == 1, "T9: READ_PROBE auto-increment survives a concurrent bus write");
+
+        // T10: READ_INDEX written on the same edge as a record read returns the NEW record ---------------
+        axi_read(A_OLDEST, v);
+        axi_write(A_RIDX, 32'd0);
+        @(posedge clk); #1;
+        awaddr = A_RIDX; wdata = 32'd5; awvalid = 1; wvalid = 1; bready = 1;
+        araddr = A_RPROBE; arvalid = 1; rready = 1;
+        @(posedge clk); #1;
+        while (!(awready && wready)) begin @(posedge clk); #1; end
+        awvalid = 0; wvalid = 0;
+        while (!arready) begin @(posedge clk); #1; end
+        arvalid = 0;
+        while (!rvalid) begin @(posedge clk); #1; end
+        j = (5 - v + DEPTH) % DEPTH;  // time-order position of physical slot 5
+        check(rdata[PW-1:0] == rec_probe[j], "T10: record read after a same-edge READ_INDEX write is stale");
+        @(posedge clk); #1; bready = 0; rready = 0;
 
         $display("LT_CAPTURE_TB PASS (SYNC_STAGES=%0d)", SYNC);
         $finish;

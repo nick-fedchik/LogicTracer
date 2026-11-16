@@ -173,7 +173,9 @@ module lt_capture #(
     wire elapsed   = triggered && ((ts - trig_ts) >= post_cycles);
     wire stop      = running && elapsed;
     wire changed   = first || (p_q != prev_q);
-    wire do_write  = running && (changed || fire || stop);
+    // An abort or re-arm in the same cycle must not write: after a ring wrap the slot at wr_ptr still holds
+    // the oldest pre-trigger record, and neither command advances wr_ptr.
+    wire do_write  = running && !cmd_abort && !cmd_arm && (changed || fire || stop);
     // The ring holds the trigger record plus DEPTH-1 later records; the write that fills the last
     // free slot ends the capture (overflow unless the post-trigger time also elapsed).
     wire post_full = triggered && do_write && (post_count == LAST_SLOT_V);
@@ -274,6 +276,7 @@ module lt_capture #(
     reg        rd_pending;
     reg [11:0] rd_addr;
     reg        rd_advance;  // READ_PROBE was read: select the next record
+    reg        idx_chg;     // READ_INDEX was assigned at the last edge: the BRAM output is one cycle behind
 
     // Write channel: address and data are accepted together.
     always @(posedge clk) begin
@@ -291,7 +294,14 @@ module lt_capture #(
             trig_fall     <= {PROBE_WIDTH{1'b0}};
             post_cycles   <= {TS_WIDTH{1'b0}};
             read_index    <= {ADDR_WIDTH{1'b0}};
+            idx_chg       <= 1'b0;
         end else begin
+            idx_chg       <= 1'b0;
+            // The auto-increment is independent of bus writes; a write to READ_INDEX below wins over it.
+            if (rd_advance) begin
+                read_index <= read_index + 1'b1;
+                idx_chg    <= 1'b1;
+            end
             cmd_arm       <= 1'b0;
             cmd_abort     <= 1'b0;
             cmd_force     <= 1'b0;
@@ -316,11 +326,12 @@ module lt_capture #(
                     A_TRIG_FALL:  trig_fall  <= s_axi_wdata[PROBE_WIDTH-1:0];
                     A_POST_LO:    post_cycles[31:0] <= s_axi_wdata;
                     A_POST_HI:    post_cycles[TS_WIDTH-1:32] <= s_axi_wdata[TS_WIDTH-33:0];
-                    A_READ_INDEX: read_index <= s_axi_wdata[ADDR_WIDTH-1:0];
+                    A_READ_INDEX: begin
+                        read_index <= s_axi_wdata[ADDR_WIDTH-1:0];
+                        idx_chg    <= 1'b1;
+                    end
                     default: ;  // read-only or unknown: accepted and ignored
                 endcase
-            end else if (rd_advance) begin
-                read_index <= read_index + 1'b1;
             end
         end
     end
@@ -345,7 +356,8 @@ module lt_capture #(
                 s_axi_arready <= 1'b1;
                 rd_addr       <= s_axi_araddr & 12'hFFC;
                 rd_pending    <= 1'b1;
-            end else if (rd_pending) begin
+            end else if (rd_pending && !idx_chg) begin
+                // (idx_chg: wait one cycle until the record selected by a just-written READ_INDEX is in rd_q)
                 rd_pending   <= 1'b0;
                 s_axi_rvalid <= 1'b1;
                 case (rd_addr)
