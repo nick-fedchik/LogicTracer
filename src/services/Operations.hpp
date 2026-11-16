@@ -75,6 +75,7 @@ struct OutputPaths {
     std::string jsonPath;
     std::string csvPath;
     std::string eventsCsvPath;
+    bool confined = false;  // paths came from resolveSafeOutputPath: refuse symlinks at write time
 };
 
 // Writes the optional VCD / lossless-JSON / CSV / events-CSV files (empty path = skip) and records

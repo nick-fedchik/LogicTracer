@@ -588,6 +588,8 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
         ss << "\n### Propagation latency: CH" << l.stimChannel.displayNumber() << " (" << l.stimChannel.label() << " "
            << (l.stimFalling ? "falling" : "rising") << ") -> CH" << l.reactChannel.displayNumber() << " ("
            << l.reactChannel.label() << " " << (l.reactFalling ? "falling" : "rising") << ")\n\n";
+        if (l.reversed)
+            ss << "- **Direction check:** " << SignalAnalyzer::reversedHint(l) << "\n";
         ss << "- Paired events: **" << l.count << "**, drops: **" << l.unmatchedStimCount << "**, spurious reactions: **"
            << l.spuriousReactCount << "**, censored at window edges: " << (l.censoredStimCount + l.censoredReactCount)
            << ", coincident (Δs = 0): " << l.coincidentCount << ", max reactions per stimulus: " << l.maxReactsPerStim

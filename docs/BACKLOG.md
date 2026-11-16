@@ -88,14 +88,14 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [ ] macOS: add a `macos-latest` CI job (Homebrew Qt) to turn "expected to build" into "tested".
 
 ## B-09. Audit leftovers (accepted, not fixed)
-- [ ] P3: annotations are drawn at the continuous-time position of a sample (`xAt(sample)`, consistent
-      with the ruler) while cursors sit at the cell centre (`xAt(sample + 0.5)`); at very high zoom an
-      annotation placed "at cursor A" appears half a sample to the left. Pick one convention.
-- [ ] P2 (hypothesis): `resolveSafeOutputPath` validates a path before the writer creates its temp file in
+- [x] P3: one sample-to-x convention: cursors, anomaly markers, annotations, ruler, trigger and edges all
+      use the start of the sample (`xAt(sample)`).
+- [x] P2 (hypothesis): `resolveSafeOutputPath` validates a path before the writer creates its temp file in
       the same directory; a different user who can swap a parent directory in a shared writable location
-      could still redirect the write. Open the parent directory by descriptor (`O_DIRECTORY|O_NOFOLLOW`)
-      and use `openat`/`renameat`.
-- [ ] Replay: a failure report for a session request ignores `mode`/`latency` (only `note` is honoured).
+      could still redirect the write. Fixed: writers work through one directory descriptor
+      (`openat`/`renameat`); session/MCP writes open every path component with `O_NOFOLLOW`.
+- [x] A stale-state `get_report` validates `mode`, honours `note`, and lists `mode`/`latency` under
+      `ignored_params` (a failed attempt has no samples to apply them to).
 - [x] `LOGICTRACER_DENY_HARDWARE=1` makes every serial open fail, so test/audit harnesses cannot touch a
       live Pico by accident (replay devices are unaffected).
 - [ ] P2 (found on hardware, 2026-11-16): `trigger_already_active` is not raised for `--trigger 1:rising`
@@ -109,5 +109,6 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       delay 50-60 ns, falling 70 ns (constant); the default `1..2` pairs each STIM with the *next* REACT
       (about one period, 4.94 us) and reports one false drop. Earlier BTN1 runs timed out because nobody
       pressed the button.
-- [ ] Hint for swapped latency direction: when every pair delay is close to the stimulus period (here 494-495
+- [x] Hint for swapped latency direction (`direction_warning` in latency JSON, "Direction check" in the
+      report, a CLI warning): when every pair delay is close to the stimulus period (here 494-495
       of 500 samples) and the reverse direction gives a tiny constant delay, say so in the report.

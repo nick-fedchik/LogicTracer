@@ -925,6 +925,21 @@ private Q_SLOTS:
         QVERIFY(!QFile::exists(dir.filePath(".lt-XXXXXX")));
     }
 
+    // A directory swapped for a symlink after validation must not let a confined write escape.
+    void confinedWriteRefusesSymlinkedDirectories()
+    {
+        QTemporaryDir dir, elsewhere;
+        QVERIFY(QDir(dir.path()).mkdir("real"));
+        QVERIFY(QFile::link(elsewhere.path(), dir.filePath("swapped")));
+        std::string err;
+        const auto viaLink = dir.filePath("swapped/out.json").toStdString();
+        QVERIFY(!lt::writeJsonFile(viaLink, {{"x", 1}}, &err, true));
+        QVERIFY(!QFile::exists(elsewhere.filePath("out.json")));
+        QVERIFY(lt::writeJsonFile(viaLink, {{"x", 1}}, &err, false));  // direct CLI use may follow symlinks
+        QVERIFY(lt::writeJsonFile(dir.filePath("real/out.json").toStdString(), {{"x", 1}}, &err, true));
+        QVERIFY(QDir(dir.filePath("real")).entryList(QDir::Hidden | QDir::Files).size() == 1);  // no temp left
+    }
+
     void vcdTimeBaseIsValidated()
     {
         std::string err;
@@ -1030,6 +1045,33 @@ private Q_SLOTS:
         std::istringstream tiny("$timescale 1e-20fs $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n0!\n#1\n1!\n");
         lt::LoadedCapture vcd;
         QVERIFY(!lt::readVcd(tiny, vcd, &err));  // rejected cleanly (and without an overflowing cast)
+    }
+
+    // REACT leading STIM by 5 samples looks like a full-period delay in the requested direction: flag it.
+    void swappedLatencyDirectionIsFlagged()
+    {
+        const std::size_t period = 500;
+        std::vector<uint32_t> s(100 * period + 50, 0u);
+        for (std::size_t k = 0; k < 100; ++k) {
+            const std::size_t react = 20 + k * period, stim = react + 5;
+            for (std::size_t w = 0; w < 200; ++w) {
+                s[react + w] |= 2u;
+                s[stim + w] |= 1u;
+            }
+        }
+        const lt::CaptureBuffer buf({{0, "STIM"}, {1, "REACT"}}, 100'000'000, 0, s);
+        const auto wrong = lt::SignalAnalyzer::analyzeLatency(buf, {0, false, 1, false, std::nullopt});
+        QVERIFY(wrong.reversed);
+        QCOMPARE(wrong.reversed->reverseP50Samples, 5u);
+        QVERIFY(lt::SignalAnalyzer::reversedHint(wrong).find("swapped") != std::string::npos);
+        QVERIFY(lt::toJson(wrong)["direction_warning"]["likely_swapped"].get<bool>());
+        const auto right = lt::SignalAnalyzer::analyzeLatency(buf, {1, false, 0, false, std::nullopt});
+        QVERIFY(!right.reversed);
+        QCOMPARE(right.p50Samples, 5u);
+
+        lt::ReportOptions o;
+        o.latency = lt::LatencyPairSpec{0, false, 1, false, std::nullopt};
+        QVERIFY(lt::markdownSummary(buf, o).find("Direction check") != std::string::npos);
     }
 
     // Five consecutive dropped reactions are five incidents, not one chained cluster.

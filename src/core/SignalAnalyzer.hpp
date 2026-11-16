@@ -150,6 +150,15 @@ struct LatencyStats {
     std::vector<uint32_t> spuriousSamples;   // REACT sample of each spurious edge (first kMaxListed)
     std::vector<LatencyEvent> events;
 
+    // Direction check: set when every reaction lags its stimulus by about one stimulus period while the
+    // opposite pairing (REACT -> STIM) is short and complete, i.e. the two channels are probably swapped.
+    struct ReversedHint {
+        uint32_t stimPeriodSamples = 0;   // median spacing of paired stimuli
+        uint32_t reverseP50Samples = 0;   // median REACT -> STIM delay
+        uint64_t reverseCount = 0;        // pairs found in the opposite direction
+    };
+    std::optional<ReversedHint> reversed;
+
     [[nodiscard]] double lowerBoundNs(uint32_t deltaSamples) const noexcept
     {
         return deltaSamples > 0 ? static_cast<double>(deltaSamples - 1) * quantizationStepNs : 0.0;
@@ -192,11 +201,15 @@ public:
     // Cross-channel stimulus -> reaction latency distribution (min/max/mean/stdev/p50/p90/p95/p99).
     [[nodiscard]] static LatencyStats analyzeLatency(const CaptureBuffer& buffer, const LatencyPairSpec& spec,
                                                      bool collectEvents = false);
+    // Human-readable direction warning for LatencyStats::reversed (empty when not set).
+    [[nodiscard]] static std::string reversedHint(const LatencyStats& stats);
 
     // Heuristic classification of a short, untriggered observation window (probe()).
     [[nodiscard]] static LineDiagnosis diagnose(const ChannelStats& stats) noexcept;
 
 private:
+    static LatencyStats analyzeLatencyImpl(const CaptureBuffer& buffer, const LatencyPairSpec& spec,
+                                           bool collectEvents, bool checkDirection);
     Options m_options;
 };
 

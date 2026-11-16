@@ -87,6 +87,12 @@ public:
     static constexpr int kPlotTop = kOverviewHeight + kRulerHeight;  // y of the first channel row
     static constexpr double kGrabPx = 6.0;                           // cursor / annotation hit distance
 
+    // Widget x of the start of a sample (cursors, annotations, ruler, trigger and edges share it), and the
+    // annotation / cursor within grab distance of an x (0 = none; cursor 1 = A, 2 = B).
+    [[nodiscard]] double xOfSample(double sample) const;
+    [[nodiscard]] uint64_t annotationNear(double x) const;
+    [[nodiscard]] int cursorNear(double x) const;
+
 public Q_SLOTS:
     void fitAll();
     void zoomIn();
@@ -139,9 +145,6 @@ private:
     [[nodiscard]] std::size_t sampleAtX(double x) const;
     [[nodiscard]] std::size_t sampleAtPosition(const QPointF& pos, bool allowSnap) const;
     [[nodiscard]] std::optional<std::size_t> rowAtY(double y) const;  // index into m_rows
-    [[nodiscard]] double xOfSample(double sample) const;
-    [[nodiscard]] uint64_t annotationNear(double x) const;
-    [[nodiscard]] int cursorNear(double x) const;  // 0 none, 1 = A, 2 = B
     [[nodiscard]] QString hintAt(const QPointF& pos) const;
     [[nodiscard]] QRectF overviewRect() const;
     [[nodiscard]] double overviewX(double sample) const;

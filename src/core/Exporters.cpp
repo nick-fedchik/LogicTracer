@@ -21,6 +21,8 @@
 #include <streambuf>
 
 #include <cerrno>
+#include <fcntl.h>
+#include <random>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -192,42 +194,89 @@ mode_t currentUmask()
     return 022;
 }
 
+// Opens the directory that will receive the output. In confined mode (paths validated by
+// resolveSafeOutputPath for the session/MCP) every component is opened with O_NOFOLLOW, so a component that
+// was swapped for a symlink after validation makes the write fail instead of escaping the sandbox.
+int openOutputDirectory(const std::filesystem::path& dir, bool confined)
+{
+    if (!confined)
+        return ::open(dir.empty() ? "." : dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (!dir.is_absolute())
+        return -1;
+    int fd = ::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    for (const auto& part : dir.relative_path()) {
+        if (fd < 0)
+            break;
+        const std::string name = part.string();
+        if (name.empty() || name == ".")
+            continue;
+        const int next = ::openat(fd, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        ::close(fd);
+        fd = next;
+    }
+    return fd;
+}
+
 // Writes through a random, exclusively created sibling file and renames it over the target, so a failed or
 // partial write (disk full, quota) never destroys the previous file and a pre-planted file or symlink with a
-// guessable name cannot be followed. The result keeps the mode of the file it replaces, or follows the umask.
-// Special files (pipes, devices) are written in place.
+// guessable name cannot be followed. Every step is relative to one directory descriptor (openat/renameat).
+// The result keeps the mode of the file it replaces, or follows the umask. Special files (pipes, devices)
+// are written in place.
 template <typename Fn>
-bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::string* error, Fn&& write)
+bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::string* error, Fn&& write,
+                      bool confined = false)
 {
     (void)mode;  // text and binary are identical on POSIX
     namespace fs = std::filesystem;
-    std::error_code ec;
-    const bool inPlace = fs::exists(path, ec) && !fs::is_regular_file(path, ec);
     auto failWith = [&](const std::string& msg) {
         if (error)
             *error = msg + " " + path;
         return false;
     };
+    const fs::path target(path);
+    const std::string leaf = target.filename().string();
+    if (leaf.empty() || leaf == "." || leaf == "..")
+        return failWith("not a file name:");
+    const int dirFd = openOutputDirectory(target.parent_path(), confined);
+    if (dirFd < 0)
+        return failWith(confined ? "output directory changed or is not reachable without symlinks:" : "cannot write");
+    struct DirCloser {
+        int fd;
+        ~DirCloser() { ::close(fd); }
+    } dirCloser{dirFd};
 
-    if (inPlace) {
-        std::ofstream f(path, std::ios::trunc);
-        if (!f)
+    struct stat existing{};
+    const bool exists = ::fstatat(dirFd, leaf.c_str(), &existing, AT_SYMLINK_NOFOLLOW) == 0;
+    if (exists && !S_ISREG(existing.st_mode) && !S_ISLNK(existing.st_mode)) {
+        if (confined)
+            return failWith("refusing to write to a special file:");
+        const int fd = ::openat(dirFd, leaf.c_str(), O_WRONLY | O_TRUNC | O_CLOEXEC);
+        if (fd < 0)
             return failWith("cannot write");
-        write(f);
-        f.flush();
-        f.close();
-        return f.fail() ? failWith("failed while writing") : true;
+        FdStreamBuf buf(fd);
+        std::ostream out(&buf);
+        write(out);
+        out.flush();
+        const bool ok = out.good() && !buf.failed();
+        return ::close(fd) == 0 && ok ? true : failWith("failed while writing");
     }
+    const mode_t perms = exists && S_ISREG(existing.st_mode) ? (existing.st_mode & 07777)
+                                                              : static_cast<mode_t>(0666 & ~currentUmask());
 
-    // ".lt-XXXXXX" in the same directory: short (independent of the file name length) and hidden.
-    const fs::path parent = fs::path(path).parent_path();
-    std::string pattern = ((parent.empty() ? fs::path(".") : parent) / ".lt-XXXXXX").string();
-    const int fd = ::mkstemp(pattern.data());
+    // ".lt-<random>": short (independent of the file name length), hidden, created exclusively.
+    std::random_device rd;
+    std::string tmp;
+    int fd = -1;
+    for (int attempt = 0; attempt < 16 && fd < 0; ++attempt) {
+        char name[32];
+        std::snprintf(name, sizeof name, ".lt-%08x%08x", rd(), rd());
+        tmp = name;
+        fd = ::openat(dirFd, tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd < 0 && errno != EEXIST)
+            break;
+    }
     if (fd < 0)
         return failWith("cannot write");
-    struct stat existing{};
-    const mode_t perms = ::stat(path.c_str(), &existing) == 0 ? (existing.st_mode & 07777)
-                                                              : static_cast<mode_t>(0666 & ~currentUmask());
     ::fchmod(fd, perms);
 
     bool ok = false;
@@ -239,17 +288,16 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
         ok = out.good() && !buf.failed() && ::fsync(fd) == 0;
     } catch (...) {
         ::close(fd);
-        fs::remove(pattern, ec);
+        ::unlinkat(dirFd, tmp.c_str(), 0);
         throw;
     }
     const bool closed = ::close(fd) == 0;
     if (!ok || !closed) {
-        fs::remove(pattern, ec);
+        ::unlinkat(dirFd, tmp.c_str(), 0);
         return failWith("failed while writing");
     }
-    fs::rename(pattern, path, ec);
-    if (ec) {
-        fs::remove(pattern, ec);
+    if (::renameat(dirFd, tmp.c_str(), dirFd, leaf.c_str()) != 0) {
+        ::unlinkat(dirFd, tmp.c_str(), 0);
         return failWith("cannot replace");
     }
     return true;
@@ -428,6 +476,12 @@ nlohmann::json toJson(const LatencyStats& lat, bool includeEvents)
                             {"delta_ns", ev.deltaNs}});
         j["outliers"] = std::move(outl);
     }
+    if (lat.reversed)
+        j["direction_warning"] = {{"likely_swapped", true},
+                                  {"stim_period_samples", lat.reversed->stimPeriodSamples},
+                                  {"reverse_p50_samples", lat.reversed->reverseP50Samples},
+                                  {"reverse_pairs", lat.reversed->reverseCount},
+                                  {"message", SignalAnalyzer::reversedHint(lat)}};
     j["drop_stim_samples"] = lat.dropSamples;
     j["spurious_react_samples"] = lat.spuriousSamples;
     if (includeEvents) {
@@ -503,14 +557,14 @@ void writeVcd(std::ostream& out, const CaptureBuffer& buffer)
     out << '#' << timeOf(s.size()) << '\n';
 }
 
-bool writeVcdFile(const std::string& path, const CaptureBuffer& buffer, std::string* error)
+bool writeVcdFile(const std::string& path, const CaptureBuffer& buffer, std::string* error, bool confined)
 {
-    return writeFileChecked(path, std::ios::binary, error, [&](std::ostream& f) { writeVcd(f, buffer); });
+    return writeFileChecked(path, std::ios::binary, error, [&](std::ostream& f) { writeVcd(f, buffer); }, confined);
 }
 
-bool writeJsonFile(const std::string& path, const nlohmann::json& doc, std::string* error)
+bool writeJsonFile(const std::string& path, const nlohmann::json& doc, std::string* error, bool confined)
 {
-    return writeFileChecked(path, {}, error, [&](std::ostream& f) { f << doc.dump(2) << '\n'; });
+    return writeFileChecked(path, {}, error, [&](std::ostream& f) { f << doc.dump(2) << '\n'; }, confined);
 }
 
 void writeCsv(std::ostream& out, const CaptureBuffer& buffer)
@@ -531,9 +585,9 @@ void writeCsv(std::ostream& out, const CaptureBuffer& buffer)
     }
 }
 
-bool writeCsvFile(const std::string& path, const CaptureBuffer& buffer, std::string* error)
+bool writeCsvFile(const std::string& path, const CaptureBuffer& buffer, std::string* error, bool confined)
 {
-    return writeFileChecked(path, {}, error, [&](std::ostream& f) { writeCsv(f, buffer); });
+    return writeFileChecked(path, {}, error, [&](std::ostream& f) { writeCsv(f, buffer); }, confined);
 }
 
 void writeEventsCsv(std::ostream& out, const std::vector<LatencyEvent>& events)
@@ -546,9 +600,10 @@ void writeEventsCsv(std::ostream& out, const std::vector<LatencyEvent>& events)
     }
 }
 
-bool writeEventsCsvFile(const std::string& path, const std::vector<LatencyEvent>& events, std::string* error)
+bool writeEventsCsvFile(const std::string& path, const std::vector<LatencyEvent>& events, std::string* error,
+                        bool confined)
 {
-    return writeFileChecked(path, {}, error, [&](std::ostream& f) { writeEventsCsv(f, events); });
+    return writeFileChecked(path, {}, error, [&](std::ostream& f) { writeEventsCsv(f, events); }, confined);
 }
 
 namespace {

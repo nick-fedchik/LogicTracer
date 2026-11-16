@@ -306,7 +306,7 @@ json McpServer::runDeviceTool(const std::string& tool, const json& args)
     options->collectLatencyEvents = !eventsCsvPath->empty();
     auto outcome = performCapture(conn, *spec, *options);
     lt::writeCaptureOutputs(outcome.document.doc, outcome.result, outcome.document,
-                            OutputPaths{*vcdPath, *jsonPath, *csvPath, *eventsCsvPath},
+                            OutputPaths{*vcdPath, *jsonPath, *csvPath, *eventsCsvPath, true},
                             conn.info().version.board);
     const bool failed = outcome.usageError || isFailure(outcome.document.doc) || !outcome.document.expectationsPassed;
     return textResult(outcome.document.doc, failed);

@@ -159,6 +159,8 @@ void printLatency(const lt::LatencyStats& lat)
         std::cout << std::defaultfloat;
     }
     std::cout << '\n';
+    if (lat.reversed)
+        std::cout << "  WARNING: " << lt::SignalAnalyzer::reversedHint(lat) << '\n';
 }
 
 // Failed checks, and passing checks whose quantization bound could still violate the limit.

@@ -35,14 +35,20 @@ inline constexpr int kCaptureSchemaVersion = 1;
 
 // Value Change Dump for GTKWave / PulseView. Time 0 is the first sample; the trigger position is noted.
 void writeVcd(std::ostream& out, const CaptureBuffer& buffer);
-bool writeVcdFile(const std::string& path, const CaptureBuffer& buffer, std::string* error = nullptr);
-bool writeJsonFile(const std::string& path, const nlohmann::json& doc, std::string* error = nullptr);
+// File writers are atomic (temp file + rename) and report flush/close errors. `confined` (for paths returned
+// by resolveSafeOutputPath) refuses any symlink in the directory path at write time.
+bool writeVcdFile(const std::string& path, const CaptureBuffer& buffer, std::string* error = nullptr,
+                  bool confined = false);
+bool writeJsonFile(const std::string& path, const nlohmann::json& doc, std::string* error = nullptr,
+                   bool confined = false);
 
 // Raw sample table (SampleIndex,TimeRelativeNs,<ch1>,...) and paired STIM->REACT events CSV.
 void writeCsv(std::ostream& out, const CaptureBuffer& buffer);
-bool writeCsvFile(const std::string& path, const CaptureBuffer& buffer, std::string* error = nullptr);
+bool writeCsvFile(const std::string& path, const CaptureBuffer& buffer, std::string* error = nullptr,
+                  bool confined = false);
 void writeEventsCsv(std::ostream& out, const std::vector<LatencyEvent>& events);
-bool writeEventsCsvFile(const std::string& path, const std::vector<LatencyEvent>& events, std::string* error = nullptr);
+bool writeEventsCsvFile(const std::string& path, const std::vector<LatencyEvent>& events, std::string* error = nullptr,
+                        bool confined = false);
 
 struct LoadedCapture {
     CaptureBuffer buffer;

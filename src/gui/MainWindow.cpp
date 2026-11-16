@@ -1495,22 +1495,6 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                 reply.fail(sess::error::InvalidParams, std::string(key) + " must be a string");
                 return;
             }
-        if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale) {
-            std::optional<QString> note;
-            if (params.contains("note"))
-                note = QString::fromStdString(params["note"].get<std::string>());
-            reply.ok({{"report", failureReport(note).toStdString()},
-                      {"metadata",
-                       {{"display_state", "stale"},
-                        {"capture_id", m_currentCaptureId},
-                        {"status", m_failure->status},
-                        {"error", m_failure->error}}}});
-            return;
-        }
-        if (!m_waveform->hasCapture()) {
-            reply.fail(sess::error::NoCapture, "no capture is shown in the GUI");
-            return;
-        }
         std::optional<lt::CopyMode> modeOverride;
         if (params.contains("mode")) {
             if (!params["mode"].is_string()) {
@@ -1522,6 +1506,28 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                 reply.fail(sess::error::InvalidParams, "unknown mode (expected 'brief', 'cursors', or 'full')");
                 return;
             }
+        }
+        if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale) {
+            auto ignored = json::array();
+            for (const char* key : {"mode", "latency"})
+                if (params.contains(key))
+                    ignored.push_back(key);
+            std::optional<QString> note;
+            if (params.contains("note"))
+                note = QString::fromStdString(params["note"].get<std::string>());
+            reply.ok({{"report", failureReport(note).toStdString()},
+                      {"metadata",
+                       {{"display_state", "stale"},
+                        {"capture_id", m_currentCaptureId},
+                        {"status", m_failure->status},
+                        {"error", m_failure->error},
+                        // A failed attempt recorded no samples: report mode and latency have nothing to apply to.
+                        {"ignored_params", ignored}}}});
+            return;
+        }
+        if (!m_waveform->hasCapture()) {
+            reply.fail(sess::error::NoCapture, "no capture is shown in the GUI");
+            return;
         }
         auto options = buildReportOptions(modeOverride);
         if (params.contains("note") && params["note"].is_string())
@@ -1842,7 +1848,7 @@ void MainWindow::sessionCapture(const json& p, sess::Responder reply)
 
     Pending pending;
     pending.options = std::move(*opts);
-    pending.outputs = lt::OutputPaths{*vcd, *jsn, *csv, *evCsv};
+    pending.outputs = lt::OutputPaths{*vcd, *jsn, *csv, *evCsv, true};
     pending.options.collectEdges = !pending.outputs.jsonPath.empty();
     pending.options.collectLatencyEvents = !pending.outputs.eventsCsvPath.empty();
     const auto cfg = lt::buildCaptureConfig(m_device.info(), *spec, pending.warnings, err);

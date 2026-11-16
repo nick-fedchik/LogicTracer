@@ -255,9 +255,11 @@ private Q_SLOTS:
         timeout.error = "Trigger timeout";
         Q_EMIT win.device().captureFinished(timeout);
         QVERIFY(win.displayState() == lt::gui::WaveformWidget::DisplayState::Stale);
-        const auto r = callInThread(s, "get_report", {{"note", "is the pull-up fitted?"}});
+        const auto r = callInThread(s, "get_report", {{"note", "is the pull-up fitted?"}, {"mode", "brief"}});
         QVERIFY2(r.ok, r.error.c_str());
         QVERIFY(r.result["report"].get<std::string>().find("is the pull-up fitted?") != std::string::npos);
+        QCOMPARE(r.result["metadata"]["ignored_params"][0].get<std::string>(), std::string("mode"));
+        QCOMPARE(callInThread(s, "get_report", {{"mode", "fancy"}}).errorCode, lt::session::error::InvalidParams);
     }
 
     void viewCanBeSteeredAndAnomaliesListed()

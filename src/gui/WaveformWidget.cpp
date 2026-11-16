@@ -479,7 +479,9 @@ std::optional<std::size_t> WaveformWidget::rowAtY(double y) const
 
 double WaveformWidget::xOfSample(double sample) const
 {
-    return kGutterWidth + m_view.xAt(sample + 0.5);
+    // One convention for every sample-anchored mark: sample i starts at its left cell boundary, which is
+    // where an edge into sample i, the ruler tick for its time, the trigger and annotations are drawn.
+    return kGutterWidth + m_view.xAt(sample);
 }
 
 uint64_t WaveformWidget::annotationNear(double x) const
@@ -766,7 +768,7 @@ void WaveformWidget::drawCursors(QPainter& p, const QRectF& plot) const
     p.save();
     p.setClipRect(QRectF(plot.left() - 1, kOverviewHeight, plot.width() + 2, height() - kOverviewHeight));
 
-    const auto xOfSample = [&](double s) { return plot.left() + m_view.xAt(s + 0.5); };
+    const auto xOfSample = [&](double s) { return plot.left() + m_view.xAt(s); };
 
     // Trigger marker (t = 0).
     const double trigger = static_cast<double>(m_buffer.triggerIndex());

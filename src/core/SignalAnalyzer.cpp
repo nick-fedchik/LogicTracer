@@ -181,6 +181,25 @@ std::vector<ChannelStats> SignalAnalyzer::analyze(const CaptureBuffer& buffer) c
 LatencyStats SignalAnalyzer::analyzeLatency(const CaptureBuffer& buffer, const LatencyPairSpec& spec,
                                             bool collectEvents)
 {
+    return analyzeLatencyImpl(buffer, spec, collectEvents, true);
+}
+
+std::string SignalAnalyzer::reversedHint(const LatencyStats& l)
+{
+    if (!l.reversed)
+        return {};
+    return "every " + l.reactChannel.label() + " edge arrives about one stimulus period after its " +
+           l.stimChannel.label() + " edge (median " + std::to_string(l.p50Samples) + " of a " +
+           std::to_string(l.reversed->stimPeriodSamples) + "-sample period), while " + l.reactChannel.label() +
+           " -> " + l.stimChannel.label() + " pairs " + std::to_string(l.reversed->reverseCount) +
+           " times with a median of " + std::to_string(l.reversed->reverseP50Samples) +
+           " samples: the stimulus and reaction channels are probably swapped (measure CH" +
+           std::to_string(l.reactChannel.displayNumber()) + ".." + std::to_string(l.stimChannel.displayNumber()) + ")";
+}
+
+LatencyStats SignalAnalyzer::analyzeLatencyImpl(const CaptureBuffer& buffer, const LatencyPairSpec& spec,
+                                                bool collectEvents, bool checkDirection)
+{
     LatencyStats out;
     if (spec.stimChannelIndex < buffer.channels().size())
         out.stimChannel = buffer.channels()[spec.stimChannelIndex];
@@ -361,6 +380,23 @@ LatencyStats SignalAnalyzer::analyzeLatency(const CaptureBuffer& buffer, const L
     std::stable_sort(flagged.begin(), flagged.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
     for (std::size_t k = 0; k < flagged.size() && k < LatencyStats::kMaxListed; ++k)
         out.outliers.push_back(makeEvent(flagged[k].second));
+
+    // Direction check (one level deep: the reverse analysis does not check its own direction).
+    if (checkDirection && pairs.size() >= 3) {
+        std::vector<uint32_t> spacing;
+        spacing.reserve(pairs.size() - 1);
+        for (std::size_t k = 1; k < pairs.size(); ++k)
+            spacing.push_back(pairs[k].stim - pairs[k - 1].stim);
+        std::nth_element(spacing.begin(), spacing.begin() + static_cast<std::ptrdiff_t>(spacing.size() / 2), spacing.end());
+        const uint64_t period = spacing[spacing.size() / 2];
+        if (period > 0 && 4ull * out.minSamples >= 3ull * period) {
+            const LatencyPairSpec reverse{spec.reactChannelIndex, spec.reactFalling, spec.stimChannelIndex,
+                                          spec.stimFalling, spec.maxDeltaSeconds};
+            const auto back = analyzeLatencyImpl(buffer, reverse, false, false);
+            if (back.count * 10 >= out.count * 9 && 4ull * back.p50Samples <= period)
+                out.reversed = LatencyStats::ReversedHint{static_cast<uint32_t>(period), back.p50Samples, back.count};
+        }
+    }
     return out;
 }
 

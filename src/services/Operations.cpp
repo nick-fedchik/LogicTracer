@@ -358,19 +358,19 @@ void writeCaptureOutputs(json& doc, const CaptureResult& result, const CaptureDo
     json outputs = json::object();
     std::string error;
     if (!paths.vcdPath.empty() && result.buffer) {
-        if (writeVcdFile(paths.vcdPath, *result.buffer, &error))
+        if (writeVcdFile(paths.vcdPath, *result.buffer, &error, paths.confined))
             outputs["vcd"] = paths.vcdPath;
         else
             doc["warnings"].push_back(error);
     }
     if (!paths.csvPath.empty() && result.buffer) {
-        if (writeCsvFile(paths.csvPath, *result.buffer, &error))
+        if (writeCsvFile(paths.csvPath, *result.buffer, &error, paths.confined))
             outputs["csv"] = paths.csvPath;
         else
             doc["warnings"].push_back(error);
     }
     if (!paths.eventsCsvPath.empty() && document.latency) {
-        if (writeEventsCsvFile(paths.eventsCsvPath, document.latency->events, &error))
+        if (writeEventsCsvFile(paths.eventsCsvPath, document.latency->events, &error, paths.confined))
             outputs["events_csv"] = paths.eventsCsvPath;
         else
             doc["warnings"].push_back(error);
@@ -381,7 +381,7 @@ void writeCaptureOutputs(json& doc, const CaptureResult& result, const CaptureDo
         file["outputs"] = outputs;
         if (document.stats && result.buffer)
             file["capture"] = captureToJson(*result.buffer, *document.stats, true, board);
-        if (!writeJsonFile(paths.jsonPath, file, &error)) {
+        if (!writeJsonFile(paths.jsonPath, file, &error, paths.confined)) {
             outputs.erase("json");
             doc["warnings"].push_back(error);
         }

@@ -6,6 +6,8 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Latency direction check: when every reaction lags by about one stimulus period and the opposite pairing is
+  short, the report, the latency JSON (`direction_warning`) and the CLI say the channels are probably swapped.
 - `LOGICTRACER_DENY_HARDWARE=1` refuses all serial device access (for audits and harnesses).
 
 ### Fixed (independent audit, tags `audit-base` -> `audit-fixes` and follow-ups)
@@ -23,6 +25,8 @@ All notable changes are documented here. The format follows
   non-blocking; Repeat waits for a busy device.
 - RP2040 firmware: bounds-checked receive buffer, exact request length, validated channels/trigger/mode,
   malformed escapes rejected; the Interceptor variant compiles again.
+- Waveform: cursors, anomaly markers, annotations, ruler and trigger share one sample-to-x convention.
+- Session/MCP output files are written through one directory descriptor and refuse symlinked directories.
 - FPGA `lt_capture`: abort/re-arm no longer overwrite the oldest record; read index/auto-increment races fixed.
 
 ### Added

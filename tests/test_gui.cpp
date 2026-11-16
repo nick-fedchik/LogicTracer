@@ -221,7 +221,7 @@ private Q_SLOTS:
         const auto before = *w->cursorA();
 
         const int y = WaveformWidget::kPlotTop + 5;
-        const QPoint onLine(static_cast<int>(kGutter + w->view().xAt(static_cast<double>(before) + 0.5)) + 3, y);
+        const QPoint onLine(static_cast<int>(kGutter + w->view().xAt(static_cast<double>(before))) + 3, y);
         QTest::mousePress(w, Qt::LeftButton, Qt::NoModifier, onLine);
         QTest::mouseMove(w, onLine + QPoint(30, 0));
         QTest::mouseMove(w, onLine + QPoint(60, 0));
@@ -780,6 +780,27 @@ private Q_SLOTS:
         QCOMPARE(latency->text(), QString("1..2"));
         QTest::qWait(50);
         QVERIFY(latency->styleSheet().isEmpty());
+    }
+
+    // Cursors, annotations, the trigger and edges share one x for the same sample (no half-sample offset).
+    void sampleAnchoredMarksShareOneAxis()
+    {
+        auto w = std::make_unique<WaveformWidget>();
+        w->resize(900, 300);
+        std::vector<uint32_t> s(40, 0);
+        for (std::size_t i = 20; i < 40; ++i)
+            s[i] = 1;
+        w->setCapture(lt::CaptureBuffer({{0, "A"}}, 1'000'000, 20, s));
+        w->showSampleRange(10, 30);  // 20 samples over the plot: ~40 px per sample
+        w->setCursorA(20);
+        lt::Annotation a;
+        a.timeSeconds = w->capture().timeOfSample(20);
+        a.label = "edge";
+        w->addAnnotation(a);
+        const double cursorX = w->xOfSample(20.0);
+        QCOMPARE(w->annotationNear(cursorX), w->annotations().front().id);
+        QCOMPARE(w->cursorNear(cursorX), 1);
+        QCOMPARE(cursorX, kGutter + w->view().xAt(20.0));  // the drawn edge into sample 20 and the trigger
     }
 
     void anomalyMarkersAreSeparateFromAnnotationsAndTogglable()
