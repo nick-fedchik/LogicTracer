@@ -884,6 +884,11 @@ int cmdAnalyze(const QStringList& args, Output o)
         {"warnings", json::array()},
         {"outputs", json::object()},
     };
+    for (const auto& w : loaded.warnings) {
+        capDoc.doc["warnings"].push_back(w);
+        if (!o.json)
+            std::cerr << "warning: " << w << '\n';
+    }
     if (!setup->empty())
         capDoc.doc["setup"] = lt::toJson(*setup);
     if (p.isSet("summary") || p.isSet("edges") || o.json)

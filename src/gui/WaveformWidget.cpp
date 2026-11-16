@@ -747,7 +747,10 @@ void WaveformWidget::drawRuler(QPainter& p, const QRectF& plot) const
 
     p.save();
     p.setClipRect(QRectF(plot.left(), kOverviewHeight, plot.width(), kRulerHeight));
-    for (double t = std::ceil(t0 / step) * step; t <= t1; t += step) {
+    int ticks = 0;  // bounded: with extreme offsets t + step may equal t and never advance
+    for (double t = std::ceil(t0 / step) * step; t <= t1 && ticks < 4096; t += step, ++ticks) {
+        if (t + step == t)
+            break;
         const double sample = t / period + static_cast<double>(m_buffer.triggerIndex());
         const double x = plot.left() + m_view.xAt(sample);
         p.setPen(kGrid);

@@ -103,6 +103,41 @@ std::string vcdId(std::size_t index)
     return id;
 }
 
+
+// Writes through a sibling temp file and renames it over the target, so a failed or partial write
+// (disk full, quota) never destroys the previous file. Special files (pipes, devices) are written in place.
+template <typename Fn>
+bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::string* error, Fn&& write)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const bool inPlace = fs::exists(path, ec) && !fs::is_regular_file(path, ec);
+    const std::string target = inPlace ? path : path + ".lt-tmp";
+    auto fail = [&](const std::string& msg) {
+        if (!inPlace)
+            fs::remove(target, ec);
+        if (error)
+            *error = msg + " " + path;
+        return false;
+    };
+    {
+        std::ofstream f(target, mode | std::ios::trunc);
+        if (!f)
+            return fail("cannot write");
+        write(f);
+        f.flush();
+        f.close();
+        if (f.fail())
+            return fail("failed while writing");
+    }
+    if (!inPlace) {
+        fs::rename(target, path, ec);
+        if (ec)
+            return fail("cannot replace");
+    }
+    return true;
+}
+
 }  // namespace
 
 nlohmann::json toJson(const DeviceInfo& info)
@@ -353,26 +388,12 @@ void writeVcd(std::ostream& out, const CaptureBuffer& buffer)
 
 bool writeVcdFile(const std::string& path, const CaptureBuffer& buffer, std::string* error)
 {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        if (error)
-            *error = "cannot write " + path;
-        return false;
-    }
-    writeVcd(f, buffer);
-    return static_cast<bool>(f);
+    return writeFileChecked(path, std::ios::binary, error, [&](std::ostream& f) { writeVcd(f, buffer); });
 }
 
 bool writeJsonFile(const std::string& path, const nlohmann::json& doc, std::string* error)
 {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        if (error)
-            *error = "cannot write " + path;
-        return false;
-    }
-    f << doc.dump(2) << '\n';
-    return static_cast<bool>(f);
+    return writeFileChecked(path, {}, error, [&](std::ostream& f) { f << doc.dump(2) << '\n'; });
 }
 
 void writeCsv(std::ostream& out, const CaptureBuffer& buffer)
@@ -395,14 +416,7 @@ void writeCsv(std::ostream& out, const CaptureBuffer& buffer)
 
 bool writeCsvFile(const std::string& path, const CaptureBuffer& buffer, std::string* error)
 {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        if (error)
-            *error = "cannot write " + path;
-        return false;
-    }
-    writeCsv(f, buffer);
-    return static_cast<bool>(f);
+    return writeFileChecked(path, {}, error, [&](std::ostream& f) { writeCsv(f, buffer); });
 }
 
 void writeEventsCsv(std::ostream& out, const std::vector<LatencyEvent>& events)
@@ -417,17 +431,15 @@ void writeEventsCsv(std::ostream& out, const std::vector<LatencyEvent>& events)
 
 bool writeEventsCsvFile(const std::string& path, const std::vector<LatencyEvent>& events, std::string* error)
 {
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        if (error)
-            *error = "cannot write " + path;
-        return false;
-    }
-    writeEventsCsv(f, events);
-    return static_cast<bool>(f);
+    return writeFileChecked(path, {}, error, [&](std::ostream& f) { writeEventsCsv(f, events); });
 }
 
-bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string* error)
+namespace {
+
+// Unsigned sample indices beyond this cannot come from a real capture and break time-axis arithmetic.
+constexpr int64_t kMaxTriggerOffset = int64_t{UINT32_MAX};
+
+bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::string* error)
 {
     auto fail = [&](std::string msg) {
         if (error)
@@ -479,9 +491,11 @@ bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string*
         }
         out = {};
         out.buffer = CaptureBuffer(std::move(channels), static_cast<uint32_t>(freq), 0, std::move(samples));
+        if (pre < -kMaxTriggerOffset || pre > kMaxTriggerOffset)
+            return fail("PreTriggerSamples is out of range in .lac file");
         out.buffer.setTriggerIndex(pre);
         if (s.value("TriggerType", 0) == 0 && s.contains("TriggerChannel")) {
-            out.triggerDescription = "CH" + std::to_string(s.value("TriggerChannel", 0) + 1) + " " +
+            out.triggerDescription = "CH" + std::to_string(int64_t{s.value("TriggerChannel", 0)} + 1) + " " +
                                      (s.value("TriggerInverted", false) ? "falling" : "rising");
         }
         return true;
@@ -517,7 +531,7 @@ bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string*
             return fail("channel entry missing idle_level or lossless edge_samples[] (re-save with --out-json)");
         }
         const int chNum1 = cj.value("channel", static_cast<int>(c + 1));
-        const uint8_t hwNum = static_cast<uint8_t>(std::clamp(chNum1 - 1, 0, 31));
+        const uint8_t hwNum = static_cast<uint8_t>(std::clamp<int64_t>(int64_t{chNum1} - 1, 0, 31));
         std::string name = cj.value("name", std::string{});
         if (name == "CH" + std::to_string(hwNum + 1))
             name.clear();
@@ -547,6 +561,8 @@ bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string*
         }
     }
 
+    if (triggerSample < -kMaxTriggerOffset || triggerSample > kMaxTriggerOffset)
+        return fail("trigger_sample is out of range in capture JSON");
     out = {};
     out.buffer = CaptureBuffer(std::move(channels), static_cast<uint32_t>(rate), 0, std::move(samples));
     out.buffer.setTriggerIndex(triggerSample);
@@ -587,6 +603,20 @@ bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string*
         }
     }
     return true;
+}
+
+}  // namespace
+
+bool readCaptureJson(const nlohmann::json& doc, LoadedCapture& out, std::string* error)
+{
+    try {
+        return readCaptureJsonImpl(doc, out, error);
+    } catch (const nlohmann::json::exception& e) {
+        out = {};
+        if (error)
+            *error = std::string("malformed capture JSON: ") + e.what();
+        return false;
+    }
 }
 
 nlohmann::json toJson(const SetupInfo& setup)
@@ -711,8 +741,10 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
         uint64_t time = 0;
         std::size_t ch = 0;
         bool val = false;
+        bool known = true;  // false for x/z: the level is unknown and must not be guessed
     };
     std::vector<Change> changes;
+    std::size_t unknownLevels = 0;
     uint64_t currentTime = 0;
     uint64_t maxTime = 0;
 
@@ -734,7 +766,11 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
         if (v == '0' || v == '1' || v == 'x' || v == 'X' || v == 'z' || v == 'Z') {
             const std::string id = tok.substr(1);
             if (auto it = idToIndex.find(id); it != idToIndex.end())
-                changes.push_back({currentTime, it->second, v == '1'});
+{
+                const bool known = v == '0' || v == '1';
+                unknownLevels += !known;
+                changes.push_back({currentTime, it->second, v == '1', known});
+            }
         } else if (v == 'b' || v == 'B' || v == 'r' || v == 'R') {
             std::string ignoredId;
             in >> ignoredId;
@@ -744,11 +780,13 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
     uint32_t frequency = 0;
     std::size_t totalSamples = 0;
     int64_t triggerSample = 0;
+    double unitsPerSample = 1.0;  // VCD time units per output sample
+    std::vector<std::string> warnings;
 
     if (commentFreq && commentSamples) {
         frequency = *commentFreq;
         totalSamples = std::min<std::size_t>(*commentSamples, 16'777'216);
-        const double unitsPerSample = 1.0 / (static_cast<double>(frequency) * timescaleSeconds);
+        unitsPerSample = 1.0 / (static_cast<double>(frequency) * timescaleSeconds);
         if (commentTriggerTime && unitsPerSample > 0)
             triggerSample = static_cast<int64_t>(std::llround(static_cast<double>(*commentTriggerTime) / unitsPerSample));
     } else {
@@ -762,12 +800,23 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
         }
         if (stepUnits == 0)
             stepUnits = maxTime > 0 ? maxTime : 1;
+        const uint64_t exactStep = stepUnits;
         while (maxTime / stepUnits > 1'048'576)
             stepUnits *= 2;
+        if (stepUnits != exactStep)
+            warnings.push_back("VCD is longer than 1M time steps: the time base was coarsened " +
+                               std::to_string(stepUnits / exactStep) + "x, so short pulses may be lost");
         const double periodS = static_cast<double>(stepUnits) * timescaleSeconds;
-        frequency = periodS > 0 ? static_cast<uint32_t>(std::clamp(std::llround(1.0 / periodS), 1ll, 2'000'000'000ll))
-                                : 1'000'000u;
-        totalSamples = maxTime > 0 ? static_cast<std::size_t>(maxTime / stepUnits) : (changes.empty() ? 0 : 1);
+        if (periodS <= 0)
+            return fail("VCD has no usable $timescale");
+        const double rate = 1.0 / periodS;
+        if (rate > 2e9)
+            return fail("VCD time resolution is too fine (" + std::to_string(static_cast<uint64_t>(rate)) +
+                        " Hz > 2 GHz): re-export it with a coarser timescale");
+        frequency = static_cast<uint32_t>(std::max(1.0, std::round(rate)));
+        unitsPerSample = static_cast<double>(stepUnits);
+        // The last change at #maxTime is itself a sample.
+        totalSamples = changes.empty() ? 0 : static_cast<std::size_t>(maxTime / stepUnits) + 1;
     }
 
     std::vector<ChannelInfo> channels;
@@ -777,13 +826,16 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
 
     std::vector<uint32_t> samples(totalSamples, 0u);
     if (totalSamples > 0) {
-        const double unitsPerSample = 1.0 / (static_cast<double>(frequency) * timescaleSeconds);
         uint32_t currentWord = 0;
         std::size_t cIdx = 0;
         for (std::size_t s = 0; s < totalSamples; ++s) {
             const auto sampleTime = static_cast<uint64_t>(std::llround(static_cast<double>(s) * unitsPerSample));
             while (cIdx < changes.size() && changes[cIdx].time <= sampleTime) {
                 const uint32_t mask = 1u << changes[cIdx].ch;
+                if (!changes[cIdx].known) {
+                    ++cIdx;  // keep the previous level
+                    continue;
+                }
                 if (changes[cIdx].val)
                     currentWord |= mask;
                 else
@@ -794,9 +846,13 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
         }
     }
 
+    if (unknownLevels > 0)
+        warnings.push_back(std::to_string(unknownLevels) +
+                           " x/z value change(s) in the VCD were treated as 'level unchanged' (initial unknown = 0)");
     out = {};
     out.buffer = CaptureBuffer(std::move(channels), frequency, 0, std::move(samples));
     out.buffer.setTriggerIndex(triggerSample);
+    out.warnings = std::move(warnings);
     return true;
 }
 

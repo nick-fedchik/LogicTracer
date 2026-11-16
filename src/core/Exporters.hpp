@@ -49,6 +49,8 @@ struct LoadedCapture {
     std::string triggerDescription;
     std::vector<Annotation> annotations;
     SetupInfo setup;
+    // Non-fatal import problems the user must see (e.g. unknown x/z levels, coarsened time base).
+    std::vector<std::string> warnings;
 };
 
 // SetupInfo <-> JSON object {"key": "value", ...}. Invalid entries are skipped when reading.

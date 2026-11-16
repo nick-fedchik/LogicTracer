@@ -10,11 +10,14 @@
 #include "core/SignalAnalyzer.hpp"
 
 #include <QByteArray>
+#include <QDir>
+#include <QFile>
 #include <QTest>
 
 #include "core/Format.hpp"
 
 #include <cstring>
+#include <limits>
 #include <locale>
 #include <sstream>
 
@@ -432,9 +435,10 @@ private Q_SLOTS:
                                   "$dumpvars\n0!\n$end\n#0\n0!\n#2\n1!\n#4\n0!\n");
         lt::LoadedCapture extLoaded;
         QVERIFY2(lt::readVcd(extVcd, extLoaded, &err), err.c_str());
-        QCOMPARE(extLoaded.buffer.size(), std::size_t{2});
+        QCOMPARE(extLoaded.buffer.size(), std::size_t{3});  // the change at #maxTime is a sample
         QCOMPARE(extLoaded.buffer.bit(0, 0), false);
         QCOMPARE(extLoaded.buffer.bit(1, 0), true);
+        QCOMPARE(extLoaded.buffer.bit(2, 0), false);
 
         std::ostringstream csv;
         lt::writeCsv(csv, orig);
@@ -902,6 +906,65 @@ private Q_SLOTS:
         for (const auto& a : lt::findAnomalies(buf, o))
             drops += a.kind.find("DroppedStimulus") != std::string::npos;
         QCOMPARE(drops, 5);
+    }
+
+    void vcdUnknownLevelsAreNotGuessedAndTooFineTimescaleIsRejected()
+    {
+        std::string err;
+        std::istringstream xz("$timescale 1ns $end\n$var wire 1 ! S $end\n$enddefinitions $end\n"
+                              "#0\n1!\n#1\nz!\n#2\nx!\n#3\n0!\n");
+        lt::LoadedCapture xzLoaded;
+        QVERIFY2(lt::readVcd(xz, xzLoaded, &err), err.c_str());
+        QCOMPARE(xzLoaded.buffer.size(), std::size_t{4});
+        QCOMPARE(xzLoaded.buffer.bit(1, 0), true);  // z keeps the previous level
+        QCOMPARE(xzLoaded.buffer.bit(2, 0), true);
+        QCOMPARE(xzLoaded.buffer.bit(3, 0), false);
+        QCOMPARE(xzLoaded.warnings.size(), std::size_t{1});
+
+        std::istringstream ps("$timescale 1ps $end\n$var wire 1 ! S $end\n$enddefinitions $end\n"
+                              "#0\n0!\n#100\n1!\n#200\n0!\n");
+        lt::LoadedCapture psLoaded;
+        QVERIFY(!lt::readVcd(ps, psLoaded, &err));
+        QVERIFY(err.find("too fine") != std::string::npos);
+    }
+
+    void failedWritesAreReportedAndKeepTheOldFile()
+    {
+        std::string err;
+        const auto buf = twoChannelBuffer();
+        QVERIFY(!lt::writeCsvFile("/dev/full", buf, &err));  // flush fails with ENOSPC
+        QVERIFY(!err.empty());
+
+        const QString path = QDir::temp().filePath("lt_atomic_test.csv");
+        QFile::remove(path);
+        QVERIFY(lt::writeCsvFile(path.toStdString(), buf, &err));
+        QVERIFY(!QFile::exists(path + ".lt-tmp"));
+        QFile::remove(path);
+        QVERIFY(!lt::writeCsvFile("/nonexistent_dir_lt/x.csv", buf, &err));
+    }
+
+    void malformedCaptureJsonIsRejectedNotFatal()
+    {
+        std::string err;
+        lt::LoadedCapture out;
+        nlohmann::json bad = {{"sample_rate_hz", 1000000}, {"samples", 10u}};
+        nlohmann::json channel = {{"channel", 1}, {"idle_level", "high"}};
+        channel["edge_samples"] = nlohmann::json::array();
+        bad["channels"] = nlohmann::json::array();
+        bad["channels"].push_back(channel);
+        QVERIFY(!lt::readCaptureJson(bad, out, &err));
+        QVERIFY(err.find("malformed") != std::string::npos);
+
+        nlohmann::json minChannel = bad;
+        minChannel["channels"][0]["idle_level"] = 0;
+        minChannel["channels"][0]["channel"] = std::numeric_limits<int>::min();
+        QVERIFY2(lt::readCaptureJson(minChannel, out, &err), err.c_str());  // clamped, no overflow
+        QCOMPARE(int(out.buffer.channels()[0].number), 0);
+
+        nlohmann::json hugeTrigger = minChannel;
+        hugeTrigger["trigger_sample"] = int64_t{1} << 60;
+        QVERIFY(!lt::readCaptureJson(hugeTrigger, out, &err));
+        QVERIFY(err.find("trigger_sample") != std::string::npos);
     }
 
     void probeForAiFormatsPinAndState()

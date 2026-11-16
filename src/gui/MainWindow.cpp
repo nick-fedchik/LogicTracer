@@ -1174,10 +1174,13 @@ bool MainWindow::openCaptureFile(const QString& path, QString* error)
     if (!loaded.annotations.empty())
         m_waveform->setAnnotations(std::move(loaded.annotations));
     updateReport();
-    showStatus(tr("Opened %1 (%2 samples, %3 channels)")
-                   .arg(path)
-                   .arg(m_waveform->capture().size())
-                   .arg(m_waveform->capture().channels().size()));
+    QString opened = tr("Opened %1 (%2 samples, %3 channels)")
+                         .arg(path)
+                         .arg(m_waveform->capture().size())
+                         .arg(m_waveform->capture().channels().size());
+    for (const auto& w : loaded.warnings)
+        opened += tr(" | Warning: %1").arg(QString::fromStdString(w));
+    showStatus(opened, !loaded.warnings.empty());
     return true;
 }
 
