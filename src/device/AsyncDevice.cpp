@@ -104,7 +104,7 @@ AsyncDevice::AsyncDevice(QObject* parent) : QObject(parent)
     m_worker->moveToThread(m_thread);
 
     connect(m_worker, &AsyncWorker::opened, this, &AsyncDevice::onOpened);
-    connect(m_worker, &AsyncWorker::closed, this, &AsyncDevice::closed);
+    connect(m_worker, &AsyncWorker::closed, this, &AsyncDevice::onClosed);
     connect(m_worker, &AsyncWorker::progress, this, &AsyncDevice::progress);
     connect(m_worker, &AsyncWorker::captureFinished, this, &AsyncDevice::onCaptureFinished);
     connect(m_worker, &AsyncWorker::probeFinished, this, &AsyncDevice::onProbeFinished);
@@ -145,6 +145,7 @@ void AsyncDevice::close()
 {
     m_worker->requestCancel();
     m_connected = false;
+    ++m_pendingCloses;
     QMetaObject::invokeMethod(m_worker, &AsyncWorker::doClose, Qt::QueuedConnection);
 }
 
@@ -177,6 +178,12 @@ void AsyncDevice::requestCancel()
 
 void AsyncDevice::onOpened(bool ok, const QString& error, const lt::DeviceInfo& info)
 {
+    if (ok && m_pendingCloses > 0) {  // close() was requested while the handshake was running
+        m_connected = false;
+        setBusy(false);
+        Q_EMIT opened(false, tr("connection closed during the handshake"));
+        return;
+    }
     m_connected = ok;
     if (ok)
         m_info = info;
@@ -184,10 +191,19 @@ void AsyncDevice::onOpened(bool ok, const QString& error, const lt::DeviceInfo& 
     Q_EMIT opened(ok, error);
 }
 
+void AsyncDevice::onClosed()
+{
+    if (m_pendingCloses > 0)
+        --m_pendingCloses;
+    m_connected = false;
+    Q_EMIT closed();
+}
+
 void AsyncDevice::onCaptureFinished(const lt::CaptureResult& result)
 {
     if (result.portLost && m_connected) {
         m_connected = false;
+        ++m_pendingCloses;
         QMetaObject::invokeMethod(m_worker, &AsyncWorker::doClose, Qt::QueuedConnection);
     }
     setBusy(false);
@@ -198,6 +214,7 @@ void AsyncDevice::onProbeFinished(const lt::ProbeResult& result)
 {
     if (result.portLost && m_connected) {
         m_connected = false;
+        ++m_pendingCloses;
         QMetaObject::invokeMethod(m_worker, &AsyncWorker::doClose, Qt::QueuedConnection);
     }
     setBusy(false);

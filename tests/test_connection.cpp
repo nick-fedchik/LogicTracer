@@ -107,6 +107,21 @@ private Q_SLOTS:
         QCOMPARE(req.post, 100u);
     }
 
+    // LogicTracer firmware is SemVer 0.x: it must still be asked for its real limits.
+    void handshakeLogicTracerZeroVersionReadsCapabilities()
+    {
+        Device dev([](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0)
+                d.send(fake::idReply("0.3.0", true, "FREQ:200000000\nBLASTFREQ:400000000\nBUFFER:393216\nCHANNELS:28\n"));
+        });
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        QCOMPARE(conn.info().maxFrequency, 200'000'000u);
+        QCOMPARE(conn.info().blastFrequency, 400'000'000u);
+        QCOMPARE(conn.info().bufferSize, 393'216u);
+        QCOMPARE(conn.info().channels, uint8_t{28});
+    }
+
     void handshakeV5UsesDefaults()
     {
         Device dev(device("V5_2", false));
@@ -403,6 +418,20 @@ private Q_SLOTS:
         QVERIFY(ad.isConnected());
     }
 
+    void closeDuringHandshakeLeavesTheDeviceDisconnected()
+    {
+        Device dev(device("V6_5", true, answerWith(0x00)));
+        lt::AsyncDevice ad;
+        QSignalSpy opened(&ad, &lt::AsyncDevice::opened);
+        QSignalSpy closed(&ad, &lt::AsyncDevice::closed);
+        QVERIFY(ad.open(QString::fromStdString(dev.port())));
+        ad.close();  // while the handshake is still running on the worker thread
+        QVERIFY(closed.wait(5000));
+        QVERIFY(!ad.isConnected());
+        QVERIFY(!ad.startProbe({{0, {}}}, 5));
+        QVERIFY(opened.count() == 0 || !opened.first().at(0).toBool());
+    }
+
     void probeWorksAndCancelWhenIdleIsHarmless()
     {
         Device dev(device("V6_5", true, answerWith(0x00)));
@@ -459,6 +488,14 @@ private Q_SLOTS:
         c.frequency = 1'000'000;
         c.channels = {{1, {}}};
         QVERIFY(dev->validate(c)->find("not in the recording") != std::string::npos);
+
+        // Immediate capture mirrors the Pico: the 2 reserved pre-trigger samples are not returned.
+        c.channels = {{0, {}}};
+        c.preSamples = 2;
+        c.postSamples = 50;
+        const auto immediate = dev->capture(c);
+        QVERIFY2(immediate.status == lt::CaptureStatus::Ok, immediate.error.c_str());
+        QCOMPARE(immediate.buffer->size(), std::size_t{50});
         QVERIFY(!dev->enterBootloader());
 
         lt::ReplayDevice bad;

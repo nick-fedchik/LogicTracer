@@ -130,8 +130,9 @@ bool PicoConnection::handshake(milliseconds timeout)
     if (!m_pollLatencyOverridden)
         m_pollLatency = defaultPollLatencyFor(*version);
 
-    if (version->major < 6) {
-        // V5 firmware reports only the version line; use its compile-time limits.
+    if (version->family == FirmwareFamily::Upstream && version->major < 6) {
+        // Upstream V5 firmware reports only the version line; use its compile-time limits.
+        // LogicTracer firmware (SemVer 0.x included) always sends the capability lines.
         m_info.maxFrequency = 100'000'000;
         m_info.blastFrequency = 0;
         m_info.bufferSize = 128 * 1024;

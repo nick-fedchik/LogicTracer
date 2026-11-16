@@ -57,6 +57,7 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onOpened(bool ok, const QString& error, const lt::DeviceInfo& info);
+    void onClosed();
     void onCaptureFinished(const lt::CaptureResult& result);
     void onProbeFinished(const lt::ProbeResult& result);
 
@@ -69,6 +70,7 @@ private:
     std::optional<std::chrono::milliseconds> m_pollLatencyOverride;
     bool m_busy = false;
     bool m_connected = false;
+    int m_pendingCloses = 0;  // queued doClose() calls; a handshake finishing before them is stale
 };
 
 }  // namespace lt

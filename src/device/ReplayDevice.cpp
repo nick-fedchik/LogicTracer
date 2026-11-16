@@ -101,9 +101,12 @@ std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) c
         return "the recording was sampled at " + std::to_string(m_recording.frequency()) +
                " Hz; replay supports that rate or an integer divisor of it";
     const uint64_t step = m_recording.frequency() / config.frequency;
-    const uint64_t needed = (static_cast<uint64_t>(config.preSamples) + config.postSamples) * step;
+    // An immediate capture returns only the post samples (the device drops the 2 reserved pre-trigger ones).
+    const uint64_t wanted = config.trigger ? static_cast<uint64_t>(config.preSamples) + config.postSamples
+                                           : static_cast<uint64_t>(config.postSamples);
+    const uint64_t needed = wanted * step;
     if (needed > m_recording.size())
-        return "requested " + std::to_string(config.preSamples + config.postSamples) + " samples, the recording has " +
+        return "requested " + std::to_string(wanted) + " samples, the recording has " +
                std::to_string(m_recording.size() / step) + " at this rate";
     return std::nullopt;
 }
@@ -159,7 +162,7 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
     const std::size_t pre = config.preSamples, post = config.postSamples;
 
     if (!config.trigger) {
-        r.buffer = extract(config.channels, 0, pre + post, 0);
+        r.buffer = extract(config.channels, 0, post, 0);
         report(CaptureStage::Done);
         return finish(CaptureStatus::Ok);
     }
