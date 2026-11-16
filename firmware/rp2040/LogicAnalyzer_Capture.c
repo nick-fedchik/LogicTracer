@@ -75,6 +75,9 @@ static bool pinsAreValid(const uint8_t* pins, uint8_t count)
 
 bool IsCaptureRequestValid(const CAPTURE_REQUEST* r)
 {
+    if(r->triggerType > 3)
+        return false;
+
     if(r->captureMode > MODE_24_CHANNEL)
         return false;
 

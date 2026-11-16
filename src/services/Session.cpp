@@ -10,6 +10,7 @@
 #include <QLocalSocket>
 #include <QPointer>
 
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -131,14 +132,15 @@ void Server::onReadyRead(QLocalSocket* socket)
     }
 
     while (guard && guard->canReadLine()) {
-        const QByteArray line = guard->readLine().trimmed();
-        if (line.isEmpty())
-            continue;
-        if (line.size() > 1024 * 1024) {
+        const QByteArray rawLine = guard->readLine();
+        if (rawLine.size() > 1024 * 1024) {  // measured before trimming, so padding cannot hide an oversized line
             Responder(sink, nullptr).fail(error::InvalidRequest, "request line exceeds 1 MiB limit");
             guard->disconnectFromServer();
             return;
         }
+        const QByteArray line = rawLine.trimmed();
+        if (line.isEmpty())
+            continue;
         const json msg = json::parse(line.toStdString(), nullptr, false);
         if (msg.is_discarded() || !msg.is_object()) {
             Responder(sink, nullptr).fail(error::ParseError, "invalid JSON");
@@ -182,6 +184,17 @@ CallResult call(const QString& socketPath, const std::string& method, const json
     if (!socket.waitForConnected(std::min(timeoutMs, 1000))) {
         out.error = "no GUI session is listening on " + socketPath.toStdString();
         return out;
+    }
+    // The path check above is racy: also verify that the process we reached runs as the current user.
+    {
+        ucred cred{};
+        socklen_t len = sizeof cred;
+        if (::getsockopt(static_cast<int>(socket.socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0 ||
+            cred.uid != ::getuid()) {
+            out.error = "refusing the session socket " + socketPath.toStdString() + ": peer is not the current user";
+            socket.abort();
+            return out;
+        }
     }
     out.connected = true;
 

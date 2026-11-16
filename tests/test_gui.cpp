@@ -978,6 +978,50 @@ private Q_SLOTS:
         QVERIFY(!win.aiReport().contains("LOGIC_ANALYZER"));
     }
 
+    void loadedFilesKeepTheirDeviceAndImportWarnings()
+    {
+        QTemporaryDir dir;
+        MainWindow writer;
+        writer.loadDemo();
+        const auto& buf = writer.waveform()->capture();
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        auto doc = lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true, "PICO_2");
+        doc["device"] = {{"version", "LOGICTRACER_PICO_2_0.3.0"}, {"board", "PICO_2"}};
+        const QString jsonFile = dir.filePath("dev.json");
+        QVERIFY(lt::writeJsonFile(jsonFile.toStdString(), doc));
+
+        MainWindow reader;
+        QString err;
+        QVERIFY2(reader.openCaptureFile(jsonFile, &err), qPrintable(err));
+        QVERIFY(reader.aiReport().contains("LOGICTRACER_PICO_2_0.3.0"));
+        QVERIFY(reader.aiReport().contains("GPIO map"));
+
+        const QString vcdFile = dir.filePath("xz.vcd");
+        QFile f(vcdFile);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("$timescale 1ns $end\n$var wire 1 ! S $end\n$enddefinitions $end\n#0\n1!\n#1\nz!\n#2\n0!\n");
+        f.close();
+        QVERIFY2(reader.openCaptureFile(vcdFile, &err), qPrintable(err));
+        QVERIFY2(reader.aiReport().contains("x/z value change"), "import caveats must reach the AI report");
+    }
+
+    void contextMenuActionsRefuseAReplacedCapture()
+    {
+        MainWindow win;
+        win.show();
+        win.setCapture(toggling(), "CH1 rising");
+        Q_EMIT win.waveform()->contextMenuRequested(QPoint(10, 10), 12, 0);
+        auto* menu = win.findChild<QMenu*>("waveformMenu");
+        QVERIFY(menu);
+        win.setCapture(toggling(300), "CH1 rising");  // the capture changes while the menu is open
+        for (auto* a : menu->actions())
+            if (a->text().contains("Set Cursor A"))
+                a->trigger();
+        QVERIFY(!win.waveform()->cursorA());
+        menu->close();
+    }
+
     void repeatRearmsUntilCancelOrDisconnect()
     {
         int served = 0;

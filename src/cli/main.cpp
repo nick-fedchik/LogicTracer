@@ -231,7 +231,7 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
                                 std::string triggerDesc, std::string deviceVersion, std::string board,
                                 std::string userNote, const std::optional<lt::cli::LatencyArg>& latencyArg,
                                 const std::vector<lt::Annotation>& annotations = {}, const json* assertions = nullptr,
-                                const lt::SetupInfo& setup = {})
+                                const lt::SetupInfo& setup = {}, const std::vector<std::string>& warnings = {})
 {
     lt::ReportOptions ro;
     ro.mode = mode;
@@ -242,6 +242,7 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
     ro.userNote = std::move(userNote);
     ro.annotations = annotations;
     ro.setup = setup;
+    ro.warnings = warnings;
     if (latencyArg) {
         std::optional<std::size_t> sIdx, rIdx;
         for (std::size_t i = 0; i < buf.channels().size(); ++i) {
@@ -590,9 +591,9 @@ int cmdCapture(const QStringList& args, Output o)
             doc["warnings"].push_back(w);
         const std::string st = doc.value("status", std::string("ERROR"));
         const bool expectOk = !doc.contains("assertions") || doc["assertions"].value("passed", true);
-        const int rc = st == "OK" ? (expectOk ? ExitOk : ExitExpectFailed) : st == "TIMEOUT" ? ExitTimeout : ExitError;
+        int rc = st == "OK" ? (expectOk ? ExitOk : ExitExpectFailed) : st == "TIMEOUT" ? ExitTimeout : ExitError;
 
-        std::string sessionAi;
+        std::string sessionAi, reportError, reportErrorKind;
         if (p.isSet("ai") || (p.isSet("copy") && !o.json)) {
             json repParams = {{"mode", std::string(lt::toString(*aiMode))}};
             if (doc.contains("capture_id"))
@@ -602,10 +603,21 @@ int cmdCapture(const QStringList& args, Output o)
             if (p.isSet("measure-latency"))
                 repParams["latency"] = str(p.value("measure-latency"));
             const auto rep = lt::session::call(sock, "get_report", repParams, 5000);
-            if (rep.ok && rep.result.contains("report"))
+            if (rep.ok && rep.result.contains("report")) {
                 sessionAi = rep.result["report"].get<std::string>();
+            } else {  // never present a capture-only success as if the requested report had been delivered
+                reportError = rep.error.empty() ? "the session returned no report" : rep.error;
+                reportErrorKind = rep.errorCode == lt::session::error::StaleCapture ? "StaleCapture" : "ReportFailed";
+            }
+        }
+        if (!reportError.empty()) {
+            doc["report_error"] = {{"kind", reportErrorKind}, {"message", reportError}};
+            if (!o.json)
+                std::cerr << "logictracer-cli capture: report unavailable (" << reportErrorKind << "): " << reportError << '\n';
         }
 
+        if (!reportError.empty() && rc == ExitOk)
+            rc = ExitError;
         if (o.json) {
             const std::string dumped = doc.dump(2);
             std::cout << dumped << std::endl;
@@ -917,7 +929,7 @@ int cmdAnalyze(const QStringList& args, Output o)
         const json* assertionsPtr = capDoc.doc.contains("assertions") ? &capDoc.doc["assertions"] : nullptr;
         aiText = buildBufferAiReport(buf, *aiMode, "LogicTracer analyze: " + inputPath, loaded.triggerDescription, {},
                                      str(p.value("board")), str(p.value("note")), latencyArg, loaded.annotations,
-                                     assertionsPtr, *setup);
+                                     assertionsPtr, *setup, loaded.warnings);
     }
 
     if (p.isSet("ai")) {

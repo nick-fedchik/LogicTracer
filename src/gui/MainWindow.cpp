@@ -159,6 +159,7 @@ void MainWindow::buildUi()
     grid->addWidget(m_timeout, 0, col++);
     m_repeat = new QCheckBox(tr("Repeat"));
     m_repeat->setObjectName("repeat");
+    connect(m_repeat, &QCheckBox::toggled, this, [this](bool) { ++m_repeatGeneration; });
     m_repeat->setToolTip(tr("Re-arm automatically after each successful capture; stops on Cancel, timeout, error or disconnect"));
     grid->addWidget(m_capture, 0, col++);
     grid->addWidget(m_repeat, 0, col++);
@@ -655,19 +656,23 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     const QString candidateTrigger = std::exchange(m_pendingTriggerDescription, QString{});
     auto pendingWarnings = std::exchange(m_pendingWarnings, {});
     const bool fromSession = pending && !pending->isProbe;
+    // One effective setup for the entry, the AI report and the session result: the engineer's setup for the
+    // next capture, overridden per key by the request's one-off meta (which is not kept for later captures).
+    lt::SetupInfo effectiveSetup = m_nextSetup;
+    if (fromSession)
+        for (const auto& [k, v] : pending->options.setup)
+            lt::cli::setSetupEntry(effectiveSetup, k, v);
     switch (r.status) {
     case lt::CaptureStatus::Ok: {
         consumeNote();
         m_failure.reset();
-        lt::SetupInfo setup = m_setup;  // a session capture without meta keeps the engineer's setup
-        if (fromSession)
-            for (const auto& [k, v] : pending->options.setup)
-                lt::cli::setSetupEntry(setup, k, v);
-        showNewCapture(*r.buffer, candidateTrigger, std::move(setup),
+        showNewCapture(*r.buffer, candidateTrigger, effectiveSetup,
                        fromSession ? pending->warnings : std::move(pendingWarnings), false, liveStamp());
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
-        if (m_repeat->isChecked() && !fromSession)
-            QTimer::singleShot(0, this, &MainWindow::rearmRepeat);
+        if (m_repeat->isChecked() && !fromSession) {
+            const auto generation = m_repeatGeneration;
+            QTimer::singleShot(0, this, [this, generation] { rearmRepeat(generation); });
+        }
         break;
     }
     case lt::CaptureStatus::Cancelled:
@@ -697,8 +702,10 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     }
 
     if (fromSession) {  // the request came over the session socket
+        auto docOptions = pending->options;
+        docOptions.setup = effectiveSetup;
         auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, pending->warnings,
-                                       pending->options);
+                                       docOptions);
         if (r.status == lt::CaptureStatus::Ok)
             doc.doc["capture_id"] = m_currentCaptureId;
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
@@ -720,16 +727,16 @@ void MainWindow::recordFailure(FailureInfo failure)
 }
 
 // Re-arms Repeat; waits while a session capture occupies the device instead of silently giving up.
-void MainWindow::rearmRepeat()
+void MainWindow::rearmRepeat(uint32_t generation)
 {
-    if (!m_repeat->isChecked())
+    if (!m_repeat->isChecked() || generation != m_repeatGeneration)  // a stale retry from an earlier Repeat run
         return;
     if (!m_device.isConnected()) {
         stopRepeat(tr("Repeat stopped: device disconnected"));
         return;
     }
     if (m_device.isBusy() || m_pending) {
-        QTimer::singleShot(250, this, &MainWindow::rearmRepeat);
+        QTimer::singleShot(250, this, [this, generation] { rearmRepeat(generation); });
         return;
     }
     startCapture();
@@ -755,7 +762,7 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
     if (ok) {
         consumeNote();
         m_failure.reset();
-        showNewCapture(*r.buffer, candidateTrigger, m_setup, {}, true, liveStamp());
+        showNewCapture(*r.buffer, candidateTrigger, m_nextSetup, {}, true, liveStamp());
         showStatus(tr("Probe complete (%1 ms)").arg(r.elapsed.count()));
     } else if (r.status == lt::CaptureStatus::Cancelled) {
         showStatus(tr("Probe cancelled"));
@@ -771,11 +778,14 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
     }
 }
 
-void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup)
+void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup,
+                            std::vector<std::string> warnings, std::string deviceVersion, std::string board)
 {
     consumeNote();
     m_failure.reset();
-    showNewCapture(buffer, triggerDescription, std::move(setup), {}, false);
+    m_nextSetup = setup;  // a loaded/provided setup is the engineer's context for the captures that follow
+    showNewCapture(buffer, triggerDescription, std::move(setup), std::move(warnings), false,
+                   DeviceStamp{std::move(deviceVersion), std::move(board)});
 }
 
 void MainWindow::setHistoryLimits(std::size_t entries, std::size_t bytes)
@@ -973,6 +983,7 @@ void MainWindow::clearSetupMetadata()
 void MainWindow::setSetupMetadata(const lt::SetupInfo& setup)
 {
     m_setup = setup;
+    m_nextSetup = setup;
     if (m_viewIndex < m_history.size())
         m_history[m_viewIndex].setup = setup;
     updateSetupButton();
@@ -1162,18 +1173,33 @@ void MainWindow::showWaveformContextMenu(const QPoint& globalPos, std::size_t sa
     const bool has = m_waveform->hasCapture();
     const bool both = m_waveform->cursorA().has_value() && m_waveform->cursorB().has_value();
 
-    auto* a = menu->addAction(tr("Set Cursor A Here"), this, [this, sample] { m_waveform->setCursorA(sample); });
-    auto* b = menu->addAction(tr("Set Cursor B Here"), this, [this, sample] { m_waveform->setCursorB(sample); });
+    const uint64_t menuCapture = m_currentCaptureId;  // every capture-specific action refuses a replaced capture
+    auto sameCapture = [this, menuCapture] {
+        if (menuCapture == m_currentCaptureId)
+            return true;
+        showStatus(tr("The capture changed after the menu was opened; action ignored"), true);
+        return false;
+    };
+    auto* a = menu->addAction(tr("Set Cursor A Here"), this, [this, sample, sameCapture] {
+        if (sameCapture())
+            m_waveform->setCursorA(sample);
+    });
+    auto* b = menu->addAction(tr("Set Cursor B Here"), this, [this, sample, sameCapture] {
+        if (sameCapture())
+            m_waveform->setCursorB(sample);
+    });
     a->setEnabled(has);
     b->setEnabled(has);
-    menu->addAction(tr("Add Annotation Here..."), this, [this, sample] {
+    menu->addAction(tr("Add Annotation Here..."), this, [this, sample, menuCapture, sameCapture] {
+        if (!sameCapture())
+            return;
         // Non-blocking, and bound to the capture the click was made on.
         auto* dialog = new QInputDialog(this);
         dialog->setAttribute(Qt::WA_DeleteOnClose);
         dialog->setObjectName("annotationDialog");
         dialog->setWindowTitle(tr("Add Annotation"));
         dialog->setLabelText(tr("Label:"));
-        const uint64_t captureId = m_currentCaptureId;
+        const uint64_t captureId = menuCapture;
         connect(dialog, &QInputDialog::textValueSelected, this, [this, sample, captureId](const QString& value) {
             const QString text = value.trimmed();
             if (text.isEmpty())
@@ -1219,7 +1245,8 @@ bool MainWindow::openCaptureFile(const QString& path, QString* error)
         showStatus(QString::fromStdString(err), true);
         return false;
     }
-    setCapture(loaded.buffer, QString::fromStdString(loaded.triggerDescription), loaded.setup);
+    setCapture(loaded.buffer, QString::fromStdString(loaded.triggerDescription), loaded.setup, loaded.warnings,
+               loaded.deviceVersion, loaded.board);
     if (!loaded.annotations.empty())
         m_waveform->setAnnotations(std::move(loaded.annotations));
     updateReport();
@@ -1292,6 +1319,8 @@ void MainWindow::saveJson()
             doc["trigger_description"] = str(m_triggerDescription);
         if (!m_setup.empty())
             doc["setup"] = lt::toJson(m_setup);
+        if (!m_stamp.version.empty() || !m_stamp.board.empty())
+            doc["device"] = {{"version", m_stamp.version}, {"board", m_stamp.board}};
         if (!m_waveform->annotations().empty()) {
             auto notes = nlohmann::json::array();
             for (const auto& a : m_waveform->annotations()) {
@@ -1510,6 +1539,8 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
             }
             options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
         }
+        if (!params.contains("note"))  // the GUI note was handed to an agent: the next capture clears it
+            m_consumedNote = m_aiNote->text();
         auto metadata = lt::jsonMetadata(m_waveform->capture(), options);
         metadata["display_state"] = displayStateName(m_waveform->displayState());
         metadata["viewing_history"] = m_viewIndex + 1 < m_history.size();

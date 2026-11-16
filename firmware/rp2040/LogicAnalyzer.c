@@ -274,13 +274,18 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
 
                 //Yes, unescape the buffer,
                 int dest = 0;
+                bool malformedEscape = false;
 
                 for(int src = 0; src < bufferPos; src++)
                 {
                     if(messageBuffer[src] == 0xF0)
                     {
-                        if(src + 1 >= bufferPos) //Escape without a following byte: malformed
+                        //An escape must be followed by a payload byte, never by the stop sequence (the last two bytes)
+                        if(src + 1 >= bufferPos - 2)
+                        {
+                            malformedEscape = true;
                             break;
+                        }
 
                         messageBuffer[dest] = messageBuffer[src + 1] ^ 0xF0;
                         src++;
@@ -289,6 +294,13 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                         messageBuffer[dest] = messageBuffer[src];
 
                     dest++;
+                }
+
+                if(malformedEscape)
+                {
+                    sendResponse("ERR_UNKNOWN_MSG\n", fromWiFi);
+                    bufferPos = 0;
+                    continue;
                 }
 
                 switch(messageBuffer[2]) //Check the command we received

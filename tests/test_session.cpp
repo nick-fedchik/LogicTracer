@@ -315,6 +315,46 @@ private Q_SLOTS:
         QVERIFY(!r.doc["session_connected"].get<bool>());
     }
 
+    // One effective setup everywhere: the engineer's setup overridden per key by the request's meta, which is
+    // used for that capture only.
+    void sessionMetaOverridesPerKeyWithoutPersisting()
+    {
+        fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("V6_5", true));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.send("CAPTURE_STARTED\n");
+                d.send(fake::captureData(r, 0x01));
+            }
+        });
+        lt::gui::MainWindow win;
+        win.show();
+        win.device().setPollLatency(50ms);
+        QVERIFY(win.startSession(socket("meta.sock")));
+        const QString path = socket("meta.sock");
+        win.setPortText(QString::fromStdString(dev.port()));
+        for (auto* b : win.findChildren<QPushButton*>())
+            if (b->text() == "Connect")
+                b->click();
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        win.setSetupMetadata({{"dut.board", "engineer"}, {"wiring", "stable"}});
+
+        const json withMeta = {{"channels", "1"}, {"samples", 100}, {"meta", {{"dut.board", "ONE-OFF"}, {"extra", "session"}}}};
+        auto r = awaitOffThread([path, withMeta] { return sess::call(path, "capture", withMeta, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
+        QCOMPARE(r.result["setup"]["dut.board"].get<std::string>(), std::string("ONE-OFF"));
+        QCOMPARE(r.result["setup"]["wiring"].get<std::string>(), std::string("stable"));  // merged, not wiped
+        QCOMPARE(r.result["setup"]["extra"].get<std::string>(), std::string("session"));
+        QCOMPARE(win.setup().size(), std::size_t{3});  // the entry on screen shows the same effective setup
+
+        const json plain = {{"channels", "1"}, {"samples", 100}};
+        r = awaitOffThread([path, plain] { return sess::call(path, "capture", plain, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
+        QCOMPARE(r.result["setup"]["dut.board"].get<std::string>(), std::string("engineer"));  // one-off not kept
+        QVERIFY(!r.result["setup"].contains("extra"));
+    }
+
     void captureAndProbeOverTheSocket()
     {
         fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {

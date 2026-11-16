@@ -5,6 +5,23 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed (independent audit, tags `audit-base` -> `audit-fixes` and follow-ups)
+- Handshake: LogicTracer 0.x firmware now reports its real frequency, blast rate, buffer and channels.
+- AI reports: the motif reference comes from the longest periodic stretch (startup glitches no longer
+  produce phantom faults); consecutive failures are separate incidents; report text is flattened to one line.
+- Imports/exports: VCD `x`/`z` keep the previous level and warn, the last timestamp is a sample, time bases
+  finer than 2 GHz are rejected; numeric JSON fields are range-checked; writes go through an exclusive random
+  temp file and report flush errors.
+- Session/CLI/MCP: handler exceptions no longer crash the GUI; `capture_id` is honoured on reads and
+  `clear_annotations`; the CLI forwards absolute `--out-*` paths, reports a failed report fetch instead of
+  hiding it, and clients refuse sockets of other users.
+- GUI: reports name the capture's own device (also loaded from files); failures started from history are
+  reported; one-off session `meta` no longer wipes or persists into the engineer's setup; dialogs are
+  non-blocking; Repeat waits for a busy device.
+- RP2040 firmware: bounds-checked receive buffer, exact request length, validated channels/trigger/mode,
+  malformed escapes rejected; the Interceptor variant compiles again.
+- FPGA `lt_capture`: abort/re-arm no longer overwrite the oldest record; read index/auto-increment races fixed.
+
 ### Added
 - GUI capture lifecycle: Armed (dimmed old waveform + banner) and Stale-on-timeout states, with a
   line-state diagnosis instead of a copy of the old report; history of the last 8 captures

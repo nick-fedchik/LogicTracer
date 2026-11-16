@@ -35,7 +35,9 @@ public:
 
     // Shows a capture (from a device or from tests) and refreshes the AI report.
     // `setup` is the test-setup metadata recorded with the capture (shown in reports, saved to JSON).
-    void setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup = {});
+    // `warnings`, `deviceVersion` and `board` describe a loaded capture's import caveats and source device.
+    void setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup = {},
+                    std::vector<std::string> warnings = {}, std::string deviceVersion = {}, std::string board = {});
     // Loads a saved lossless .json or .vcd capture into the viewer.
     bool openCaptureFile(const QString& path, QString* error = nullptr);
     // The text "Copy for AI" puts on the clipboard: the report for the current view and cursors.
@@ -138,7 +140,7 @@ private:
     [[nodiscard]] DeviceStamp liveStamp() const;
     // Remembers the failed operation, returns to the newest capture and marks the display stale.
     void recordFailure(FailureInfo failure);
-    void rearmRepeat();
+    void rearmRepeat(uint32_t generation);
     // Non-blocking file dialog; `onChosen` runs only if the capture on screen is still the one it was opened for.
     void askFile(bool save, const QString& title, const QString& name, const QString& filter,
                  std::function<void(const QString&)> onChosen);
@@ -223,7 +225,9 @@ private:
     std::optional<Pending> m_pending;
     QString m_triggerDescription;
     QString m_pendingTriggerDescription;
-    lt::SetupInfo m_setup;
+    lt::SetupInfo m_setup;      // setup of the entry on screen (editable)
+    lt::SetupInfo m_nextSetup;  // setup new captures start with; changed only by the engineer
+    uint32_t m_repeatGeneration = 0;  // invalidates pending Repeat retries when Repeat is toggled
     DeviceStamp m_stamp;  // device that produced the capture on screen
     QAction* m_copyAction = nullptr;
     QAction* m_hideInactiveAction = nullptr;
