@@ -63,6 +63,33 @@ static exception_handler_t oldSysTickHandler;
 
 const uint8_t pinMap[] = PIN_MAP;
 
+//Channel indexes arrive from the host: every one must address the pin map (the last entry is the external trigger)
+static bool pinsAreValid(const uint8_t* pins, uint8_t count)
+{
+    for(uint8_t i = 0; i < count; i++)
+        if(pins[i] >= MAX_CHANNELS)
+            return false;
+
+    return true;
+}
+
+bool IsCaptureRequestValid(const CAPTURE_REQUEST* r)
+{
+    if(r->captureMode > MODE_24_CHANNEL)
+        return false;
+
+    if(r->channelCount < 1 || r->channelCount > MAX_CHANNELS || !pinsAreValid(r->channels, r->channelCount))
+        return false;
+
+    if(r->postSamples < 2)
+        return false;
+
+    if(r->frequency == 0)
+        return false;
+
+    return true;
+}
+
 //Main capture buffer, aligned at a dword boundary.
 static uint8_t captureBuffer[CAPTURE_BUFFER_SIZE] __attribute__((aligned(4)));
 
@@ -589,10 +616,16 @@ bool StartCaptureFast(uint32_t freq, uint32_t preLength, uint32_t postLength, co
         case MODE_24_CHANNEL:
             maxSamples = CAPTURE_BUFFER_SIZE / 4;
             break;
+        default:
+            return false;
     }
 
+    //Too short post-trigger window (the PIO program counts postLength - 1)?
+    if(postLength < 2)
+        return false;
+
     //Too many samples requested?
-    if(preLength + postLength > maxSamples)
+    if((uint64_t)preLength + postLength > (uint32_t)maxSamples)
         return false;
 
     //Frequency too high?
@@ -600,7 +633,7 @@ bool StartCaptureFast(uint32_t freq, uint32_t preLength, uint32_t postLength, co
         return false;
 
     //Incorrect pin count?
-    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS)
+    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS || !pinsAreValid(capturePins, capturePinCount))
         return false;
 
     //Bad trigger?
@@ -758,10 +791,16 @@ bool StartCaptureComplex(uint32_t freq, uint32_t preLength, uint32_t postLength,
         case MODE_24_CHANNEL:
             maxSamples = CAPTURE_BUFFER_SIZE / 4;
             break;
+        default:
+            return false;
     }
 
+    //Too short post-trigger window (the PIO program counts postLength - 1)?
+    if(postLength < 2)
+        return false;
+
     //Too many samples requested?
-    if(preLength + postLength > maxSamples)
+    if((uint64_t)preLength + postLength > (uint32_t)maxSamples)
         return false;
 
     //Frequency too high?
@@ -769,7 +808,7 @@ bool StartCaptureComplex(uint32_t freq, uint32_t preLength, uint32_t postLength,
         return false;
 
     //Incorrect pin count?
-    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS)
+    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS || !pinsAreValid(capturePins, capturePinCount))
         return false;
 
     //Bad trigger?
@@ -921,10 +960,16 @@ bool StartCaptureBlast(uint32_t freq, uint32_t length, const uint8_t* capturePin
         case MODE_24_CHANNEL:
             maxSamples = CAPTURE_BUFFER_SIZE / 4;
             break;
+        default:
+            return false;
     }
 
+    //Too short window?
+    if(length < 2)
+        return false;
+
     //Too many samples requested?
-    if(length > maxSamples)
+    if(length > (uint32_t)maxSamples)
         return false;
 
     //Frequency too high?
@@ -932,7 +977,7 @@ bool StartCaptureBlast(uint32_t freq, uint32_t length, const uint8_t* capturePin
         return false;
 
     //Incorrect pin count?
-    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS)
+    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS || !pinsAreValid(capturePins, capturePinCount))
         return false;
 
     //Incorrect trigger pin?
@@ -1042,10 +1087,16 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
         case MODE_24_CHANNEL:
             maxSamples = CAPTURE_BUFFER_SIZE / 4;
             break;
+        default:
+            return false;
     }
 
-    //Too many samples requested?
-    if(preLength + (postLength * (loopCount + 1)) > maxSamples)
+    //Too short post-trigger window (the PIO program counts postLength - 1)?
+    if(postLength < 2)
+        return false;
+
+    //Too many samples requested? (64-bit: the product can exceed 32 bits)
+    if((uint64_t)preLength + (uint64_t)postLength * ((uint64_t)loopCount + 1) > (uint32_t)maxSamples)
         return false;
 
     //Frequency too high?
@@ -1057,7 +1108,7 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
         return false;
 
     //Incorrect pin count?
-    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS)
+    if(capturePinCount < 1 || capturePinCount > MAX_CHANNELS || !pinsAreValid(capturePins, capturePinCount))
         return false;
 
     //Incorrect trigger pin?
@@ -1372,4 +1423,4 @@ volatile uint32_t* GetTimestamps(uint8_t* length)
 {
     *length = timestampIndex;
     return loopTimestamp;
-}
+}

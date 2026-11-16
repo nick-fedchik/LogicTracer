@@ -41,6 +41,9 @@
 
     }CAPTURE_REQUEST;
 
+    //The host serializes this exact layout (src/core/DeviceProtocol.cpp, V6): 56 bytes
+    _Static_assert(sizeof(CAPTURE_REQUEST) == 56, "CAPTURE_REQUEST must match the host protocol layout");
+
     #ifdef USE_CYGW_WIFI
 
         typedef struct _WIFI_SETTINGS
@@ -107,4 +110,4 @@
 
     #endif
 
-#endif
+#endif

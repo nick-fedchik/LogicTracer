@@ -9,7 +9,7 @@ void event_machine_init(EVENT_MACHINE* machine, EVENT_HANDLER handler, uint8_t e
 
 bool event_has_events(EVENT_MACHINE* machine)
 {
-    return &machine->queue.wptr !=  &machine->queue.rptr;
+    return !queue_is_empty(&machine->queue);
 }
 
 //Adds an event to the machine
@@ -41,4 +41,4 @@ void event_free(EVENT_MACHINE* machine)
 {
     queue_free(&machine->queue);
     machine->handler = NULL;
-}
+}

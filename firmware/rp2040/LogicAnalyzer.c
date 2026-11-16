@@ -85,23 +85,26 @@
     #define LED_ON() send_rgb(0,32,0)
     #define LED_OFF() send_rgb(0,0,32)
 #elif defined (NO_LED)
-    #define INIT_LED() { }
-    #define LED_ON() { }
-    #define LED_OFF() { }
+    //do/while keeps "LED_OFF();" a single statement, so it can precede an "else" (a bare { } does not)
+    #define INIT_LED() do { } while(0)
+    #define LED_ON() do { } while(0)
+    #define LED_OFF() do { } while(0)
 #endif
 
 //Buffer used to store received data
-uint8_t messageBuffer[128];
+//(sized for the largest frame: the 115 byte WiFi settings request plus its escapes and framing)
+static uint8_t messageBuffer[256];
 //Position in the buffer
-uint8_t bufferPos = 0;
+static uint16_t bufferPos = 0;
 //Capture status
 bool capturing = false;
 
 bool blink = false;
 uint32_t blinkCount = 0;
 
-//Capture request pointer
+//Capture request pointer (always points to an aligned copy of the received request)
 CAPTURE_REQUEST* req;
+static CAPTURE_REQUEST requestCopy;
 
 #ifdef USE_CYGW_WIFI
 
@@ -160,16 +163,23 @@ void sendResponse(const char* response, bool toWiFi)
     #ifdef USE_CYGW_WIFI
     if(toWiFi)
     {
-        EVENT_FROM_FRONTEND evt;
-        evt.event = SEND_DATA;
-        evt.dataLength = strlen(response);
-        memset(evt.data, 0, 32);
-        memcpy(evt.data, response, evt.dataLength);
-        event_push(&frontendToWifi, &evt);
+        //Long messages are sent in chunks that fit the event payload
+        size_t left = strlen(response);
+        while(left > 0)
+        {
+            EVENT_FROM_FRONTEND evt;
+            evt.event = SEND_DATA;
+            evt.dataLength = left > sizeof(evt.data) ? sizeof(evt.data) : (uint8_t)left;
+            memset(evt.data, 0, sizeof(evt.data));
+            memcpy(evt.data, response, evt.dataLength);
+            event_push(&frontendToWifi, &evt);
+            response += evt.dataLength;
+            left -= evt.dataLength;
+        }
     }
     else
     #endif
-        printf(response);
+        printf("%s", response);
 }
 
 /// @brief Transfer a buffer of data through USB using the TinyUSB CDC functions
@@ -242,6 +252,13 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
 {
     for(uint pos = 0; pos < length; pos++)
     {
+        //Never write past the buffer: inform the host and restart reception
+        if(bufferPos >= sizeof(messageBuffer))
+        {
+            sendResponse("ERR_MSG_OVERFLOW\n", fromWiFi);
+            bufferPos = 0;
+        }
+
         //Store char in buffer and increment position
         messageBuffer[bufferPos++] = data[pos];
         
@@ -250,11 +267,6 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
             bufferPos = 0;
         else if(bufferPos == 2 && messageBuffer[1] != 0xAA) //If we have stored the second byte and it is not 0xAA restart reception
             bufferPos = 0;
-        else if(bufferPos >= 256) //Have we overflowed the buffer? then inform to the host and restart reception
-        {
-            sendResponse("ERR_MSG_OVERFLOW\n", fromWiFi);
-            bufferPos = 0;
-        }
         else if(bufferPos > 2) //Try to parse the data
         {
             if(messageBuffer[bufferPos - 2] == 0xAA && messageBuffer[bufferPos - 1] == 0x55) //Do we have the stop condition?
@@ -267,6 +279,9 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                 {
                     if(messageBuffer[src] == 0xF0)
                     {
+                        if(src + 1 >= bufferPos) //Escape without a following byte: malformed
+                            break;
+
                         messageBuffer[dest] = messageBuffer[src + 1] ^ 0xF0;
                         src++;
                     }
@@ -301,9 +316,23 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                         break;
 
                     case 1: //Capture request
-                        
-                        req = (CAPTURE_REQUEST*)&messageBuffer[3]; //Get the request pointer
-                        
+                    {
+                        //Frame = start (2) + command (1) + request + stop (2): the length must match exactly
+                        if(dest != 5 + (int)sizeof(CAPTURE_REQUEST))
+                        {
+                            sendResponse("CAPTURE_ERROR\n", fromWiFi);
+                            break;
+                        }
+
+                        memcpy(&requestCopy, &messageBuffer[3], sizeof(CAPTURE_REQUEST)); //Aligned copy (Cortex-M0+ faults on unaligned words)
+                        req = &requestCopy;
+
+                        if(!IsCaptureRequestValid(req))
+                        {
+                            sendResponse("CAPTURE_ERROR\n", fromWiFi);
+                            break;
+                        }
+
                         bool started = false;
 
                         #ifdef SUPPORTS_COMPLEX_TRIGGER
@@ -340,12 +369,21 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             sendResponse("CAPTURE_ERROR\n", fromWiFi); //Else notify the error
 
                         break;
+                    }
                     
                     #ifdef USE_CYGW_WIFI
 
                     case 2: //Update WiFi settings
 
-                        wReq = (WIFI_SETTINGS_REQUEST*)&messageBuffer[3];
+                        if(dest != 5 + (int)sizeof(WIFI_SETTINGS_REQUEST))
+                        {
+                            sendResponse("ERR_UNKNOWN_MSG\n", fromWiFi);
+                            break;
+                        }
+
+                        WIFI_SETTINGS_REQUEST wRequestCopy;
+                        memcpy(&wRequestCopy, &messageBuffer[3], sizeof(WIFI_SETTINGS_REQUEST));
+                        wReq = &wRequestCopy;
                         WIFI_SETTINGS settings;
                         settings.checksum = 0;
                         memcpy(settings.apName, wReq->apName, 33);
@@ -796,4 +834,4 @@ int main()
     }
 
     return 0;
-}
+}

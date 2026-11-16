@@ -1,4 +1,5 @@
 #include "LogicAnalyzer_Board_Settings.h"
+#include "LogicAnalyzer_Structs.h"
 #ifndef __ANALYZER_CAPTURE__
 #define __ANALYZER_CAPTURE__
 
@@ -14,6 +15,9 @@ typedef enum
 
 } CHANNEL_MODE;
 
+//Checks the fields of a capture request received from the host
+bool IsCaptureRequestValid(const CAPTURE_REQUEST* r);
+
 bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, uint16_t loopCount, uint8_t measureBursts, const uint8_t* capturePins, uint8_t capturePinCount, uint8_t triggerPin, bool invertTrigger, CHANNEL_MODE captureMode);
 bool StartCaptureBlast(uint32_t freq, uint32_t length, const uint8_t* capturePins, uint8_t capturePinCount, uint8_t triggerPin, bool invertTrigger, CHANNEL_MODE captureMode);
 #ifdef SUPPORTS_COMPLEX_TRIGGER
@@ -26,4 +30,4 @@ uint8_t* GetBuffer(uint32_t* bufferSize, uint32_t* firstSample, CHANNEL_MODE* ca
 volatile uint32_t* GetTimestamps(uint8_t* length);
 void check_fast_interrupt();
 
-#endif
+#endif
