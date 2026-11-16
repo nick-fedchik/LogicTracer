@@ -1,4 +1,5 @@
-# Keep upstream firmware byte-identical (mixed CRLF/LF) so diffs against gusmanb stay minimal.
-firmware/rp2040/** -text
-
 * text=auto eol=lf
+
+# Keep upstream firmware byte-identical (mixed CRLF/LF) so diffs against gusmanb stay minimal.
+# (Must come after the catch-all rule: the last matching line wins.)
+firmware/rp2040/** -text

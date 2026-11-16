@@ -246,13 +246,15 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
                                       {"channel", cfg.trigger->channel + 1},
                                       {"edge", cfg.trigger->inverted ? "falling" : "rising"}}
                                : json{{"type", "immediate"}};
+    if (cfg.trigger)
+        trigger["sensitivity"] = result.edgeSensitive ? "edge" : "level";
     if (cfg.trigger && !info.version.board.empty()) {
         if (auto gp = gpioForChannel(info.version.board, cfg.trigger->channel))
             trigger["gpio"] = *gp;
     }
 
     // Warn when a level-sensitive PIO trigger fired immediately because the line was already active.
-    if (cfg.trigger && result.status == CaptureStatus::Ok && result.buffer && result.buffer->size() > 0) {
+    if (cfg.trigger && !result.edgeSensitive && result.status == CaptureStatus::Ok && result.buffer && result.buffer->size() > 0) {
         for (std::size_t idx = 0; idx < cfg.channels.size(); ++idx) {
             if (cfg.channels[idx].number == cfg.trigger->channel) {
                 const bool expectedIdle = cfg.trigger->inverted;  // falling needs HIGH idle; rising needs LOW idle

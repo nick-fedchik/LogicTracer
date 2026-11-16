@@ -41,4 +41,4 @@ void event_free(EVENT_MACHINE* machine)
 {
     queue_free(&machine->queue);
     machine->handler = NULL;
-}
+}

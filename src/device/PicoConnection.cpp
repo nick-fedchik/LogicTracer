@@ -147,6 +147,7 @@ bool PicoConnection::handshake(milliseconds timeout)
     }
 
     std::optional<uint32_t> freq, blast, buffer, channels;
+    m_info.features = 0;
     while (!(freq && blast && buffer && channels)) {
         auto line = readLine(deadline);
         if (!line) {
@@ -157,6 +158,7 @@ bool PicoConnection::handshake(milliseconds timeout)
         else if (auto v2 = parseKeyValue(*line, "BLASTFREQ")) blast = v2;
         else if (auto v3 = parseKeyValue(*line, "BUFFER")) buffer = v3;
         else if (auto v4 = parseKeyValue(*line, "CHANNELS")) channels = v4;
+        else if (auto v5 = parseKeyValue(*line, "FEATURES")) m_info.features = *v5;  // sent before CHANNELS
     }
     m_info.maxFrequency = *freq;
     m_info.blastFrequency = *blast;
@@ -235,10 +237,11 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
     return std::nullopt;
 }
 
-CaptureRequestPacket PicoConnection::buildRequest(const CaptureConfig& c, const EdgeTrigger& trigger) const
+CaptureRequestPacket PicoConnection::buildRequest(const CaptureConfig& c, const EdgeTrigger& trigger,
+                                                  bool edgeSensitive) const
 {
     CaptureRequestPacket req;
-    req.triggerType = TriggerType::Edge;
+    req.triggerType = edgeSensitive ? TriggerType::EdgeSensitive : TriggerType::Edge;
     req.triggerChannel = trigger.channel;
     req.invertedOrCount = trigger.inverted ? 1 : 0;
     std::vector<uint8_t> numbers;
@@ -292,10 +295,15 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
         wait = m_pollLatency + 800ms + captureTime;
     }
 
+    // A user trigger means "on this transition": use the edge-sensitive program when the firmware has it. The
+    // immediate plan relies on the level-sensitive one (one of the two polarities fires at once).
+    const bool edgeSensitive = config.trigger.has_value() && m_info.supportsEdgeTrigger();
+    result.edgeSensitive = edgeSensitive;
     for (const auto& trig : plan) {
         ++result.attempts;
         result.triggerUsed = trig;
-        auto attempt = runCapture(buildRequest(config, trig), config.channels, wait, config.trigger.has_value());
+        auto attempt = runCapture(buildRequest(config, trig, edgeSensitive), config.channels, wait,
+                                  config.trigger.has_value());
         result.status = attempt.status;
         result.error = attempt.error;
         result.buffer = std::move(attempt.buffer);

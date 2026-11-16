@@ -36,8 +36,9 @@ struct DetectedPort {
     bool vidPidMatch = false;
 };
 
-// Firmware edge trigger. NOTE: the PIO program is level sensitive ("jmp pin"):
-// a rising trigger fires as soon as the line is HIGH, falling as soon as it is LOW.
+// Firmware edge trigger. With LogicTracer firmware that supports it (DeviceInfo::supportsEdgeTrigger) only a
+// real transition fires; older firmware is level-sensitive ("jmp pin"): a rising trigger fires as soon as the
+// line is HIGH, falling as soon as it is LOW.
 struct EdgeTrigger {
     uint8_t channel = 0;    // 0-based
     bool inverted = false;  // false = rising/high, true = falling/low
@@ -73,6 +74,7 @@ struct CaptureResult {
     std::chrono::milliseconds elapsed{0};
     std::optional<CaptureBuffer> lineDump;  // filled on TIMEOUT when probeOnTimeout is set
     bool portLost = false;                  // true when the serial device disconnected mid-operation
+    bool edgeSensitive = false;             // the trigger fired on a real transition (not on a level)
     std::vector<std::string> warnings;      // caveats of the data source (e.g. a replayed VCD with x/z levels)
 };
 

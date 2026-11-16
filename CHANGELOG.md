@@ -6,6 +6,9 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Edge-sensitive trigger: LogicTracer firmware reports `FEATURES:1` and accepts trigger type 4, which fires only
+  on a real transition (a rising trigger on a line that is already HIGH waits for the next edge). The host uses
+  it for every user trigger when available; the capture JSON records `trigger.sensitivity` (`edge`/`level`).
 - Latency direction check: when every reaction lags by about one stimulus period and the opposite pairing is
   short, the report, the latency JSON (`direction_warning`) and the CLI say the channels are probably swapped.
 - `LOGICTRACER_DENY_HARDWARE=1` refuses all serial device access (for audits and harnesses).

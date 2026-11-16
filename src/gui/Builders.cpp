@@ -230,8 +230,9 @@ QFrame* showTriggerBuilder(QWidget* anchor, QLineEdit* target, const std::vector
     row->addWidget(ch);
     row->addWidget(edge);
     layout->addLayout(row);
-    auto* note = new QLabel(QObject::tr("RP2040 firmware trigger is level sensitive: if the line is already at the "
-                                        "target level when armed, it fires immediately."));
+    auto* note = new QLabel(QObject::tr("LogicTracer firmware fires only on a real edge. Older firmware is level "
+                                        "sensitive: if the line is already at the target level when armed, it fires "
+                                        "immediately."));
     note->setWordWrap(true);
     note->setMaximumWidth(360);
     layout->addWidget(note);

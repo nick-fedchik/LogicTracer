@@ -48,8 +48,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 ## B-04. Analyzer P1
 - [ ] `--invariant` rules (never / within / stable / onehot / bus + settle), O(E) over transitions.
 - [ ] `logictracer-cli diff A B` (histogram shift, Δp99, Δmax, new anomalies, sampling-phase verdict).
-- [ ] Firmware V6_7: edge-sensitive trigger (+2–3 PIO instructions) and re-arm for `loopCount`
-      (prevents re-triggering on the same pulse); expose `loopCount + measure` for N = 1000 series.
+- [x] Firmware: edge-sensitive trigger (type 4, `FEATURES:1`) with re-arm for `loopCount` (the same pulse
+      cannot re-trigger). Verified on the live Pico: a falling trigger on an idle-LOW line now waits
+      (TIMEOUT) instead of firing at once; immediate captures and probes unchanged.
+- [ ] Expose `loopCount` (with edge re-arm) in the host for N = 1000 burst series; positive edge-fire check
+      on hardware with the PYNQ burst (needs BTN1 or the B-08 software start).
 - [x] GUI: automatic anomaly markers (`View -> Show Anomaly Markers`, separate from annotations), MCP
       `lt_get_anomalies` / `lt_set_view`, CLI `view --anomalies` and steering flags, `F3` / `Shift+F3`
       navigation (#5-#7).
@@ -98,7 +101,7 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       `ignored_params` (a failed attempt has no samples to apply them to).
 - [x] `LOGICTRACER_DENY_HARDWARE=1` makes every serial open fail, so test/audit harnesses cannot touch a
       live Pico by accident (replay devices are unaffected).
-- [ ] P2 (found on hardware, 2026-11-16): `trigger_already_active` is not raised for `--trigger 1:rising`
+- [x] P2 (found on hardware, 2026-11-16; resolved by the edge-sensitive trigger): `trigger_already_active` is not raised for `--trigger 1:rising`
       while CH1 is already HIGH. The firmware zero-fills the pre-trigger ring, so the capture shows a
       fabricated rising edge at `trigger_sample - 1` and the host heuristic (`sawOppositeIdle`) is fooled
       by the zeros. Needs a validity count for the pre-trigger samples from the firmware (protocol

@@ -7,6 +7,7 @@
 #include "device/PicoConnection.hpp"
 #include "device/ReplayDevice.hpp"
 #include "core/Exporters.hpp"
+#include "services/Operations.hpp"
 
 #include <QElapsedTimer>
 #include <QFile>
@@ -141,6 +142,49 @@ private Q_SLOTS:
         QVERIFY(denied);
         QVERIFY(message.find("LOGICTRACER_DENY_HARDWARE") != std::string::npos);
         QVERIFY2(ptyAllowed, emulated.lastError().c_str());
+    }
+
+    // Firmware that reports FEATURES bit 0 gets the edge-sensitive trigger for user triggers only; the
+    // immediate plan (which relies on a level firing at once) keeps the level-sensitive type.
+    void edgeSensitiveTriggerIsUsedWhenTheFirmwareHasIt()
+    {
+        Device dev([](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.3.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:1\nCHANNELS:24\n"));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.recordRequest(r);
+                d.send("CAPTURE_STARTED\n");
+                d.send(fake::captureData(r, 0x01));
+            }
+        });
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        QVERIFY(conn.info().supportsEdgeTrigger());
+        QCOMPARE(conn.info().channels, uint8_t{24});  // FEATURES before CHANNELS does not disturb the handshake
+
+        auto cfg = config(10, 100);
+        cfg.trigger = lt::EdgeTrigger{0, false};
+        const auto triggered = conn.capture(cfg);
+        QVERIFY2(triggered.status == lt::CaptureStatus::Ok, triggered.error.c_str());
+        QVERIFY(triggered.edgeSensitive);
+        QCOMPARE(int(dev.requests().back().triggerType), 4);
+
+        const auto immediate = conn.capture(config(2, 50));
+        QVERIFY2(immediate.status == lt::CaptureStatus::Ok, immediate.error.c_str());
+        QVERIFY(!immediate.edgeSensitive);
+        QCOMPARE(int(dev.requests().back().triggerType), 0);
+
+        // The "trigger already active" heuristic only applies to level-sensitive firmware.
+        lt::CaptureRequestSpec spec;
+        spec.channels = cfg.channels;
+        spec.frequency = cfg.frequency;
+        spec.samples = 110;
+        spec.trigger = cfg.trigger;
+        const auto doc = lt::captureDocument(conn.info(), spec, cfg, triggered, {}, {}).doc;
+        QCOMPARE(doc["config"]["trigger"]["sensitivity"].get<std::string>(), std::string("edge"));
+        QVERIFY(doc["warnings"].empty());
     }
 
     void handshakeV5UsesDefaults()

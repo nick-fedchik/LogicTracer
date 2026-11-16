@@ -31,7 +31,9 @@ namespace lt {
 // so natural alignment padding is part of the wire format.
 enum class ProtocolGeneration { V5, V6 };
 
-enum class TriggerType : uint8_t { Edge = 0, Complex = 1, Fast = 2, Blast = 3 };
+// Edge (0) is level-sensitive in every firmware ("jmp pin"); EdgeSensitive (4) fires only on a real
+// transition and exists in LogicTracer firmware that reports FEATURES bit 0.
+enum class TriggerType : uint8_t { Edge = 0, Complex = 1, Fast = 2, Blast = 3, EdgeSensitive = 4 };
 
 enum class CaptureMode : uint8_t { Channels8 = 0, Channels16 = 1, Channels24 = 2 };
 
@@ -132,7 +134,10 @@ struct DeviceInfo {
     uint32_t blastFrequency = 0;
     uint32_t bufferSize = 128 * 1024;
     uint8_t channels = 24;
+    uint32_t features = 0;  // FEATURES handshake bits (0 for firmware that does not report them)
 
+    static constexpr uint32_t kFeatureEdgeTrigger = 1u << 0;
+    [[nodiscard]] bool supportsEdgeTrigger() const noexcept { return (features & kFeatureEdgeTrigger) != 0; }
     [[nodiscard]] uint32_t minFrequency() const noexcept { return (maxFrequency * 2ull) / 65535u; }
     [[nodiscard]] CaptureLimits limits(CaptureMode mode) const noexcept;
 };

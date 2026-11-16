@@ -171,6 +171,7 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
     }
 
     r.triggerUsed = config.trigger;
+    r.edgeSensitive = true;  // replay searches for a real transition
     report(CaptureStage::WaitingForTrigger);
     const std::size_t trigIdx = *sourceIndex(config.trigger->channel);
     const bool rising = !config.trigger->inverted;

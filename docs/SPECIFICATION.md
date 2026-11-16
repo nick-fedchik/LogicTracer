@@ -97,9 +97,13 @@ are then used (100 MHz, 131072 bytes, 24 channels).
 3. `u8` number of burst timestamps; if > 1, followed by `count × 4` bytes.
 
 **Notes:**
-* The simple edge trigger in PIO is **level-sensitive** (`jmp pin`): a rising trigger fires while
-  the line is high. Immediate captures and `probe()` (which tries both polarities) rely on this.
-  If the trigger line is already at the target level when arming, the host adds a
+* The simple edge trigger (type 0) in PIO is **level-sensitive** (`jmp pin`): a rising trigger fires
+  while the line is high. Immediate captures and `probe()` (which tries both polarities) rely on this.
+* LogicTracer firmware adds trigger **type 4, edge-sensitive**: the PIO program samples while the line
+  has the opposite level and fires only on the transition (re-armed the same way for `loopCount`). The
+  firmware advertises it with `FEATURES:<bits>` (bit 0) in the identify reply, before `CHANNELS`; the
+  host then uses type 4 for every user trigger and type 0 for immediate captures and probes.
+  With level-sensitive firmware, if the trigger line is already at the target level when arming, the host adds a
   `trigger_already_active` warning and, before signalling readiness (`WaitingForTrigger`,
   `--ready-file`, `--on-armed`), waits for the circular pre-trigger buffer to fill.
 * Upstream firmware (≤ V6_5) checks for completion every ~2 s (`sleep 1 s` × 2), so the host adds

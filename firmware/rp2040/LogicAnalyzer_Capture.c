@@ -75,7 +75,11 @@ static bool pinsAreValid(const uint8_t* pins, uint8_t count)
 
 bool IsCaptureRequestValid(const CAPTURE_REQUEST* r)
 {
-    if(r->triggerType > 3)
+    //0 = level-sensitive edge, 1 = complex, 2 = fast, 3 = blast, 4 = edge-sensitive edge (LogicTracer)
+    if(r->triggerType > 4)
+        return false;
+
+    if(r->triggerType == 4 && r->measure)
         return false;
 
     if(r->captureMode > MODE_24_CHANNEL)
@@ -1075,7 +1079,7 @@ bool StartCaptureBlast(uint32_t freq, uint32_t length, const uint8_t* capturePin
     return true;
 }
 
-bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, uint16_t loopCount, uint8_t measureBursts, const uint8_t* capturePins, uint8_t capturePinCount, uint8_t triggerPin, bool invertTrigger, CHANNEL_MODE captureMode)
+bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, uint16_t loopCount, uint8_t measureBursts, const uint8_t* capturePins, uint8_t capturePinCount, uint8_t triggerPin, bool invertTrigger, bool edgeSensitive, CHANNEL_MODE captureMode)
 {
     int maxSamples;
 
@@ -1108,6 +1112,10 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
 
     //Too many loops to be measured?
     if(measureBursts && loopCount > 253)
+        return false;
+
+    //Burst timestamps exist only for the level-sensitive programs
+    if(measureBursts && edgeSensitive)
         return false;
 
     //Incorrect pin count?
@@ -1151,7 +1159,9 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
     pio_sm_restart(capturePIO, sm_Capture);
 
     //Load correct program, depending on the trigger edge
-    if(invertTrigger)
+    if(edgeSensitive)
+        captureOffset = pio_add_program(capturePIO, invertTrigger ? &NEGATIVE_EDGE_CAPTURE_program : &POSITIVE_EDGE_CAPTURE_program);
+    else if(invertTrigger)
     {
         if(measureBursts)
             captureOffset = pio_add_program(capturePIO, &NEGATIVE_CAPTURE_MEASUREBURSTS_program);
@@ -1179,7 +1189,11 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
     pio_gpio_init(capturePIO, triggerPin);
 
     //Configure state machines
-    pio_sm_config smConfig = measureBursts?
+    pio_sm_config smConfig = edgeSensitive ?
+                                (invertTrigger ?
+                                NEGATIVE_EDGE_CAPTURE_program_get_default_config(captureOffset) :
+                                POSITIVE_EDGE_CAPTURE_program_get_default_config(captureOffset)) :
+                             measureBursts?
                                 (invertTrigger?
                                 NEGATIVE_CAPTURE_MEASUREBURSTS_program_get_default_config(captureOffset):
                                 POSITIVE_CAPTURE_MEASUREBURSTS_program_get_default_config(captureOffset)) :
@@ -1426,4 +1440,4 @@ volatile uint32_t* GetTimestamps(uint8_t* length)
 {
     *length = timestampIndex;
     return loopTimestamp;
-}
+}

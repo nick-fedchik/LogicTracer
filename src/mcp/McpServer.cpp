@@ -97,7 +97,8 @@ json McpServer::toolList()
         {"freq", quantity("Sample rate in Hz, plain or with k/M suffix, e.g. \"1M\" (default 1M).")},
         {"samples", quantity("Total samples (pre+post trigger), e.g. 10000 or \"100k\" (default 10k).")},
         {"pre_samples", quantity("Samples kept before the trigger (default 10% of samples).")},
-        {"trigger", prop("string", "\"CH:rising\" or \"CH:falling\" (level-sensitive in firmware; CH 25 = external "
+        {"trigger", prop("string", "\"CH:rising\" or \"CH:falling\" (a real edge with LogicTracer firmware, level-sensitive on older "
+                                   "firmware; CH 25 = external "
                                    "input); \"none\" = immediate capture (default).")},
         {"timeout_ms", prop("integer", "How long to wait for the trigger (default 5000). The firmware adds ~2.2 s.")},
         {"summary", prop("boolean", "Include per-channel analytics (default true).")},

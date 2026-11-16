@@ -322,6 +322,10 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             sendResponse(msg, fromWiFi);
                             sprintf(msg, "BUFFER:%d\n", CAPTURE_BUFFER_SIZE);
                             sendResponse(msg, fromWiFi);
+                            //Feature bits (sent before CHANNELS so older hosts consume and ignore the line):
+                            //bit 0 = edge-sensitive simple trigger (trigger type 4)
+                            sprintf(msg, "FEATURES:%d\n", 1);
+                            sendResponse(msg, fromWiFi);
                             sprintf(msg, "CHANNELS:%d\n", MAX_CHANNELS);
                             sendResponse(msg, fromWiFi);
                         }
@@ -356,7 +360,7 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             else if(req->triggerType == 3)
                                 started = StartCaptureBlast(req->frequency, req->postSamples, (uint8_t*)&req->channels, req->channelCount, req->trigger, req->inverted, req->captureMode);
                             else //Start simple trigger capture
-                                started = StartCaptureSimple(req->frequency, req->preSamples, req->postSamples, req->loopCount, req->measure, (uint8_t*)&req->channels, req->channelCount, req->trigger, req->inverted, req->captureMode);
+                                started = StartCaptureSimple(req->frequency, req->preSamples, req->postSamples, req->loopCount, req->measure, (uint8_t*)&req->channels, req->channelCount, req->trigger, req->inverted, req->triggerType == 4, req->captureMode);
                         
                         #else
 
@@ -368,7 +372,7 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             else if(req->triggerType == 3)
                                 started = StartCaptureBlast(req->frequency, req->postSamples, (uint8_t*)&req->channels, req->channelCount, req->trigger, req->inverted, req->captureMode);
                             else //Start simple trigger capture
-                                started = StartCaptureSimple(req->frequency, req->preSamples, req->postSamples, req->loopCount, req->measure, (uint8_t*)&req->channels, req->channelCount, req->trigger, req->inverted, req->captureMode);
+                                started = StartCaptureSimple(req->frequency, req->preSamples, req->postSamples, req->loopCount, req->measure, (uint8_t*)&req->channels, req->channelCount, req->trigger, req->inverted, req->triggerType == 4, req->captureMode);
                         
                         #endif
 
@@ -846,4 +850,4 @@ int main()
     }
 
     return 0;
-}
+}

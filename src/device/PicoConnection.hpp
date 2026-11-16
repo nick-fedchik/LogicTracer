@@ -87,7 +87,8 @@ private:
         if (m_progress)
             m_progress(stage);
     }
-    CaptureRequestPacket buildRequest(const CaptureConfig& config, const EdgeTrigger& trigger) const;
+    CaptureRequestPacket buildRequest(const CaptureConfig& config, const EdgeTrigger& trigger,
+                                      bool edgeSensitive = false) const;
 
     [[nodiscard]] bool portFailed() const;
     bool writeAll(std::span<const uint8_t> data);

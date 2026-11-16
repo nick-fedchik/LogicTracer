@@ -239,3 +239,101 @@ LOCK:
 ;LOCK:
 
 ;    jmp LOCK                    ;block program
+
+;--------------------------------------------------------------------------------------------
+; Edge-sensitive variants (LogicTracer, trigger type 4). The level-sensitive programs above fire at once
+; when the trigger line already has the trigger level; these first sample while the line has the opposite
+; level, so only a real transition triggers. Every sampling loop stays at 2 instructions per sample.
+.program POSITIVE_EDGE_CAPTURE
+
+    pull
+    out y 32    		        ;read loop count
+    pull
+    mov x, osr                  ;read capture length
+
+ARM_HIGH:
+
+    in pins 32			        ;read sample
+    jmp pin ARM_HIGH		    ;a rising edge needs the line LOW first
+
+.wrap_target
+
+    in pins 32			        ;read sample
+    jmp pin POST_CAPTURE		;rising edge
+
+.wrap
+
+POST_CAPTURE:
+
+    in pins 32			        ;read sample
+    jmp x-- POST_CAPTURE		;loop if more samples needed
+
+    jmp y-- LOOP                ;jump to loop control
+
+    irq 0                       ;notify to the main program that we have finished capturing
+
+LOCK:
+
+    jmp LOCK                    ;block the program
+
+LOOP:
+
+    mov x, osr                  ;read capture length
+
+WAIT_LOW:
+
+    jmp pin WAIT_LOW            ;re-arm: the same pulse must not trigger again
+
+WAIT_HIGH:
+
+    jmp pin POST_CAPTURE        ;wait for the next rising edge
+    jmp WAIT_HIGH
+
+;--------------------------------------------------------------------------------------------
+.program NEGATIVE_EDGE_CAPTURE
+
+    pull
+    out y 32    		        ;read loop count
+    pull
+    mov x, osr                  ;read capture length
+
+.wrap_target
+
+ARM_LOW:
+
+    in pins 32			        ;read sample
+    jmp pin PRE_HIGH		    ;a falling edge needs the line HIGH first
+
+.wrap
+
+PRE_HIGH:
+
+    in pins 32			        ;read sample
+    jmp pin PRE_HIGH		    ;LOW after HIGH = falling edge
+
+POST_CAPTURE:
+
+    in pins 32			        ;read sample
+    jmp x-- POST_CAPTURE		;loop if more samples needed
+
+    jmp y-- LOOP                ;jump to loop control
+
+    irq 0                       ;notify to the main program that we have finished capturing
+
+LOCK:
+
+    jmp LOCK                    ;block the program
+
+LOOP:
+
+    mov x, osr                  ;read capture length
+
+WAIT_HIGH:
+
+    jmp pin WAIT_LOW            ;re-arm: wait for HIGH, then for the next falling edge
+    jmp WAIT_HIGH
+
+WAIT_LOW:
+
+    jmp pin WAIT_LOW
+    jmp POST_CAPTURE

@@ -121,7 +121,8 @@ void MainWindow::buildUi()
     m_samples = new QLineEdit("10k");
     m_samples->setToolTip(tr("Total samples (pre + post trigger)"));
     m_trigger = new QLineEdit("none");
-    m_trigger->setToolTip(tr("CH:rising|falling (level sensitive in firmware), 'none' = immediate"));
+    m_trigger->setToolTip(tr("CH:rising|falling, 'none' = immediate. LogicTracer firmware fires on a real edge; "
+                             "older firmware is level sensitive"));
     m_port->setObjectName("port");
     m_channels->setObjectName("channels");
     m_rate->setObjectName("rate");

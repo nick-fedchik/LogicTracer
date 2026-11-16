@@ -469,7 +469,8 @@ int cmdCapture(const QStringList& args, Output o)
         {"pre-samples", "Samples kept before the trigger (default: 10% of --samples).", "n"},
         {"channels", "1-based channels with optional names, e.g. 1:STIM,2:REACT,24:DO1 or 1-8 (default 1).",
          "list", "1"},
-        {"trigger", "Trigger CH:rising|falling (level-sensitive in firmware) or 'none' for an immediate capture.",
+        {"trigger", "Trigger CH:rising|falling (a real edge with LogicTracer firmware, level-sensitive on older firmware) or "
+         "'none' for an immediate capture.",
          "spec", "none"},
         {"pull-up", "Channels that should have pull-ups (not supported by the firmware; reported as warning).",
          "list"},
