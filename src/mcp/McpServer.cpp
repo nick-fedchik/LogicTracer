@@ -105,6 +105,10 @@ json McpServer::toolList()
         {"edges", prop("boolean", "Include every edge timestamp in the result (default false).")},
         {"latency", prop("string", "Optional cross-channel STIM->REACT latency spec, e.g. \"1->2\" or \"24:falling->2:rising\".")},
         {"expect", prop("string", "Optional pass/fail assertions, e.g. \"p99_ns<=60,drops==0,DO1:low_pulses>=1\".")},
+        {"invariant", prop("string", "Optional protocol rules checked over the whole capture, separated by ';': "
+                                     "never(EXPR[,settle=T]), always(EXPR[,settle=T]), onehot(A,B,...), onehot0(...), "
+                                     "within(A[:edge],B[:edge],T), stable(D...,CLK[:edge],setup=T,hold=T), "
+                                     "bus(D...,settle=T). EXPR uses channel names with ! & | ( ).")},
         {"meta", prop("object", "Optional test-setup metadata recorded with the result, string values only, e.g. "
                                 "{\"dut.board\": \"PYNQ-Z1\", \"dut.bitstream_sha256\": \"...\"}.")},
         {"out_vcd", prop("string", "Write the waveform to this .vcd file (confined to allowed output directory).")},
@@ -286,7 +290,8 @@ json McpServer::runDeviceTool(const std::string& tool, const json& args)
         if (!r.ok)
             return errorResult(r.error);
         const bool expectFailed =
-            r.result.contains("assertions") && !r.result["assertions"].value("passed", true);
+            (r.result.contains("assertions") && !r.result["assertions"].value("passed", true)) ||
+            (r.result.contains("invariants") && !r.result["invariants"].value("passed", true));
         return textResult(r.result, isFailure(r.result) || expectFailed);
     }
 

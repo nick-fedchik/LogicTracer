@@ -7,6 +7,7 @@
 // all go through these, so every front-end produces the same JSON for the same request.
 
 #include "core/ArgParsing.hpp"
+#include "core/Invariants.hpp"
 #include "device/IDevice.hpp"
 #include "device/PicoConnection.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -55,6 +56,7 @@ struct DocumentOptions {
     std::optional<cli::LatencyArg> latency;
     bool collectLatencyEvents = false;
     std::optional<std::vector<cli::ExpectationClause>> expectations;
+    std::optional<std::vector<InvariantRule>> invariants;  // protocol rules ("invariants" in the document)
     SetupInfo setup;  // recorded as "setup" in the document and the lossless capture file
 };
 
@@ -62,7 +64,7 @@ struct CaptureDocument {
     nlohmann::json doc;
     std::optional<std::vector<ChannelStats>> stats;  // analysis of result.buffer
     std::optional<LatencyStats> latency;
-    bool expectationsPassed = true;
+    bool expectationsPassed = true;  // --expect assertions and --invariant rules
 };
 
 // {"command":"capture","status":...,"config":...} without file outputs.
@@ -116,8 +118,9 @@ ProbeDocument performProbe(IDevice& connection, const std::vector<ChannelInfo>& 
 // timeout_ms, probe_on_timeout.
 std::optional<CaptureRequestSpec> captureSpecFromJson(const nlohmann::json& params, int deviceChannels,
                                                       std::string& error);
-// Keys: summary (default `defaultSummary`), edges, latency ("1->2"), expect ("p99_ns<=60,drops==0").
-// Returns nullopt and sets `error` if `latency` or `expect` is malformed or references uncaptured channels.
+// Keys: summary (default `defaultSummary`), edges, latency ("1->2"), expect ("p99_ns<=60,drops==0"),
+// invariant ("never(A & B); within(A, B, 100ns)").
+// Returns nullopt and sets `error` if `latency`, `expect` or `invariant` is malformed or references uncaptured channels.
 std::optional<DocumentOptions> documentOptionsFromJson(const nlohmann::json& params, bool defaultSummary,
                                                        int deviceChannels,
                                                        const std::vector<ChannelInfo>& capturedChannels,

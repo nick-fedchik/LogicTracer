@@ -185,6 +185,18 @@ private Q_SLOTS:
         const auto doc = lt::captureDocument(conn.info(), spec, cfg, triggered, {}, {}).doc;
         QCOMPARE(doc["config"]["trigger"]["sensitivity"].get<std::string>(), std::string("edge"));
         QVERIFY(doc["warnings"].empty());
+
+        // Session/MCP "invariant" parameter: evaluated into the document and failing the expectations.
+        std::string err;
+        const auto opts = lt::documentOptionsFromJson({{"invariant", "never(CH1 & !CH1); never(NOPE)"}}, false, 24,
+                                                      cfg.channels, err);
+        QVERIFY2(opts && opts->invariants, err.c_str());
+        const auto checked = lt::captureDocument(conn.info(), spec, cfg, triggered, {}, *opts);
+        QVERIFY(!checked.expectationsPassed);
+        QVERIFY(checked.doc["invariants"]["rules"][0]["passed"].get<bool>());
+        QVERIFY(checked.doc["invariants"]["rules"][1].contains("error"));
+        QVERIFY(!lt::documentOptionsFromJson({{"invariant", "never(A &)"}}, false, 24, cfg.channels, err));
+        QVERIFY(err.find("invariant") != std::string::npos);
     }
 
     void handshakeV5UsesDefaults()
@@ -669,6 +681,20 @@ private Q_SLOTS:
         QCOMPARE(j["verdict"].get<std::string>(), std::string("equivalent"));
         QCOMPARE(run({"diff", base, "--json"}, &j), 64);
         QCOMPARE(run({"diff", base, dir.filePath("missing.json"), "--json"}, &j), 1);
+    }
+
+    void analyzeInvariantsSetExitCode()
+    {
+        QTemporaryDir dir;
+        const auto rec = writeRecording(dir);
+        QVERIFY(!rec.isEmpty());
+        nlohmann::json j;
+        QCOMPARE(run({"analyze", rec, "--invariant", "within(STIM, REACT, 2us); never(STIM & !REACT, settle=2us)",
+                      "--json"}, &j), 0);
+        QVERIFY(j["invariants"]["passed"].get<bool>());
+        QCOMPARE(run({"analyze", rec, "--invariant", "within(STIM, CH3, 1us)", "--json"}, &j), 3);
+        QCOMPARE(j["invariants"]["rules"][0]["violations"].get<int>(), 3);
+        QCOMPARE(run({"analyze", rec, "--invariant", "within(STIM, REACT)", "--json"}, &j), 64);
     }
 
     void unknownCommandYieldsJson()

@@ -342,6 +342,11 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
             out.expectationsPassed = allOk;
             out.doc["assertions"] = {{"passed", allOk}, {"checks", std::move(arr)}};
         }
+        if (options.invariants) {
+            const auto results = evaluateInvariants(*result.buffer, *options.invariants);
+            out.doc["invariants"] = toJson(*result.buffer, results);
+            out.expectationsPassed = out.expectationsPassed && allPassed(results);
+        }
     }
     if (result.lineDump) {
         auto dump = json::array();
@@ -619,6 +624,18 @@ std::optional<DocumentOptions> documentOptionsFromJson(const json& p, bool defau
         if (!exp)
             return std::nullopt;
         o.expectations = std::move(*exp);
+    }
+    if (p.contains("invariant") && !p["invariant"].is_null()) {
+        if (!p["invariant"].is_string()) {
+            error = "invariant must be a string like \"never(A & B); within(A, B, 100ns)\"";
+            return std::nullopt;
+        }
+        auto rules = parseInvariants(p["invariant"].get<std::string>(), &error);
+        if (!rules) {
+            error = "invariant: " + error;
+            return std::nullopt;
+        }
+        o.invariants = std::move(*rules);
     }
     return o;
 }

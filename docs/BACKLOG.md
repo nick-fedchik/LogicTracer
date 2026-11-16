@@ -46,7 +46,9 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       — no commit while the invariant is violated.
 
 ## B-04. Analyzer P1
-- [ ] `--invariant` rules (never / within / stable / onehot / bus + settle), O(E) over transitions.
+- [x] `--invariant` rules (never / always / within / stable / onehot / onehot0 / bus + settle), O(E) over
+      transitions; `capture`, `analyze`, session and MCP (`invariant`), exit 3 on a violation.
+- [ ] Use `--invariant "never(COMMIT & REJECT)"` in B-03 once CH3 is wired.
 - [x] `logictracer-cli diff A B` (latency p50/p99/max against the ±quantization of both captures, drops,
       spurious reactions, anomaly kinds, channel activity, sampling-phase verdict; `--strict` exits 3 on a
       regression).

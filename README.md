@@ -113,6 +113,7 @@ build/src/cli/logictracer-cli probe --port /dev/ttyACM0 --channels 1:STIM,2:REAC
 build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 131k \
     --channels 1:STIM,2:REACT --trigger 1:rising --timeout 60000 \
     --measure-latency 1..2 --expect "events>=100,drops==0,p99_ub_ns<=60" \
+    --invariant "within(STIM, REACT, 100ns); never(STIM & !REACT, settle=200ns)" \
     --out-json run.json --out-vcd run.vcd --ai --copy
 
 build/src/cli/logictracer-cli analyze run.json --measure-latency 1:falling..2:falling --ai
@@ -120,8 +121,8 @@ build/src/cli/logictracer-cli diff baseline.json run.json --measure-latency 1..2
 build/src/gui/logictracer-gui --port /dev/ttyACM0
 ```
 
-Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` failed (or `diff --strict` found a
-regression), `64` usage error.
+Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` / `--invariant` failed (or `diff --strict`
+found a regression), `64` usage error.
 
 `--port replay:<file>` plays a saved capture (`.json`, `.vcd`, `.lac`) back as if it were a device:
 triggered captures find the next real edge in the recording, so the CLI, GUI, MCP and HIL scripts

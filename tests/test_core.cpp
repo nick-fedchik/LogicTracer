@@ -6,6 +6,7 @@
 #include "services/Operations.hpp"
 #include "core/CaptureBuffer.hpp"
 #include "core/CaptureDiff.hpp"
+#include "core/Invariants.hpp"
 #include "core/DeviceProtocol.hpp"
 #include "core/Exporters.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -1110,6 +1111,75 @@ private Q_SLOTS:
 
         d = lt::diffCaptures(make(20, 30, 0), base, o);
         QCOMPARE(d["verdict"].get<std::string>(), std::string("improved"));
+    }
+
+    // --invariant rules over a 1 MHz capture (1 sample = 1 us): pass/fail per kind, settle, censoring, errors.
+    void invariantsCheckProtocolRules()
+    {
+        // A: pulses at 10 and 50 (5 samples) that B follows 2 samples later, an unanswered pulse at 70 and one
+        // at 98 too close to the end to judge; C is HIGH whenever neither A nor B is.
+        std::vector<uint32_t> s(100, 0u);
+        auto pulse = [&](uint32_t bit, std::size_t from, std::size_t len) {
+            for (std::size_t i = from; i < std::min(from + len, s.size()); ++i)
+                s[i] |= bit;
+        };
+        pulse(1, 10, 5);
+        pulse(2, 12, 5);
+        pulse(1, 50, 5);
+        pulse(2, 52, 5);
+        pulse(1, 70, 3);  // no reaction: violation
+        pulse(1, 98, 2);  // deadline beyond the last sample (99): censored
+        for (auto& w : s)
+            if (!(w & 3u))
+                w |= 4u;
+        const lt::CaptureBuffer buf({{0, "A"}, {1, "B"}, {2, "C"}}, 1'000'000, 0, s);
+
+        auto check = [&](const char* text) {
+            std::string err;
+            const auto rules = lt::parseInvariants(text, &err);
+            if (!rules)
+                qWarning() << err.c_str();
+            return rules ? lt::evaluateInvariants(buf, *rules) : std::vector<lt::InvariantResult>{};
+        };
+        auto r = check("within(A, B, 2us); within(A, B, 1us); within(A:falling, B:falling, 3us)");
+        QCOMPARE(r.size(), std::size_t{3});
+        QCOMPARE(r[0].violations, 1u);  // the pulse at 70
+        QCOMPARE(r[0].checked, 4u);
+        QCOMPARE(r[0].censored, 1u);
+        QCOMPARE(r[0].examples.front().sample, std::size_t{70});
+        QCOMPARE(r[1].violations, 4u);  // 98 + 1 us still lies inside the capture
+        QVERIFY(!r[2].passed);  // the falling edge at 73 is not answered either
+
+        r = check("never(A & B, settle=3us); never(A & B); always(A | B | C); onehot(A, C); onehot0(A, B)");
+        QVERIFY(r[0].passed);  // overlaps last 3 samples
+        QVERIFY(!r[1].passed);
+        QCOMPARE(r[1].violations, 2u);
+        QVERIFY(r[2].passed);
+        QVERIFY(!r[3].passed);  // B alone HIGH at 15..16: neither A nor C
+        QVERIFY(!r[4].passed);
+
+        // stable: B changes 2 samples after each A rising edge, A changes 2 samples before B's.
+        r = check("stable(B, A:rising, setup=1us, hold=1us); stable(B, A:rising, hold=2us); bus(A, B, settle=2us, gap=2us); "
+                  "bus(A, B, settle=1us, gap=2us); bus(A, B, settle=2us)");
+        QVERIFY(r[0].passed);
+        QVERIFY(!r[1].passed);
+        QVERIFY(r[2].passed);
+        QVERIFY(!r[3].passed);  // A and B change 2 samples apart: one transition with a 2 us skew
+        QVERIFY(!r[4].passed);  // default gap 8 us merges a whole 7 us pulse pair into one transition
+
+        r = check("never(CH1 & 2); never(NOPE)");
+        QVERIFY(!r[0].passed);  // CH1 and channel 2 are A and B
+        QVERIFY(!r[1].passed);
+        QVERIFY(r[1].error.find("NOPE") != std::string::npos);
+        QVERIFY(!lt::allPassed(r));
+        const auto j = lt::toJson(buf, r);
+        QVERIFY(!j["passed"].get<bool>());
+        QCOMPARE(j["rules"][1]["error"].get<std::string>(), r[1].error);
+
+        std::string err;
+        for (const char* bad : {"never(A &)", "within(A, B)", "within(A, B, 5)", "onehot(A)", "bus(A, B)",
+                                "never((A)", "foo(A)", "bus(A, B, settle=2us, gap=1us)", "never(A, settle=1us, bogus=2)", "within(A:up, B, 1us)", ""})
+            QVERIFY2(!lt::parseInvariants(bad, &err), bad);
     }
 
     // Idle lines are merged so a 24-channel capture with two active signals stays short.

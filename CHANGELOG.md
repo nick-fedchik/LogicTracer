@@ -6,6 +6,12 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- `--invariant` protocol rules for `capture` and `analyze` (and the `invariant` session/MCP parameter):
+  `never(EXPR)`, `always(EXPR)` with `! & | ( )` over channels, `onehot`/`onehot0`, `within(A[:edge], B[:edge], T)`,
+  `stable(D..., CLK[:edge], setup=T, hold=T)` and `bus(D..., settle=T[, gap=G])`, with an optional `settle=`
+  glitch allowance. One pass over the transitions; results go to `invariants` in the JSON (count, first 16
+  violations with sample and time, `censored` edges too close to the end) and to the AI report; exit 3 on a
+  violation, an unknown channel fails its rule.
 - `logictracer-cli diff A B [--measure-latency S..R] [--strict] [--json]`: compares two captures of one test
   (latency shift beyond the ±1-sample quantization, drops, spurious reactions, anomaly kinds, channel activity)
   with a `regression` / `improved` / `equivalent` verdict; `--strict` exits 3 on a regression.

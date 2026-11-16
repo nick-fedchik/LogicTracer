@@ -5,10 +5,11 @@
 // LogicAnalyzer firmware (gusmanb protocol).
 //
 // Exit codes:
-//   0 = OK, 1 = error / nothing found, 2 = TIMEOUT, 3 = --expect assertion failed, 64 = usage error.
+//   0 = OK, 1 = error / nothing found, 2 = TIMEOUT, 3 = --expect assertion / --invariant failed, 64 = usage error.
 
 #include "core/AiReport.hpp"
 #include "core/CaptureDiff.hpp"
+#include "core/Invariants.hpp"
 #include "core/ArgParsing.hpp"
 #include "services/Clipboard.hpp"
 #include "core/Exporters.hpp"
@@ -176,6 +177,45 @@ void printAssertionIssues(const json& assertions)
     }
 }
 
+void printInvariants(const json& invariants)
+{
+    std::cout << "Invariants: " << (invariants.value("passed", false) ? "PASS" : "FAIL") << '\n';
+    for (const auto& r : invariants["rules"]) {
+        const bool ok = r.value("passed", false);
+        std::cout << "  " << (ok ? "PASS" : "FAIL") << ": " << r.value("rule", std::string{}) << " (";
+        if (r.contains("error"))
+            std::cout << r["error"].get<std::string>();
+        else
+            std::cout << r.value("violations", 0) << " violations / " << r.value("checked", 0) << " checked";
+        if (r.value("censored", 0) > 0)
+            std::cout << ", " << r["censored"].get<uint64_t>() << " too close to the end to judge";
+        std::cout << ")\n";
+        std::size_t shown = 0;
+        for (const auto& ex : r["examples"]) {
+            if (shown++ == 5)
+                break;
+            std::cout << "    sample " << ex.value("sample", 0) << " (t = " << lt::formatTime(ex.value("time_us", 0.0) * 1e-6)
+                      << "): " << ex.value("detail", std::string{}) << '\n';
+        }
+        if (const auto more = r.value("violations", uint64_t{0}); more > std::min<uint64_t>(shown, 5))
+            std::cout << "    ... " << more - std::min<uint64_t>(shown, 5) << " more\n";
+    }
+}
+
+// --invariant text -> rules (nullopt with a usage error).
+std::optional<std::optional<std::vector<lt::InvariantRule>>> invariantOption(const QCommandLineParser& p,
+                                                                            std::string& error)
+{
+    if (!p.isSet("invariant"))
+        return std::optional<std::vector<lt::InvariantRule>>{};
+    auto rules = lt::parseInvariants(str(p.value("invariant")), &error);
+    if (!rules) {
+        error = "--invariant: " + error;
+        return std::nullopt;
+    }
+    return std::optional<std::vector<lt::InvariantRule>>{std::move(*rules)};
+}
+
 QString socketPathFrom(const QCommandLineParser& p)
 {
     return p.isSet("socket") ? p.value("socket") : lt::session::defaultSocketPath();
@@ -234,7 +274,8 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
                                 std::string triggerDesc, std::string deviceVersion, std::string board,
                                 std::string userNote, const std::optional<lt::cli::LatencyArg>& latencyArg,
                                 const std::vector<lt::Annotation>& annotations = {}, const json* assertions = nullptr,
-                                const lt::SetupInfo& setup = {}, const std::vector<std::string>& warnings = {})
+                                const lt::SetupInfo& setup = {}, const std::vector<std::string>& warnings = {},
+                                const json* invariants = nullptr)
 {
     lt::ReportOptions ro;
     ro.mode = mode;
@@ -265,6 +306,25 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
         for (const auto& c : (*assertions)["checks"]) {
             ss << "- [" << (c.value("passed", false) ? "PASS" : "FAIL") << "] `"
                << c.value("expression", std::string{}) << "` (" << c.value("detail", std::string{}) << ")\n";
+        }
+        out += ss.str();
+    }
+    if (invariants && invariants->is_object() && invariants->contains("rules")) {
+        std::ostringstream ss;
+        ss << "\n### Invariants: " << (invariants->value("passed", false) ? "PASS" : "FAIL") << "\n\n";
+        for (const auto& r : (*invariants)["rules"]) {
+            ss << "- [" << (r.value("passed", false) ? "PASS" : "FAIL") << "] `" << r.value("rule", std::string{}) << "` (";
+            if (r.contains("error"))
+                ss << r["error"].get<std::string>();
+            else
+                ss << r.value("violations", 0) << " violations / " << r.value("checked", 0) << " checked";
+            ss << ")\n";
+            std::size_t shown = 0;
+            for (const auto& ex : r["examples"]) {
+                if (++shown > 3)
+                    break;
+                ss << "  - sample " << ex.value("sample", 0) << ": " << ex.value("detail", std::string{}) << "\n";
+            }
         }
         out += ss.str();
     }
@@ -482,6 +542,8 @@ int cmdCapture(const QStringList& args, Output o)
         {"on-armed", "Launch a shell command asynchronously once armed and waiting for trigger.", "cmd"},
         {"measure-latency", "Cross-channel latency STIM[:edge]->REACT[:edge], e.g. 1->2 or 24:falling->2:rising.", "spec"},
         {"expect", "Pass/fail assertions (exit 3 on failure), e.g. 'p99_ns<=60,drops==0,DO1:low_pulses>=1'.", "expr"},
+        {"invariant", "Protocol rules over the whole capture (exit 3 on violation), e.g. "
+                      "'never(COMMIT & REJECT); within(STIM, REACT, 100ns)'.", "rules"},
         {"out-json", "Write lossless capture JSON v1 (with edge_samples) to a file.", "file"},
         {"out-vcd", "Write the waveform to a VCD file (GTKWave / PulseView).", "file"},
         {"out-csv", "Write sample-by-sample CSV table (SampleIndex,TimeRelativeNs,...).", "file"},
@@ -541,6 +603,9 @@ int cmdCapture(const QStringList& args, Output o)
         if (!expectations)
             return report(o, ExitUsage, error);
     }
+    const auto invariants = invariantOption(p, error);
+    if (!invariants)
+        return report(o, ExitUsage, error);
     const auto setup = parseMetaOptions(p, {}, error);
     if (!setup)
         return report(o, ExitUsage, error);
@@ -575,6 +640,7 @@ int cmdCapture(const QStringList& args, Output o)
         if (preSamples) params["pre_samples"] = *preSamples;
         if (p.isSet("measure-latency")) params["latency"] = str(p.value("measure-latency"));
         if (p.isSet("expect")) params["expect"] = str(p.value("expect"));
+        if (p.isSet("invariant")) params["invariant"] = str(p.value("invariant"));
         if (!setup->empty()) params["meta"] = lt::toJson(*setup);
         // The GUI resolves relative paths against its own working directory: send the caller's.
         const auto absolutePath = [](const QString& path) {
@@ -594,7 +660,8 @@ int cmdCapture(const QStringList& args, Output o)
         for (const auto& w : warnings)
             doc["warnings"].push_back(w);
         const std::string st = doc.value("status", std::string("ERROR"));
-        const bool expectOk = !doc.contains("assertions") || doc["assertions"].value("passed", true);
+        const bool expectOk = (!doc.contains("assertions") || doc["assertions"].value("passed", true)) &&
+                              (!doc.contains("invariants") || doc["invariants"].value("passed", true));
         int rc = st == "OK" ? (expectOk ? ExitOk : ExitExpectFailed) : st == "TIMEOUT" ? ExitTimeout : ExitError;
 
         std::string sessionAi, reportError, reportErrorKind;
@@ -687,6 +754,7 @@ int cmdCapture(const QStringList& args, Output o)
     docOptions.latency = latencyArg;
     docOptions.collectLatencyEvents = p.isSet("out-events-csv");
     docOptions.expectations = expectations;
+    docOptions.invariants = *invariants;
     docOptions.setup = *setup;
 
     auto outcome = lt::performCapture(conn, spec, docOptions, warnings);
@@ -730,7 +798,8 @@ int cmdCapture(const QStringList& args, Output o)
             const json* assertionsPtr = doc.contains("assertions") ? &doc["assertions"] : nullptr;
             aiText = buildBufferAiReport(*result.buffer, *aiMode, "LogicTracer capture (" + info.port + ")", trigDesc,
                                          info.version.raw, info.version.board, str(p.value("note")), latencyArg, {},
-                                         assertionsPtr, *setup, doc["warnings"].get<std::vector<std::string>>());
+                                         assertionsPtr, *setup, doc["warnings"].get<std::vector<std::string>>(),
+                                         doc.contains("invariants") ? &doc["invariants"] : nullptr);
         } else if (result.status == lt::CaptureStatus::Timeout) {
             aiText = lt::timeoutForAi(result.lineDump ? *result.lineDump : lt::CaptureBuffer{},
                                       lt::toString(result.status), result.error, trigDesc, info.version.board,
@@ -771,6 +840,8 @@ int cmdCapture(const QStringList& args, Output o)
             std::cout << "Assertions: " << (outcome.document.expectationsPassed ? "PASS" : "FAIL") << '\n';
             printAssertionIssues(doc["assertions"]);
         }
+        if (doc.contains("invariants"))
+            printInvariants(doc["invariants"]);
     }
     if (result.lineDump) {
         std::cout << "Current line state:\n";
@@ -806,6 +877,8 @@ int cmdAnalyze(const QStringList& args, Output o)
         {"edges", "Include every edge timestamp in stdout JSON."},
         {"measure-latency", "Cross-channel latency STIM[:edge]->REACT[:edge], e.g. 1->2 or 24:falling->2:rising.", "spec"},
         {"expect", "Pass/fail assertions (exit 3 on failure), e.g. 'p99_ns<=60,drops==0'.", "expr"},
+        {"invariant", "Protocol rules over the whole capture (exit 3 on violation), e.g. "
+                      "'onehot(S0,S1,S2); stable(D0,D1,CLK:rising,setup=5ns,hold=2ns)'.", "rules"},
         {"out-json", "Convert/write lossless capture JSON v1 to a file.", "file"},
         {"out-vcd", "Convert/write VCD waveform to a file.", "file"},
         {"out-csv", "Write sample-by-sample CSV table.", "file"},
@@ -856,6 +929,9 @@ int cmdAnalyze(const QStringList& args, Output o)
         if (!expectations)
             return report(o, ExitUsage, error);
     }
+    const auto invariants = invariantOption(p, error);
+    if (!invariants)
+        return report(o, ExitUsage, error);
     const auto setup = parseMetaOptions(p, loaded.setup, error);
     if (!setup)
         return report(o, ExitUsage, error);
@@ -910,6 +986,11 @@ int cmdAnalyze(const QStringList& args, Output o)
         capDoc.expectationsPassed = allOk;
         capDoc.doc["assertions"] = {{"passed", allOk}, {"checks", std::move(arr)}};
     }
+    if (*invariants) {
+        const auto results = lt::evaluateInvariants(buf, **invariants);
+        capDoc.doc["invariants"] = lt::toJson(buf, results);
+        capDoc.expectationsPassed = capDoc.expectationsPassed && lt::allPassed(results);
+    }
 
     lt::CaptureResult fakeRes;
     fakeRes.status = lt::CaptureStatus::Ok;
@@ -933,7 +1014,8 @@ int cmdAnalyze(const QStringList& args, Output o)
         const json* assertionsPtr = capDoc.doc.contains("assertions") ? &capDoc.doc["assertions"] : nullptr;
         aiText = buildBufferAiReport(buf, *aiMode, "LogicTracer analyze: " + inputPath, loaded.triggerDescription, {},
                                      str(p.value("board")), str(p.value("note")), latencyArg, loaded.annotations,
-                                     assertionsPtr, *setup, loaded.warnings);
+                                     assertionsPtr, *setup, loaded.warnings,
+                                     capDoc.doc.contains("invariants") ? &capDoc.doc["invariants"] : nullptr);
     }
 
     if (p.isSet("ai")) {
@@ -955,6 +1037,8 @@ int cmdAnalyze(const QStringList& args, Output o)
         std::cout << "Assertions: " << (capDoc.expectationsPassed ? "PASS" : "FAIL") << '\n';
         printAssertionIssues(capDoc.doc["assertions"]);
     }
+    if (capDoc.doc.contains("invariants"))
+        printInvariants(capDoc.doc["invariants"]);
     if (p.isSet("copy") && !aiText.empty() && !copyAndConfirm(aiText, error)) {
         std::cerr << "logictracer-cli analyze: " << error << std::endl;
         return rc == ExitOk ? ExitError : rc;
@@ -1338,7 +1422,7 @@ void printUsage()
                  "  view        Read what the GUI currently shows (visible range, cursors, annotations)\n"
                  "  bootloader  Reboot the RP2040 into USB UF2 bootloader mode (requires --yes)\n\n"
                  "Run 'logictracer-cli <command> --help' for command options.\n"
-                 "Exit codes: 0 OK, 1 error, 2 timeout, 3 --expect failed, 64 usage error.\n";
+                 "Exit codes: 0 OK, 1 error, 2 timeout, 3 --expect / --invariant failed, 64 usage error.\n";
 }
 
 }  // namespace
