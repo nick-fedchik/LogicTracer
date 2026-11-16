@@ -98,3 +98,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [ ] Replay: a failure report for a session request ignores `mode`/`latency` (only `note` is honoured).
 - [x] `LOGICTRACER_DENY_HARDWARE=1` makes every serial open fail, so test/audit harnesses cannot touch a
       live Pico by accident (replay devices are unaffected).
+- [ ] P2 (found on hardware, 2026-11-16): `trigger_already_active` is not raised for `--trigger 1:rising`
+      while CH1 is already HIGH. The firmware zero-fills the pre-trigger ring, so the capture shows a
+      fabricated rising edge at `trigger_sample - 1` and the host heuristic (`sawOppositeIdle`) is fooled
+      by the zeros. Needs a validity count for the pre-trigger samples from the firmware (protocol
+      extension) or a short level probe of the trigger channel before arming.
+- [ ] HIL with the PYNQ-Z1 burst bitstream needs a physical BTN1 press (software start is B-08); two
+      armed runs (90 s, 240 s) ended in TIMEOUT with both lines idle LOW, so the latency path was not
+      re-verified on hardware after the audit fixes.
