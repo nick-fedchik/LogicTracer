@@ -5,6 +5,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-17
+
 ### Added
 - Self-test in the GUI (**Tools → Self-test**) and for AI agents (MCP tool `lt_self_test`); while the GUI
   holds the port, `logictracer-cli selftest` and MCP run it through the GUI session (method `selftest`).
@@ -192,6 +194,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.6.1]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.1
 [0.6.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.0
 [0.5.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.4.0

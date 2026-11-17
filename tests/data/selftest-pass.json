@@ -49,10 +49,10 @@
           200
         ],
         "partial_warning": true,
-        "pre_samples": 225,
+        "pre_samples": 291,
         "requested_pre_samples": 1501
       },
-      "message": "225 of 1501 pre-trigger samples recorded, the rest left out with a warning",
+      "message": "291 of 1501 pre-trigger samples recorded, the rest left out with a warning",
       "name": "pretrigger",
       "status": "PASS"
     },
@@ -269,12 +269,12 @@
     },
     {
       "data": {
-        "elapsed_ms": 507,
+        "elapsed_ms": 506,
         "line_state": true,
         "status": "TIMEOUT",
         "timeout_ms": 300
       },
-      "message": "TIMEOUT after 507 ms with the line state",
+      "message": "TIMEOUT after 506 ms with the line state",
       "name": "timeout",
       "status": "PASS"
     }
@@ -288,7 +288,7 @@
     "clock_domain": "async",
     "edge_sensitive_trigger": true,
     "firmware_family": "logictracer",
-    "firmware_version": "0.6.0",
+    "firmware_version": "0.6.1",
     "gpio_map": {
       "1": 2,
       "10": 11,
@@ -332,9 +332,9 @@
     "protocol": "v6",
     "segment_trigger_times": true,
     "serial_number": "E66118604B78A622",
-    "version": "LOGICTRACER_PICO_0.6.0"
+    "version": "LOGICTRACER_PICO_0.6.1"
   },
-  "elapsed_ms": 1017,
+  "elapsed_ms": 1021,
   "schema_version": 1,
   "setup": {
     "a": {
