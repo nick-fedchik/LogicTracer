@@ -22,10 +22,15 @@ capture, and timing measurements are reported with their sampling uncertainty an
 | **Closed-loop self-test** | Onboard PIO1 + DMA test-signal generator (`GP0`/`GP1`) looped back with two jumpers: `selftest` (CLI, GUI, MCP) verifies triggers, pre-trigger trimming, pulse widths, latency bounds, segments and timeouts against known clock-cycle ground truth. |
 | **Open formats** | Lossless capture JSON (`logictracer-capture-v1`), VCD, CSV, paired latency-events CSV, and `.lac` import; any saved file can be replayed as a virtual device (`--port replay:<file>`). |
 
-**Scope:** LogicTracer is built for timing, causal signal verification and HIL automation on $4 RP2040
-boards (up to 100 MS/s, 128 KiB buffer). It does not aim to replace multi-gigabit hardware analyzers
-or broad protocol-decoder suites such as sigrok/PulseView (waveforms can be exported to `.vcd` for
-protocol decoding there).
+### Hardware comparison and alternatives
+
+| Class & device | Sample rate & memory | Inputs | Strengths & when to choose |
+|---|---|---|---|
+| **RP2040 + LogicTracer** (~$4 Pico) | Up to 100 MS/s, 128 KiB on-chip SRAM (`--segments` for bursts) | 24 ch, fixed 3.3 V CMOS (no input protection) | Fast local SRAM capture (10 ns step), hardware burst timestamps, closed-loop `selftest`, CLI/CI assertions (`--expect`, `--invariant`) and MCP/AI session. Best for short timing/latency checks and automated HIL rigs. |
+| **RP2040 + upstream LogicAnalyzer / sigrok-pico** (~$4) | Same RP2040 hardware limits | 24 ch, 3.3 V CMOS | Upstream `gusmanb` offers an interactive desktop GUI with pattern/blast triggers; `sigrok-pico` connects to PulseView's protocol decoders. |
+| **Cypress FX2LP (`fx2lafw`) clones** (~$8–$15) | Up to 24 MS/s streamed over USB 2.0 to host RAM | 8 ch, 3.3 V / 5 V | Continuous long captures (seconds/minutes of UART/I²C/SPI) and 100+ protocol decoders in sigrok/PulseView; limited to 24 MS/s and dependent on USB host latency. |
+| **Mid-range FPGA analyzers** (DreamSourceLab **DSLogic Plus / U3Pro**, Digilent **Digital Discovery**, ~$100–$300) | 400 MS/s – 1 GS/s, 256 Mbit–2 Gbit hardware buffer + USB 3.0 streaming | 16–32 ch, programmable thresholds (1.2–5 V), shielded probes | Deep hardware memory, adjustable logic levels (1.8 V / 2.5 V / 5 V), proper front-end protection and impedance control. Choose when 128 KiB or fixed 3.3 V GPIO is not enough. |
+| **Professional USB 3.0 analyzers** (**Saleae Logic Pro 8 / 16**, ~$500–$1,500) | Up to 500 MS/s digital + 50 MS/s analog, USB 3.0 continuous streaming | 8–16 ch, programmable thresholds + analog | Simultaneous analog/digital capture, multi-gigabyte streaming, mature protocol analyzers and SDK. |
 
 ## Components
 
