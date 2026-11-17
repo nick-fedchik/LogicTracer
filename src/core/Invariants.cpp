@@ -7,6 +7,7 @@
 #include "core/Format.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <deque>
@@ -475,7 +476,7 @@ InvariantResult evaluate(const Context& c, const InvariantRule& rule)
         const bool exact = rule.kind == InvariantRule::Kind::OneHot;
         checkIntervals(c, r, c.samplesFor(rule.seconds),
                        [&](uint32_t word) {
-                           const int high = __builtin_popcount(word & mask);
+                           const int high = std::popcount(word & mask);
                            return exact ? high != 1 : high > 1;
                        },
                        exact ? "not exactly one line HIGH" : "more than one line HIGH");

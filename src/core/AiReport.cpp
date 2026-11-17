@@ -9,6 +9,7 @@
 #include "core/SignalAnalyzer.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <iomanip>
 #include <sstream>
@@ -183,7 +184,7 @@ ChronologicalLog collectChronologicalEdges(const CaptureBuffer& b, const Range& 
     for (std::size_t i = r.first + 1; i < r.last; ++i) {
         uint32_t diff = (b.samples()[i] ^ b.samples()[i - 1]) & mask;
         while (diff != 0) {
-            const auto c = static_cast<std::size_t>(__builtin_ctz(diff));
+            const auto c = static_cast<std::size_t>(std::countr_zero(diff));
             diff &= (diff - 1u);
             ++log.total;
             if (log.events.size() < maxEvents)
