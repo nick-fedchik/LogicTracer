@@ -112,8 +112,9 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       confined mode), session named pipe `logictracer-<user>` with a token-SID check of the server,
       `cmd.exe` for `--on-armed`, every COM port for `detect --all`, portable bit operations and `gmtime_s`.
       The pty emulator is a stub there: 37 emulator tests and 3 POSIX file-mode/symlink tests are skipped.
-- [ ] Windows on hardware: `detect`, `probe`, a triggered capture and the GUI against the Pico; a
-      packaged build (`windeployqt` zip in the release); UTF-8 paths (`std::filesystem::path` from UTF-8).
+- [ ] Windows on hardware: `detect`, `probe`, a triggered capture and the GUI against the Pico.
+- [x] Packaged builds for Windows/macOS/Linux attached to releases (`release.yml`); UTF-8 paths converted
+      explicitly (`core/Paths.hpp`, non-ASCII round-trip test).
 - [x] macOS: `macos-latest` CI job (Homebrew Qt, warnings as errors, all tests green): `getpeereid` for
       the session peer check, umask without `/proc`, `/dev/ttys*` pseudo-terminals under the hardware guard.
 

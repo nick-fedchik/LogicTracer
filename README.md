@@ -144,8 +144,7 @@ ctest --preset default
 The executables need the Qt DLLs at run time: either keep Qt's `bin` on `PATH` as above, or copy them
 next to the programs with `C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe build\src\gui\logictracer-gui.exe`
 (repeat for `logictracer-cli.exe` and `logictracer-mcp.exe`). Tests that need the pseudo-terminal device
-emulator are skipped on Windows. Not yet tested against hardware on Windows; paths with non-ASCII
-characters may not work.
+emulator are skipped on Windows. Not yet tested against hardware on Windows.
 
 ## Quick start
 

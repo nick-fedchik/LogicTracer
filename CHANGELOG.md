@@ -6,8 +6,14 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Release packages: every published release gets a Windows zip (Qt DLLs included), a macOS app bundle
+  (with the CLI and MCP server inside) and a Linux tarball for Ubuntu 24.04, built from the tag in CI.
 - GUI: a `Windows` field next to `Samples` records a segmented capture from the GUI; the pre-flight line
   shows the window count, whether trigger times are recorded and the samples stored.
+
+### Fixed
+- Windows: file paths with non-ASCII characters (UTF-8 is converted explicitly instead of through the
+  ANSI code page).
 
 ## [0.4.0] - 2026-11-17
 
