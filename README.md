@@ -76,7 +76,6 @@ sudo usermod -aG dialout $USER
 ```bash
 xcode-select --install
 brew install cmake ninja qt nlohmann-json
-export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
 ```
 
 No extra driver is needed: the RP2040 is a USB CDC device. The clipboard uses the built-in
@@ -84,38 +83,74 @@ No extra driver is needed: the RP2040 is a USB CDC device. The clipboard uses th
 
 ### Windows 10/11
 
-Visual Studio 2022 (MSVC, C++20, "Desktop development with C++"), Qt 6.4+ for MSVC 2022 64-bit
-with the Qt Serial Port module (Qt Online Installer), and nlohmann-json from vcpkg. In a
-"x64 Native Tools Command Prompt":
+1. Visual Studio 2022 or newer with the "Desktop development with C++" workload (MSVC, CMake and
+   Ninja are included).
+2. Qt 6.4+ for **MSVC 2022 64-bit** with the **Qt Serial Port** module (Qt Online Installer), e.g.
+   `C:\Qt\6.8.3\msvc2022_64`.
+3. nlohmann-json through a standalone vcpkg (the copy bundled with Visual Studio only supports
+   manifest mode):
 
 ```bat
-vcpkg install nlohmann-json:x64-windows
-cmake --preset default -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64;%VCPKG_ROOT%/installed/x64-windows"
-cmake --build --preset default
-ctest --preset default
+git clone https://github.com/microsoft/vcpkg C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat
+C:\vcpkg\vcpkg install nlohmann-json:x64-windows
 ```
 
-The device is a standard USB CDC port (`COM3`, ... ; `logictracer-cli detect` finds it by VID:PID,
-`--all` lists every COM port). The GUI session uses the named pipe `logictracer-<user>`, limited to the
-current user. Run `windeployqt` on the executables to copy the Qt DLLs next to them. Not yet tested on
-hardware; paths with non-ASCII characters may not work.
+No driver is needed: the RP2040 is a standard USB CDC device and appears as `COM3`, `COM4`, ...
 
 ### Firmware toolchain (optional)
 
-Only needed to rebuild the RP2040 firmware: the Arm GNU toolchain (`arm-none-eabi-gcc`; on Ubuntu
-`sudo apt install gcc-arm-none-eabi`) and the [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) 2.x
-(`PICO_SDK_PATH`).
+Only needed to rebuild the RP2040 firmware (Linux or macOS): the Arm GNU toolchain
+(`arm-none-eabi-gcc`; on Ubuntu `sudo apt install gcc-arm-none-eabi`) and the
+[Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) 2.x (`PICO_SDK_PATH`). The Pico W
+WiFi variants also need the SDK submodules `lib/cyw43-driver` and `lib/lwip`
+(`git -C "$PICO_SDK_PATH" submodule update --init lib/cyw43-driver lib/lwip`). See
+[firmware/rp2040/README.md](firmware/rp2040/README.md) and `scripts/build_firmware.sh`.
 
 ## Build
 
+The CMake presets use Ninja: `default` (RelWithDebInfo), `debug` (warnings as errors), `release`,
+`headless` (no GUI). Binaries land in `build/src/cli`, `build/src/gui` and `build/src/mcp`.
+
+### Linux
+
 ```bash
-cmake --preset default          # or: debug (warnings as errors), release, headless (no GUI)
+cmake --preset default
 cmake --build --preset default
 ctest --preset default
-sudo cmake --install build      # optional: installs logictracer-cli, -gui, -mcp
+sudo cmake --install build      # optional: installs logictracer-cli, -gui, -mcp to /usr/local
 ```
 
+### macOS
+
+```bash
+cmake --preset default -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+cmake --build --preset default
+ctest --preset default
+cmake --install build --prefix "$HOME/.local"   # optional
+```
+
+### Windows
+
+In an "x64 Native Tools Command Prompt for VS" (it puts MSVC, CMake and Ninja on `PATH`):
+
+```bat
+cmake --preset default -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64;C:/vcpkg/installed/x64-windows"
+cmake --build --preset default
+set PATH=C:\Qt\6.8.3\msvc2022_64\bin;%PATH%
+ctest --preset default
+```
+
+The executables need the Qt DLLs at run time: either keep Qt's `bin` on `PATH` as above, or copy them
+next to the programs with `C:\Qt\6.8.3\msvc2022_64\bin\windeployqt.exe build\src\gui\logictracer-gui.exe`
+(repeat for `logictracer-cli.exe` and `logictracer-mcp.exe`). Tests that need the pseudo-terminal device
+emulator are skipped on Windows. Not yet tested against hardware on Windows; paths with non-ASCII
+characters may not work.
+
 ## Quick start
+
+Examples use the Linux port name; on macOS it is `/dev/cu.usbmodem…`, on Windows `COM3` (and
+`build\src\cli\logictracer-cli.exe`). `logictracer-cli detect` lists the actual name.
 
 ```bash
 build/src/cli/logictracer-cli detect
