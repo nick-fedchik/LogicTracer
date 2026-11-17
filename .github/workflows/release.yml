@@ -1,0 +1,117 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds the host programs (CLI, GUI, MCP server) for Windows, macOS and Linux from a release tag and
+# attaches them to that GitHub release. Runs when a release is published, or by hand for an existing tag.
+name: release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and upload (e.g. v0.4.0)
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: win64_msvc2022_64
+          modules: qtserialport
+          cache: true
+      - name: nlohmann-json
+        run: vcpkg install nlohmann-json:x64-windows
+      - name: Build
+        run: |
+          cmake --preset release -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+          cmake --build --preset release
+      - name: Package
+        run: |
+          $version = (Get-Content VERSION -TotalCount 1).Trim()
+          $root = "LogicTracer-$version-windows-x64"
+          cmake --install build-release --prefix "dist/$root"
+          foreach ($exe in @("logictracer-gui", "logictracer-cli", "logictracer-mcp")) {
+            windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "dist/$root/bin/$exe.exe"
+          }
+          Copy-Item LICENSE, NOTICE.md, README.md, CHANGELOG.md "dist/$root/"
+          & "dist/$root/bin/logictracer-cli.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "the packaged CLI does not start" }
+          Compress-Archive -Path "dist/$root" -DestinationPath "$root.zip"
+          "ASSET=$root.zip" >> $env:GITHUB_ENV
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload $env:TAG $env:ASSET --clobber
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Install dependencies
+        run: brew install ninja qt nlohmann-json
+      - name: Build
+        run: |
+          cmake --preset release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+          cmake --build --preset release
+      - name: Package
+        run: |
+          version="$(head -n 1 VERSION)"
+          root="LogicTracer-${version}-macos-$(uname -m)"
+          mkdir -p "dist/${root}"
+          cp -R build-release/src/gui/logictracer-gui.app "dist/${root}/LogicTracer.app"
+          macos="dist/${root}/LogicTracer.app/Contents/MacOS"
+          cp build-release/src/cli/logictracer-cli build-release/src/mcp/logictracer-mcp "${macos}/"
+          "$(brew --prefix qt)/bin/macdeployqt" "dist/${root}/LogicTracer.app" \
+            -executable="${macos}/logictracer-cli" -executable="${macos}/logictracer-mcp"
+          "${macos}/logictracer-cli" --version
+          cp LICENSE NOTICE.md README.md CHANGELOG.md "dist/${root}/"
+          (cd dist && ditto -c -k --keepParent "${root}" "../${root}.zip")
+          echo "ASSET=${root}.zip" >> "$GITHUB_ENV"
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" --clobber
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-serialport-dev nlohmann-json3-dev
+      - name: Build
+        run: |
+          cmake --preset release
+          cmake --build --preset release
+      - name: Package
+        # bin/ and share/ (desktop entry, icon); needs the Ubuntu 24.04 Qt 6 runtime packages (see README).
+        run: |
+          version="$(head -n 1 VERSION)"
+          root="LogicTracer-${version}-linux-x86_64-ubuntu24.04"
+          cmake --install build-release --prefix "dist/${root}"
+          cp LICENSE NOTICE.md README.md CHANGELOG.md "dist/${root}/"
+          "dist/${root}/bin/logictracer-cli" --version
+          tar -C dist -czf "${root}.tar.gz" "${root}"
+          echo "ASSET=${root}.tar.gz" >> "$GITHUB_ENV"
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" --clobber
