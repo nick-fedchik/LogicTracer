@@ -58,8 +58,18 @@ jobs:
           $savedPath = $env:PATH
           $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
           foreach ($exe in @("logictracer-cli", "logictracer-mcp")) {
-            & "$bin/$exe.exe" --version
-            if ($LASTEXITCODE -ne 0) { throw "the packaged $exe does not start" }
+            # A missing DLL makes Windows show a modal error box: never wait for a program without a limit.
+            $p = Start-Process -FilePath "$bin/$exe.exe" -ArgumentList "--version" -NoNewWindow -PassThru `
+                 -RedirectStandardOutput "$exe.out" -RedirectStandardError "$exe.err"
+            if (-not $p.WaitForExit(30000)) {
+              $p.Kill()
+              $env:PATH = $savedPath
+              dumpbin /dependents "$bin/$exe.exe"
+              Get-ChildItem $bin -Filter *.dll | ForEach-Object Name
+              throw "the packaged $exe did not exit within 30 s"
+            }
+            Get-Content "$exe.out"
+            if ($p.ExitCode -ne 0) { Get-Content "$exe.err"; throw "the packaged $exe failed ($($p.ExitCode))" }
           }
           # The GUI is a windowed program (--version would open a message box): check its deployment instead.
           foreach ($f in @("Qt6Widgets.dll", "Qt6Gui.dll", "platforms/qwindows.dll", "vcruntime140.dll")) {
