@@ -330,6 +330,7 @@ nlohmann::json toJson(const DeviceInfo& info)
                         {"buffer_bytes", info.bufferSize},
                         {"channels", info.channels},
                         {"edge_sensitive_trigger", info.supportsEdgeTrigger()},
+                        {"segment_trigger_times", info.supportsEdgeBurstTimestamps()},
                         {"max_samples",
                          {{"8ch", info.limits(CaptureMode::Channels8).maxTotalSamples},
                           {"16ch", info.limits(CaptureMode::Channels16).maxTotalSamples},

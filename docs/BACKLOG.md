@@ -63,8 +63,10 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       seam (`W2`, `W3`, ...) at every window start, reports and anomaly markers are computed window by window,
       saved JSON keeps the layout; VCD/CSV are refused for segmented captures.
 - [x] Burst timestamps for the edge programs (`FEATURES:3`, `trigger_times_us`, spacing in reports).
-      Built for every variant and tested against the emulator; **not yet flashed**: verify on the Pico with
-      the PYNQ burst (100 windows: spacing ≈ 5 us).
+      Verified on the Pico (2026-11-17, two BTN1 bursts, 100 windows each): trigger spacing 4.995..5.005 us
+      (±1 cycle of 5 ns around the 5 us PYNQ period), span 495 us; latency 100/100 pairs.
+      Observation: one run had a single 70 ns pair (window 1); the repeat and all earlier rising-edge
+      captures stay within 50..60 ns, so it is not systematic. Watch for it in longer series.
 - [ ] A `Windows` control in the GUI capture setup.
 - [x] Edge-fire on hardware with the PYNQ burst (BTN1, 100 MHz, 1000 pre-samples): `1:rising` fires on the
       first STIM rise (sample 1000, REACT at 994); `1:falling` on an idle-LOW line waits and fires on the
