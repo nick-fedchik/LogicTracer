@@ -31,6 +31,8 @@ All notable changes are documented here. The format follows
 - `LOGICTRACER_DENY_HARDWARE=1` refuses all serial device access (for audits and harnesses).
 
 ### Fixed (independent audit, tags `audit-base` -> `audit-fixes` and follow-ups)
+- Firmware: the Pico W WiFi variants compile again (an LED macro that expands to a block broke the fast
+  completion poll); CI now builds the Pico 2, Pico W and WiFi variants as well.
 - Handshake: LogicTracer 0.x firmware now reports its real frequency, blast rate, buffer and channels.
 - AI reports: the motif reference comes from the longest periodic stretch (startup glitches no longer
   produce phantom faults); consecutive failures are separate incidents; report text is flattened to one line.

@@ -36,10 +36,10 @@ jobs:
       - name: Fetch the Pico SDK
         run: |
           git clone --depth 1 --branch 2.1.1 https://github.com/raspberrypi/pico-sdk "$RUNNER_TEMP/pico-sdk"
-          git -C "$RUNNER_TEMP/pico-sdk" submodule update --init --depth 1 lib/tinyusb
-      - name: Build (Pico and Interceptor variants)
+          git -C "$RUNNER_TEMP/pico-sdk" submodule update --init --depth 1 lib/tinyusb lib/cyw43-driver lib/lwip
+      - name: Build (Pico, Pico 2, Pico W USB and WiFi, Interceptor variants)
         run: |
-          for board in BOARD_PICO BOARD_INTERCEPTOR; do
+          for board in BOARD_PICO BOARD_PICO_2 BOARD_PICO_W BOARD_PICO_W_WIFI BOARD_PICO_2_W_WIFI BOARD_INTERCEPTOR; do
             cmake -S firmware/rp2040 -B "build-fw-$board" -G Ninja -DPICO_SDK_PATH="$RUNNER_TEMP/pico-sdk" \
               -DBOARD_TYPE=$board -DTURBO_MODE=0
             cmake --build "build-fw-$board"

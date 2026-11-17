@@ -805,9 +805,13 @@ int main()
                 // Fast 10 ms completion/cancel poll (~15 ms turnaround instead of 2.2 s) with 1 Hz LED blink.
                 static uint8_t pollTick = 0;
                 if(pollTick == 0)
+                {
                     LED_OFF();
+                }
                 else if(pollTick == 50)
+                {
                     LED_ON();
+                }
 
                 sleep_ms(10);
 
