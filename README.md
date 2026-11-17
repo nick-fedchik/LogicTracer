@@ -193,7 +193,10 @@ scripts/rigs/pynq-z1/pynq-burst-hil.sh --bitstream /home/xilinx/my_design.bit \
     --switches "SW0=1,SW1=1" --start "press BTN1"
 ```
 
-### In-design capture on the PYNQ-Z1 (`pynq://`)
+### In-design capture on the PYNQ-Z1 (`pynq://`, experimental)
+
+> Experimental: verified against the register model of the core only; running it needs `lt_capture` inside
+> your FPGA design, which this project does not provide.
 
 With the `lt_capture` core in the FPGA design ([hdl/README.md](hdl/README.md)), the board agent serves it to
 every LogicTracer front-end. Samples are the design's own clock cycles, so delays are exact:

@@ -14,8 +14,8 @@ design; modifications of the core itself must be shared under the same licence.
 | Phase | State |
 |---|---|
 | RTL core, self-checking simulation, lint, synthesis check (B2) | ✅ done, in CTest and CI |
-| Board agent and host backend `PynqConnection` (B3) | ✅ agent, register model and host backend, tested against the model; integration into a DUT bitstream pending |
-| Hardware cross-check against the RP2040 (B4) | planned |
+| Board agent and host backend `PynqConnection` (B3) | ✅ agent, register model and host backend, tested against the model (experimental) |
+| Integration into a DUT bitstream, hardware cross-check (B3/B4 hardware) | not planned in this project (out of scope) |
 
 ## How it works
 

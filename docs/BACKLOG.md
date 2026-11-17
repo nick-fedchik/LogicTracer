@@ -1,6 +1,24 @@
 # Backlog
 
-Updated: 2026-11-16.
+Updated: 2026-11-17.
+
+## Scope (decision 2026-11-17)
+The value of this project is the **RP2040 firmware** and the **analyzer application** (CLI, GUI, MCP), and
+both must behave **predictably for a human and for an AI agent**: stable, documented outputs; claims
+(timing bounds, triggers, timeouts, exit codes) that are tested. Work is judged against that.
+Hardware designs under test, their bitstreams and their RTL are out of scope; the project uses
+open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not planned (with the reason).
+
+## B-10. Contracts for humans and AI (priority)
+- [ ] JSON Schemas for the documents of `capture`, `analyze`, `diff`, `probe`, `detect`, errors, and the
+      lossless capture file; one exit-code table; conformance tests on every platform (replay device).
+- [ ] Determinism: the same input gives byte-identical JSON and reports, except fields declared volatile.
+
+## B-11. Firmware self-test without external hardware (priority)
+- [ ] Test-signal generator in the firmware (GP0/GP1, exact clock cycles, PIO + DMA), advertised in
+      `FEATURES`; jumpers GP0 → CH3 (GP4), GP1 → CH4 (GP5).
+- [ ] `logictracer-cli selftest`: triggers, latency bounds against the known delay, segments and
+      trigger times, timeouts; a pass/fail JSON report, repeatable after every firmware change.
 
 ## Done recently
 - Independent audit by four models plus a re-audit (`docs/audit/`): all confirmed P0/P1 findings fixed
@@ -31,7 +49,7 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       - the upstream owner or pid.codes objects to the shared PID.
       When adopted, keep `3020` as a discovery fallback for upstream-firmware boards.
 
-## B-02. Turbo 200 MS/s (5 ns step)
+## B-02. Turbo 200 MS/s (5 ns step) — low priority (can use the B-11 self-test instead of the PYNQ burst)
 - [ ] `scripts/build_firmware.sh` → `logictracer-cli bootloader --yes` → copy the Turbo image from
       `build/firmware/` → `detect`.
 - [ ] Repeat the burst measurement with `--freq 200M` for both edges, several runs (different phase).
@@ -40,15 +58,13 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - Risk: Turbo overclocks the RP2040 (400 MHz @ 1.30 V); restore the 100 MHz image afterwards.
 
 ## B-03. Fail-closed path (third channel)
-- [ ] Wire the reject output (PYNQ `JA3`, `Y16`) → RP2040 `GP4` (CH3).
-- [ ] Run with the invariant true: `--expect "events>=100,drops==0,REJECT:edges==0"`.
-- [ ] Run with the invariant false: `--measure-latency 1..3 --expect "events>=100,COMMIT:edges==0"`
-      — no commit while the invariant is violated.
+- [-] Not planned (2026-11-17): it verifies a property of the design under test, not of the analyzer.
+      `--invariant "never(COMMIT & REJECT)"` already covers the check when such a DUT is wired.
 
 ## B-04. Analyzer P1
 - [x] `--invariant` rules (never / always / within / stable / onehot / onehot0 / bus + settle), O(E) over
       transitions; `capture`, `analyze`, session and MCP (`invariant`), exit 3 on a violation.
-- [ ] Use `--invariant "never(COMMIT & REJECT)"` in B-03 once CH3 is wired.
+- [-] Use `--invariant "never(COMMIT & REJECT)"` in B-03 (B-03 not planned).
 - [x] `logictracer-cli diff A B` (latency p50/p99/max against the ±quantization of both captures, drops,
       spurious reactions, anomaly kinds, channel activity, sampling-phase verdict; `--strict` exits 3 on a
       regression).
@@ -97,19 +113,18 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       `PynqConnection : IDevice` (`pynq://host[:port]`, rise/fall/external triggers, cancel, probe). Captures
       carry exact timing: latency bounds collapse to exact cycles, `diff` and `--expect` drop the ±1-sample
       allowance, the flag survives the JSON. Tested against the model (Python unit tests, C++ connection test).
-- [ ] B3 (hardware): integrate `lt_capture` into one DUT top level, build the bitstream (Vivado), map the
-      AXI window (UIO), run the agent on the board.
-- [ ] B4: live cross-check of the PL core against the RP2040 on the same pins.
+- [-] B3 (hardware) and B4 (live cross-check against the RP2040): not planned (2026-11-17). They need the
+      core inside a DUT bitstream, which is outside the project scope. The `pynq://` backend stays
+      **experimental**: verified only against the register model of the core.
       Design: [design/pynq-capture-backend.md](design/pynq-capture-backend.md).
 
 ## B-08. PYNQ-Z1 rig automation
 - [x] `--meta` setup metadata and `scripts/rigs/pynq-z1/pynq-burst-hil.sh` (verified live: PASS,
       bitstream SHA-256 recorded).
-- [ ] Software start of the burst instead of BTN1. The AV-11 RTL decodes bit 1 written to
-      `REG_CONTROL` (0x08), but the gate answers that write with SLVERR, which can raise an
-      imprecise abort in Linux. Needs a dedicated, error-free start register in the DUT RTL.
+- [-] Software start of the burst instead of BTN1: not planned here (2026-11-17), it is a change of the DUT
+      RTL. The B-11 self-test removes the need for the button in firmware regression.
 
-## B-06. NVIDIA Jetson `DO1` HIL test (blocked: 4.7–10 kΩ pull-up between Pico pin 36 and pin 34)
+## B-06. NVIDIA Jetson `DO1` HIL test (deferred; blocked: 4.7–10 kΩ pull-up between Pico pin 36 and pin 34)
 - [ ] `./scripts/hil_j501_do1.sh`.
 
 ## B-07. Portability
@@ -118,7 +133,8 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       confined mode), session named pipe `logictracer-<user>` with a token-SID check of the server,
       `cmd.exe` for `--on-armed`, every COM port for `detect --all`, portable bit operations and `gmtime_s`.
       The pty emulator is a stub there: 37 emulator tests and 3 POSIX file-mode/symlink tests are skipped.
-- [ ] Windows on hardware: `detect`, `probe`, a triggered capture and the GUI against the Pico.
+- [ ] Windows on hardware: `detect`, `probe`, a triggered capture and the GUI against the Pico
+      (low priority until there is a Windows user).
 - [x] Packaged builds for Windows/macOS/Linux attached to releases (`release.yml`); UTF-8 paths converted
       explicitly (`core/Paths.hpp`, non-ASCII round-trip test).
 - [x] macOS: `macos-latest` CI job (Homebrew Qt, warnings as errors, all tests green): `getpeereid` for
