@@ -6,6 +6,7 @@
 #include "core/Format.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 
 namespace lt {
@@ -86,6 +87,58 @@ std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const Segm
         win.setTriggerIndex(trigBit ? 1 : 0);
         out.push_back(std::move(win));
     }
+    return out;
+}
+
+namespace {
+
+bool hasSyntheticSample(const CaptureBuffer& buffer, const SegmentLayout& layout)
+{
+    if (!layout.triggerChannel)
+        return false;
+    return std::any_of(buffer.channels().begin(), buffer.channels().end(),
+                       [&](const ChannelInfo& c) { return c.number == *layout.triggerChannel; });
+}
+
+}  // namespace
+
+std::vector<std::size_t> segmentStarts(const SegmentLayout& layout)
+{
+    std::vector<std::size_t> out;
+    for (uint32_t k = 0; k < layout.count; ++k)
+        out.push_back(k == 0 ? 0 : layout.preSamples + static_cast<std::size_t>(k) * layout.postSamples);
+    return out;
+}
+
+std::size_t storedSample(const CaptureBuffer& buffer, const SegmentLayout& layout, std::size_t window, std::size_t local)
+{
+    if (window == 0)
+        return local;
+    const std::size_t start = layout.preSamples + window * layout.postSamples;
+    const std::size_t shift = hasSyntheticSample(buffer, layout) ? 1 : 0;
+    return start + (local > shift ? local - shift : 0);
+}
+
+std::vector<AnomalyIncident> findSegmentAnomalies(const CaptureBuffer& buffer, const SegmentLayout& layout,
+                                                  const ReportOptions& options)
+{
+    std::vector<AnomalyIncident> out;
+    ReportOptions o = options;
+    o.first = 0;
+    o.last = std::numeric_limits<std::size_t>::max();
+    o.cursorA.reset();
+    o.cursorB.reset();
+    o.annotations.clear();
+    const auto windows = splitSegments(buffer, layout);
+    for (std::size_t k = 0; k < windows.size(); ++k)
+        for (auto a : findAnomalies(windows[k], o)) {
+            a.sample = storedSample(buffer, layout, k, a.sample);
+            a.detail = "window " + std::to_string(k + 1) + ": " + a.detail;
+            out.push_back(std::move(a));
+        }
+    std::stable_sort(out.begin(), out.end(), [](const AnomalyIncident& a, const AnomalyIncident& b) {
+        return a.severity > b.severity;
+    });
     return out;
 }
 

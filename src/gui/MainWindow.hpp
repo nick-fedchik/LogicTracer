@@ -37,7 +37,8 @@ public:
     // `setup` is the test-setup metadata recorded with the capture (shown in reports, saved to JSON).
     // `warnings`, `deviceVersion` and `board` describe a loaded capture's import caveats and source device.
     void setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup = {},
-                    std::vector<std::string> warnings = {}, std::string deviceVersion = {}, std::string board = {});
+                    std::vector<std::string> warnings = {}, std::string deviceVersion = {}, std::string board = {},
+                    std::optional<lt::SegmentLayout> segments = {});
     // Loads a saved lossless .json or .vcd capture into the viewer.
     bool openCaptureFile(const QString& path, QString* error = nullptr);
     // The text "Copy for AI" puts on the clipboard: the report for the current view and cursors.
@@ -126,6 +127,7 @@ private:
         std::optional<std::size_t> cursorA, cursorB;
         std::vector<std::string> warnings;
         bool isProbe = false;
+        std::optional<lt::SegmentLayout> segments;  // segmented capture: analysed window by window
     };
     // The last failed attempt; its line levels explain why the waveform on screen is stale.
     struct FailureInfo {
@@ -136,7 +138,13 @@ private:
     };
 
     void showNewCapture(const lt::CaptureBuffer& buffer, const QString& trigger, lt::SetupInfo setup,
-                        std::vector<std::string> warnings, bool isProbe, DeviceStamp stamp = {});
+                        std::vector<std::string> warnings, bool isProbe, DeviceStamp stamp = {},
+                        std::optional<lt::SegmentLayout> segments = {});
+    // Anomalies over the whole shown capture (window by window for a segmented one).
+    [[nodiscard]] std::vector<lt::AnomalyIncident> findAllAnomalies(const lt::ReportOptions& options) const;
+    // AI report of the shown capture (segmentsForAi for a segmented one).
+    [[nodiscard]] std::string reportFor(const lt::ReportOptions& options) const;
+    std::optional<lt::SegmentLayout> m_segments;  // of the shown capture
     [[nodiscard]] DeviceStamp liveStamp() const;
     // Remembers the failed operation, returns to the newest capture and marks the display stale.
     void recordFailure(FailureInfo failure);

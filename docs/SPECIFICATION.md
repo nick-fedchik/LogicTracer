@@ -107,7 +107,8 @@ are then used (100 MHz, 131072 bytes, 24 channels).
   `pre + post × N` samples, the pre-trigger part before the first window only, and does not record the time
   between windows. The host analyses every window on its own (t = 0 at its trigger) and combines the results
   (`segments` in the JSON, window-local `segment` on latency events and invariant examples); windows after the
-  first get one synthetic pre-trigger sample so their trigger edge stays visible. In those windows sampling
+  first get one synthetic pre-trigger sample so their trigger edge stays visible. The session/MCP `capture`
+  takes the same `segments` parameter. In those windows sampling
   starts on the detected edge, so the trigger channel has a fixed sampling phase there; the ±1-sample bounds
   still hold.
   With level-sensitive firmware, if the trigger line is already at the target level when arming, the host adds a

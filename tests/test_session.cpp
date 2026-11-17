@@ -419,6 +419,24 @@ private Q_SLOTS:
         r = awaitOffThread([path] { return sess::call(path, "capture", {{"rate", "fast"}}); });
         QCOMPARE(r.errorCode, sess::error::InvalidParams);
 
+        // Segmented capture through the session: analysed window by window, seams shown in the GUI.
+        const json seg = {{"channels", "1:A,2:B"}, {"samples", 50},    {"pre_samples", 10},
+                          {"trigger", "1:rising"}, {"segments", 3}, {"latency", "1->2"}};
+        r = awaitOffThread([path, seg] { return sess::call(path, "capture", seg, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
+        QCOMPARE(r.result["config"]["segments"].get<int>(), 3);
+        QCOMPARE(r.result["segments"]["windows"].size(), std::size_t{3});
+        QCOMPARE(win.waveform()->capture().size(), std::size_t{130});
+        QCOMPARE(win.waveform()->segmentStarts().size(), std::size_t{3});
+        r = awaitOffThread([path] { return sess::call(path, "get_report", json::object()); });
+        QVERIFY2(r.ok, r.error.c_str());
+        QVERIFY(r.result["report"].get<std::string>().find("**3 trigger windows**") != std::string::npos);
+        QCOMPARE(r.result["metadata"]["segments"]["count"].get<int>(), 3);
+        json segVcd = seg;
+        segVcd["out_vcd"] = vcd;
+        r = awaitOffThread([path, segVcd] { return sess::call(path, "capture", segVcd, 10000); });
+        QCOMPARE(r.errorCode, sess::error::InvalidParams);
+
         r = awaitOffThread([path] { return sess::call(path, "probe", {{"channels", "1,2"}, {"window_ms", 2}}, 10000); });
         QVERIFY2(r.ok, r.error.c_str());
         QCOMPARE(r.result["status"].get<std::string>(), std::string("OK"));

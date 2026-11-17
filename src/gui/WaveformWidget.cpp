@@ -174,6 +174,7 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     m_cursorA.reset();
     m_cursorB.reset();
     m_annotations.clear();  // annotation times are relative to the trigger of the capture they were made on
+    m_segmentStarts.clear();
     m_anomalies.clear();  // the owner supplies them (setAnomalies) once the analysis options are known
     m_view.setTotalSamples(m_buffer.size());
     updateViewWidth();
@@ -313,6 +314,35 @@ void WaveformWidget::setShowAnomalyMarkers(bool show)
         return;
     m_showAnomalies = show;
     update();
+}
+
+void WaveformWidget::setSegmentStarts(std::vector<std::size_t> starts)
+{
+    m_segmentStarts = std::move(starts);
+    update();
+}
+
+// The time between windows of a segmented capture is unknown: a dashed seam marks every window start.
+void WaveformWidget::drawSegmentSeams(QPainter& p, const QRectF& plot) const
+{
+    if (m_segmentStarts.size() < 2)
+        return;
+    p.save();
+    p.setClipRect(plot.adjusted(0, -14, 0, 0));
+    QPen pen(QColor(150, 120, 230), 1, Qt::DashLine);
+    p.setPen(pen);
+    double lastLabel = -1e9;
+    for (std::size_t k = 1; k < m_segmentStarts.size(); ++k) {
+        const double x = xOfSample(static_cast<double>(m_segmentStarts[k]));
+        if (x < plot.left() || x > plot.right())
+            continue;
+        p.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
+        if (x - lastLabel > 40) {
+            p.drawText(QPointF(x + 3, plot.top() + 11), QStringLiteral("W%1").arg(k + 1));
+            lastLabel = x;
+        }
+    }
+    p.restore();
 }
 
 void WaveformWidget::drawAnomalyMarkers(QPainter& p, const QRectF& plot) const
@@ -628,6 +658,7 @@ void WaveformWidget::paintEvent(QPaintEvent*)
     drawOverview(p);
     drawRuler(p, plot);
     drawAnnotations(p, plot);
+    drawSegmentSeams(p, plot);
     drawAnomalyMarkers(p, plot);
     drawCursors(p, plot);
 

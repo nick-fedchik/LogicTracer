@@ -185,6 +185,18 @@ private Q_SLOTS:
         QVERIFY(!probe["result"]["isError"].get<bool>());
         QCOMPARE(probe["result"]["structuredContent"]["channels"][0]["state"].get<std::string>(), std::string("HIGH"));
 
+        const auto seg = client.tool("lt_configure_and_capture", {{"channels", "1:A,2:B"},
+                                                                  {"samples", 50},
+                                                                  {"pre_samples", 10},
+                                                                  {"trigger", "1:rising"},
+                                                                  {"segments", 3}});
+        QVERIFY2(!seg["result"]["isError"].get<bool>(), seg.dump().c_str());
+        QCOMPARE(seg["result"]["structuredContent"]["segments"]["windows"].size(), std::size_t{3});
+        QCOMPARE(dev.requests().back().loop, 2u);
+        const auto segVcd = client.tool("lt_configure_and_capture", {{"channels", "1"}, {"trigger", "1:rising"},
+                                                                     {"segments", 3}, {"out_vcd", "x.vcd"}});
+        QVERIFY(segVcd["result"]["isError"].get<bool>());
+
         const auto bad = client.tool("lt_configure_and_capture", {{"channels", "1"}, {"samples", "lots"}});
         QVERIFY(bad["result"]["isError"].get<bool>());
         QVERIFY(bad["result"]["content"][0]["text"].get<std::string>().find("invalid samples") != std::string::npos);

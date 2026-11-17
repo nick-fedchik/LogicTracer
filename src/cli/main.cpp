@@ -662,9 +662,6 @@ int cmdCapture(const QStringList& args, Output o)
     const QString sock = p.isSet("no-session") ? QString{} : socketPathFrom(p);
     const std::string reqPort = p.isSet("port") ? str(p.value("port")) : std::string{};
     const bool viaSession = !hasArmedHook && sessionHoldsTargetPort(sock, reqPort);
-    if (viaSession && segments > 1)
-        return report(o, ExitError, "--segments is not available through the GUI session; disconnect the device "
-                                    "in the GUI first");
     if (viaSession) {
         json params = {
             {"channels", str(p.value("channels"))},
@@ -680,6 +677,7 @@ int cmdCapture(const QStringList& args, Output o)
         if (p.isSet("measure-latency")) params["latency"] = str(p.value("measure-latency"));
         if (p.isSet("expect")) params["expect"] = str(p.value("expect"));
         if (p.isSet("invariant")) params["invariant"] = str(p.value("invariant"));
+        if (segments > 1) params["segments"] = segments;
         if (!setup->empty()) params["meta"] = lt::toJson(*setup);
         // The GUI resolves relative paths against its own working directory: send the caller's.
         const auto absolutePath = [](const QString& path) {

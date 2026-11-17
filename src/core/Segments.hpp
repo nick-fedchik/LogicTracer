@@ -29,6 +29,16 @@ namespace lt {
 // so the trigger edge stays visible (trigger_sample 1). Empty when the buffer does not match the layout.
 [[nodiscard]] std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const SegmentLayout& layout);
 
+// First stored sample of every window.
+[[nodiscard]] std::vector<std::size_t> segmentStarts(const SegmentLayout& layout);
+// Stored-buffer index of sample `local` of window `window` as split by splitSegments(buffer, layout).
+[[nodiscard]] std::size_t storedSample(const CaptureBuffer& buffer, const SegmentLayout& layout, std::size_t window,
+                                       std::size_t local);
+// Anomalies found window by window (the seams are not analysed), at stored-buffer samples, most severe first;
+// each detail names its window. `options` range fields are ignored (whole windows).
+[[nodiscard]] std::vector<AnomalyIncident> findSegmentAnomalies(const CaptureBuffer& buffer, const SegmentLayout& layout,
+                                                                const ReportOptions& options);
+
 // Counts add up over the windows; widths keep min/max and a pulse-weighted mean; frequency and duty are the
 // edge-weighted mean of the per-window values (each window is continuous); periods and edge lists are dropped.
 [[nodiscard]] std::vector<ChannelStats> mergeChannelStats(const std::vector<std::vector<ChannelStats>>& windows);

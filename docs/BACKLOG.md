@@ -59,8 +59,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       summary, latency, `--expect` and `--invariant`; `segments` in the JSON (layout + per-window rows),
       `analyze` re-splits saved files, replay supports it. Verified on the Pico with the PYNQ burst: one BTN1
       press, 100 windows of 2 us (20 020 samples instead of ~50 000), 100/100 pairs, 0 drops, 50..60 ns.
-- [ ] Segmented captures through the GUI session and MCP; burst timestamps for the edge programs (the time
-      between windows).
+- [x] Segmented captures through the GUI session and MCP (`segments` parameter): the GUI draws a dashed
+      seam (`W2`, `W3`, ...) at every window start, reports and anomaly markers are computed window by window,
+      saved JSON keeps the layout; VCD/CSV are refused for segmented captures.
+- [ ] Burst timestamps for the edge programs (the time between windows); a `Windows` control in the GUI
+      capture setup.
 - [x] Edge-fire on hardware with the PYNQ burst (BTN1, 100 MHz, 1000 pre-samples): `1:rising` fires on the
       first STIM rise (sample 1000, REACT at 994); `1:falling` on an idle-LOW line waits and fires on the
       first STIM fall with the rise 201 samples earlier in the pre-trigger buffer; `2:rising` with

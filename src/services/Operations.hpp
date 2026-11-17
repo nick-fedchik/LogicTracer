@@ -70,6 +70,11 @@ struct CaptureDocument {
     std::optional<SegmentAnalysis> segments;  // window-by-window analysis of a segmented capture
 };
 
+inline constexpr const char* kSegmentedTimelineError =
+    "VCD/CSV cannot represent a segmented capture (the time between windows is unknown); use out_json";
+// True when `params` request more than one segment together with a VCD/CSV output.
+[[nodiscard]] bool segmentedWithTimelineOutput(const nlohmann::json& params, bool timelineOutput);
+
 // Fills the analysis part of a document: "capture" (summary), "latency", "assertions", "invariants" and, for a
 // segmented capture, "segments". `out.stats` always describes the stored samples (lossless export); for a
 // segmented capture the summary, latency, assertions and invariants come from the windows.
@@ -124,7 +129,7 @@ ProbeDocument performProbe(IDevice& connection, const std::vector<ChannelInfo>& 
 // JSON request parameters (MCP tools, GUI session). Numbers may also be given as strings with SI
 // suffixes ("1M", "10k"); channels are 1-based ("1,2:NAME", "1-8" or an array of numbers/strings).
 // Recognised capture keys: channels, freq|rate, samples, pre_samples, trigger ("24:falling"|"none"),
-// timeout_ms, probe_on_timeout.
+// timeout_ms, probe_on_timeout, segments (trigger windows, needs a trigger).
 std::optional<CaptureRequestSpec> captureSpecFromJson(const nlohmann::json& params, int deviceChannels,
                                                       std::string& error);
 // Keys: summary (default `defaultSummary`), edges, latency ("1->2"), expect ("p99_ns<=60,drops==0"),

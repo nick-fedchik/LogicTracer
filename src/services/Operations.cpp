@@ -251,6 +251,14 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
     return cfg;
 }
 
+bool segmentedWithTimelineOutput(const json& params, bool timelineOutput)
+{
+    if (!timelineOutput || !params.is_object() || !params.contains("segments"))
+        return false;
+    const auto n = quantityOf(params["segments"]);
+    return n && *n > 1;
+}
+
 void analyzeIntoDocument(CaptureDocument& out, const CaptureBuffer& buffer, const std::optional<SegmentLayout>& segments,
                          const DocumentOptions& options, std::string_view board)
 {
@@ -412,6 +420,14 @@ void writeCaptureOutputs(json& doc, const CaptureResult& result, const CaptureDo
 {
     json outputs = json::object();
     std::string error;
+    if (document.segments && (!paths.vcdPath.empty() || !paths.csvPath.empty())) {
+        doc["warnings"].push_back(std::string(kSegmentedTimelineError) + ": VCD/CSV not written");
+        OutputPaths jsonOnly = paths;
+        jsonOnly.vcdPath.clear();
+        jsonOnly.csvPath.clear();
+        writeCaptureOutputs(doc, result, document, jsonOnly, board);
+        return;
+    }
     if (!paths.vcdPath.empty() && result.buffer) {
         if (writeVcdFile(paths.vcdPath, *result.buffer, &error, paths.confined))
             outputs["vcd"] = paths.vcdPath;
@@ -613,6 +629,14 @@ std::optional<CaptureRequestSpec> captureSpecFromJson(const json& p, int deviceC
     }
     if (p.contains("probe_on_timeout") && p["probe_on_timeout"].is_boolean())
         spec.probeOnTimeout = p["probe_on_timeout"].get<bool>();
+    if (p.contains("segments") && !p["segments"].is_null()) {
+        const auto n = quantityOf(p["segments"]);
+        if (!n || *n < 1 || *n > 65536) {
+            error = "invalid segments (1..65536 trigger windows)";
+            return std::nullopt;
+        }
+        spec.segments = static_cast<uint32_t>(*n);
+    }
     return spec;
 }
 

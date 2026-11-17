@@ -105,6 +105,10 @@ json McpServer::toolList()
         {"edges", prop("boolean", "Include every edge timestamp in the result (default false).")},
         {"latency", prop("string", "Optional cross-channel STIM->REACT latency spec, e.g. \"1->2\" or \"24:falling->2:rising\".")},
         {"expect", prop("string", "Optional pass/fail assertions, e.g. \"p99_ns<=60,drops==0,DO1:low_pulses>=1\".")},
+        {"segments", prop("integer", "Optional number of trigger windows recorded in one run (segmented memory, "
+                                     "needs a trigger): samples is one window, the firmware re-arms on the next "
+                                     "edge; results are combined over the windows and listed per window. The "
+                                     "time between windows is not recorded, so out_vcd/out_csv are refused.")},
         {"invariant", prop("string", "Optional protocol rules checked over the whole capture, separated by ';': "
                                      "never(EXPR[,settle=T]), always(EXPR[,settle=T]), onehot(A,B,...), onehot0(...), "
                                      "within(A[:edge],B[:edge],T), stable(D...,CLK[:edge],setup=T,hold=T), "
@@ -271,6 +275,8 @@ json McpServer::runDeviceTool(const std::string& tool, const json& args)
         resolveSafeOutputPath(args.value("out_events_csv", std::string{}), kCsvExt, m_options.outputDir, &error);
     if (!eventsCsvPath)
         return errorResult(error);
+    if (segmentedWithTimelineOutput(args, !vcdPath->empty() || !csvPath->empty()))
+        return errorResult(kSegmentedTimelineError);
 
     // lt_configure_and_capture
     if (forward) {

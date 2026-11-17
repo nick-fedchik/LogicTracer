@@ -669,7 +669,8 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         m_failure.reset();
         auto entryWarnings = fromSession ? pending->warnings : std::move(pendingWarnings);
         entryWarnings.insert(entryWarnings.end(), r.warnings.begin(), r.warnings.end());
-        showNewCapture(*r.buffer, candidateTrigger, effectiveSetup, std::move(entryWarnings), false, liveStamp());
+        showNewCapture(*r.buffer, candidateTrigger, effectiveSetup, std::move(entryWarnings), false, liveStamp(),
+                       r.segments);
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
         if (m_repeat->isChecked() && !fromSession) {
             const auto generation = m_repeatGeneration;
@@ -780,14 +781,15 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
 }
 
 void MainWindow::setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup,
-                            std::vector<std::string> warnings, std::string deviceVersion, std::string board)
+                            std::vector<std::string> warnings, std::string deviceVersion, std::string board,
+                            std::optional<lt::SegmentLayout> segments)
 {
     consumeNote();
     m_failure.reset();
     if (!setup.empty())  // a file with a setup is the engineer's context; one without must not erase the pending setup
         m_nextSetup = setup;
     showNewCapture(buffer, triggerDescription, std::move(setup), std::move(warnings), false,
-                   DeviceStamp{std::move(deviceVersion), std::move(board)});
+                   DeviceStamp{std::move(deviceVersion), std::move(board)}, segments);
 }
 
 void MainWindow::setHistoryLimits(std::size_t entries, std::size_t bytes)
@@ -806,7 +808,8 @@ MainWindow::DeviceStamp MainWindow::liveStamp() const
 }
 
 void MainWindow::showNewCapture(const lt::CaptureBuffer& buffer, const QString& trigger, lt::SetupInfo setup,
-                                std::vector<std::string> warnings, bool isProbe, DeviceStamp stamp)
+                                std::vector<std::string> warnings, bool isProbe, DeviceStamp stamp,
+                                std::optional<lt::SegmentLayout> segments)
 {
     saveViewState();
     CaptureEntry entry;
@@ -817,6 +820,8 @@ void MainWindow::showNewCapture(const lt::CaptureBuffer& buffer, const QString& 
     entry.setup = std::move(setup);
     entry.warnings = std::move(warnings);
     entry.isProbe = isProbe;
+    if (segments && segments->count > 1 && segments->totalSamples() == buffer.size())
+        entry.segments = segments;
     m_history.push_back(std::move(entry));
     trimHistory();
     showEntry(m_history.size() - 1);
@@ -862,7 +867,9 @@ void MainWindow::showEntry(std::size_t index)
     m_stamp = e.stamp;
     m_waveform->setBoard(e.stamp.board);
     m_lastAnomaly.reset();
+    m_segments = e.segments;
     m_waveform->setCapture(e.buffer);
+    m_waveform->setSegmentStarts(e.segments ? lt::segmentStarts(*e.segments) : std::vector<std::size_t>{});
     m_waveform->setAnnotations(e.annotations);
     if (e.cursorA)
         m_waveform->setCursorA(*e.cursorA);
@@ -942,7 +949,7 @@ void MainWindow::jumpToAnomaly(int direction)
     auto options = buildReportOptions(lt::CopyMode::Full);
     options.first = 0;
     options.last = std::numeric_limits<std::size_t>::max();
-    auto list = lt::findAnomalies(m_waveform->capture(), options);
+    auto list = findAllAnomalies(options);
     std::stable_sort(list.begin(), list.end(),
                      [](const lt::AnomalyIncident& a, const lt::AnomalyIncident& b) { return a.sample < b.sample; });
     if (list.empty()) {
@@ -1110,7 +1117,22 @@ QString MainWindow::aiReportForMode(lt::CopyMode mode) const
         return failureReport();
     if (!m_waveform->hasCapture())
         return tr("No capture yet.");
-    return QString::fromStdString(lt::copyForAi(m_waveform->capture(), buildReportOptions(mode)));
+    return QString::fromStdString(reportFor(buildReportOptions(mode)));
+}
+
+std::vector<lt::AnomalyIncident> MainWindow::findAllAnomalies(const lt::ReportOptions& options) const
+{
+    if (m_segments)
+        return lt::findSegmentAnomalies(m_waveform->capture(), *m_segments, options);
+    return lt::findAnomalies(m_waveform->capture(), options);
+}
+
+std::string MainWindow::reportFor(const lt::ReportOptions& options) const
+{
+    if (!m_segments)
+        return lt::copyForAi(m_waveform->capture(), options);
+    const auto analysis = lt::analyzeSegments(m_waveform->capture(), *m_segments, options.latency, false, nullptr);
+    return lt::segmentsForAi(analysis, options);
 }
 
 QString MainWindow::aiReport() const
@@ -1125,7 +1147,7 @@ void MainWindow::updateReport()
         auto options = buildReportOptions(lt::CopyMode::Full);
         options.first = 0;
         options.last = std::numeric_limits<std::size_t>::max();
-        m_waveform->setAnomalies(lt::findAnomalies(m_waveform->capture(), options));
+        m_waveform->setAnomalies(findAllAnomalies(options));
     } else {
         m_waveform->setAnomalies({});
     }
@@ -1252,7 +1274,7 @@ bool MainWindow::openCaptureFile(const QString& path, QString* error)
         return false;
     }
     setCapture(loaded.buffer, QString::fromStdString(loaded.triggerDescription), loaded.setup, loaded.warnings,
-               loaded.deviceVersion, loaded.board);
+               loaded.deviceVersion, loaded.board, loaded.segments);
     if (!loaded.annotations.empty())
         m_waveform->setAnnotations(std::move(loaded.annotations));
     updateReport();
@@ -1300,6 +1322,10 @@ void MainWindow::saveVcd()
         showStatus(tr("Nothing to save"), true);
         return;
     }
+    if (m_segments) {
+        showStatus(tr("VCD cannot represent a segmented capture (the time between windows is unknown); save JSON"), true);
+        return;
+    }
     askFile(true, tr("Save VCD"), "capture.vcd", tr("VCD (*.vcd)"), [this](const QString& path) {
         std::string err;
         if (lt::writeVcdFile(str(path), m_waveform->capture(), &err))
@@ -1323,6 +1349,8 @@ void MainWindow::saveJson()
         nlohmann::json doc = lt::captureToJson(buf, stats, true, m_stamp.board);
         if (!m_triggerDescription.isEmpty())
             doc["trigger_description"] = str(m_triggerDescription);
+        if (m_segments)
+            doc["segments"] = {{"layout", lt::toJson(*m_segments)}};
         if (!m_setup.empty())
             doc["setup"] = lt::toJson(m_setup);
         if (!m_stamp.version.empty() || !m_stamp.board.empty())
@@ -1351,6 +1379,10 @@ void MainWindow::saveCsv()
 {
     if (!m_waveform->hasCapture()) {
         showStatus(tr("Nothing to save"), true);
+        return;
+    }
+    if (m_segments) {
+        showStatus(tr("CSV cannot represent a segmented capture (the time between windows is unknown); save JSON"), true);
         return;
     }
     askFile(true, tr("Save CSV"), "capture.csv", tr("CSV (*.csv)"), [this](const QString& path) {
@@ -1472,6 +1504,8 @@ json MainWindow::stateJson() const
                         {"total_samples", meta["total_samples"]},
                         {"trigger_sample", meta["trigger_sample"]},
                         {"trigger", meta["trigger"]}};
+        if (m_segments)
+            j["capture"]["segments"] = lt::toJson(*m_segments);
         j["visible"] = meta["visible"];
         j["cursors"] = meta["cursors"];
     }
@@ -1559,7 +1593,9 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
         auto metadata = lt::jsonMetadata(m_waveform->capture(), options);
         metadata["display_state"] = displayStateName(m_waveform->displayState());
         metadata["viewing_history"] = m_viewIndex + 1 < m_history.size();
-        reply.ok({{"report", lt::copyForAi(m_waveform->capture(), options)}, {"metadata", metadata}});
+        if (m_segments)
+            metadata["segments"] = lt::toJson(*m_segments);
+        reply.ok({{"report", reportFor(options)}, {"metadata", metadata}});
     } else if (method == "set_view") {
         sessionSetView(params, std::move(reply));
     } else if (method == "get_anomalies") {
@@ -1738,7 +1774,7 @@ void MainWindow::sessionGetAnomalies(const json& p, sess::Responder reply)
         }
         options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
     }
-    auto list = lt::findAnomalies(m_waveform->capture(), options);  // most severe first
+    auto list = findAllAnomalies(options);  // most severe first
     const auto total = list.size();
     if (list.size() > maxCount)
         list.resize(maxCount);
@@ -1816,6 +1852,10 @@ void MainWindow::sessionCapture(const json& p, sess::Responder reply)
     auto spec = lt::captureSpecFromJson(p, m_device.info().channels, err);
     if (!spec) {
         reply.fail(sess::error::InvalidParams, err);
+        return;
+    }
+    if (spec->segments > 1 && (p.contains("out_vcd") || p.contains("out_csv"))) {
+        reply.fail(sess::error::InvalidParams, lt::kSegmentedTimelineError);
         return;
     }
     auto opts = lt::documentOptionsFromJson(p, true, m_device.info().channels, spec->channels, err);

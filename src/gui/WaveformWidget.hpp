@@ -77,6 +77,7 @@ public:
     // Automatic anomaly markers (computed from the capture, independent of annotations()).
     [[nodiscard]] bool showAnomalyMarkers() const noexcept { return m_showAnomalies; }
     [[nodiscard]] const std::vector<lt::AnomalyIncident>& anomalies() const noexcept { return m_anomalies; }
+    [[nodiscard]] const std::vector<std::size_t>& segmentStarts() const noexcept { return m_segmentStarts; }
 
     [[nodiscard]] QSize sizeHint() const override { return {900, 420}; }
     [[nodiscard]] QSize minimumSizeHint() const override;
@@ -105,6 +106,8 @@ public Q_SLOTS:
     // Incidents over the whole capture, drawn as ruler markers; does not touch annotations().
     void setAnomalies(std::vector<lt::AnomalyIncident> anomalies);
     void setShowAnomalyMarkers(bool show);
+    // Segmented capture: first stored sample of every trigger window (drawn as seams; empty = continuous).
+    void setSegmentStarts(std::vector<std::size_t> starts);
     void setCursorA(std::size_t sample);
     void setCursorB(std::size_t sample);
     void setSnapToEdges(bool enabled);
@@ -158,6 +161,7 @@ private:
     void drawCursors(QPainter& p, const QRectF& plot) const;
     void drawAnnotations(QPainter& p, const QRectF& plot) const;
     void drawAnomalyMarkers(QPainter& p, const QRectF& plot) const;
+    void drawSegmentSeams(QPainter& p, const QRectF& plot) const;
     void updateViewWidth();
 
     lt::CaptureBuffer m_buffer;
@@ -170,6 +174,7 @@ private:
 
     QWidget* m_emptyCard = nullptr;
     std::vector<lt::AnomalyIncident> m_anomalies;
+    std::vector<std::size_t> m_segmentStarts;
     bool m_showAnomalies = true;
     double m_rowHeightPx = 0;  // 0 = auto
     double m_scrollY = 0;

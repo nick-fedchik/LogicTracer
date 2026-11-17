@@ -11,7 +11,9 @@ All notable changes are documented here. The format follows
   and the summary, latency, `--expect` and `--invariant` results are combined; the JSON gains `segments`
   (layout and one row per window), latency events and invariant examples carry their window, and the events
   CSV a `segment` column. `analyze` re-splits a saved segmented capture; VCD/CSV exports are refused because
-  the time between windows is not recorded. Replay devices support it.
+  the time between windows is not recorded. Replay devices support it. The GUI session and MCP accept
+  `segments`; the GUI marks every window start with a dashed seam and analyses (report, anomaly markers)
+  window by window.
 - `--invariant` protocol rules for `capture` and `analyze` (and the `invariant` session/MCP parameter):
   `never(EXPR)`, `always(EXPR)` with `! & | ( )` over channels, `onehot`/`onehot0`, `within(A[:edge], B[:edge], T)`,
   `stable(D..., CLK[:edge], setup=T, hold=T)` and `bus(D..., settle=T[, gap=G])`, with an optional `settle=`

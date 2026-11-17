@@ -665,6 +665,33 @@ private Q_SLOTS:
         QCOMPARE(reader.waveform()->capture().samples(), buf.samples());
     }
 
+    // A saved segmented capture opens with window seams and a window-by-window report and anomaly list.
+    void segmentedCaptureFileShowsWindows()
+    {
+        QTemporaryDir dir;
+        const QString jsonFile = dir.filePath("seg.json");
+        std::vector<uint32_t> s = {0, 0, 1, 1, 3, 3, 3, 3};
+        for (int k = 0; k < 2; ++k)
+            s.insert(s.end(), {1, 1, 3, 3, 3, 3});
+        const lt::CaptureBuffer buf({{0, "A"}, {1, "B"}}, 1'000'000, 2, s);
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        auto doc = lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true);
+        doc["segments"] = {{"layout", lt::toJson(lt::SegmentLayout{3, 2, 6, uint8_t{0}, false})}};
+        QVERIFY(lt::writeJsonFile(jsonFile.toStdString(), doc));
+
+        MainWindow win;
+        QString err;
+        QVERIFY2(win.openCaptureFile(jsonFile, &err), qPrintable(err));
+        QCOMPARE(win.waveform()->segmentStarts(), (std::vector<std::size_t>{0, 8, 14}));
+        QVERIFY(win.aiReport().contains("**3 trigger windows**"));
+        for (const auto& a : win.waveform()->anomalies())
+            QVERIFY(a.detail.rfind("window ", 0) == 0);
+
+        win.loadDemo();  // a continuous capture clears the seams
+        QVERIFY(win.waveform()->segmentStarts().empty());
+    }
+
     void snapToEdgeAndAiCopyModesWork()
     {
         MainWindow win;
