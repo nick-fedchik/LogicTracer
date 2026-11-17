@@ -70,7 +70,10 @@ jobs:
             $exe = (Get-ChildItem build -Recurse -Filter "logictracer-$t-tests.exe" | Select-Object -First 1).FullName
             & $exe -o "$t.txt,txt" -v1 | Out-Null
             Write-Host "=== $t exit code $LASTEXITCODE (last lines) ==="
-            if (Test-Path "$t.txt") { Get-Content "$t.txt" -Tail 15 }
+            if (Test-Path "$t.txt") {
+              Select-String -Path "$t.txt" -Pattern "FAIL!" -Context 0,4 | ForEach-Object { $_.ToString() }
+              Get-Content "$t.txt" -Tail 2
+            }
           }
 
   firmware:
