@@ -294,6 +294,11 @@ Qt 6 Widgets (`WaveformWidget`, `MainWindow`):
 * **AI markers:** through the IPC session an agent can call
   `logictracer-cli annotate --time 50.12ms --label "Jetson pulse start" --color red`, and the marker
   appears on the engineer's waveform immediately.
+* **Tools → Self-test** runs the self-test (§2.7) on the connected device with the default jumpers and shows
+  the PASS/FAIL table (the JSON report under *Show Details*); the session method `selftest` (parameters
+  `a`, `b`, `freq`, `keep_dir`) serves the CLI and MCP while the GUI holds the port.
+* **Help → About LogicTracer** shows the version, author, licence and project links (also
+  `logictracer-cli about`).
 
 ### 4.4. MCP server (`logictracer-mcp`)
 JSON-RPC 2.0, one message per line over stdio (stdout carries only protocol traffic, logs go to
@@ -306,10 +311,12 @@ stderr); protocol versions 2024-11-05, 2025-03-26 and 2025-06-18.
 | `lt_configure_and_capture` | Capture with trigger and timeout; compact analytics, latency, assertions, optional files |
 | `lt_get_view` | What the engineer sees in the GUI (range, cursors, annotations), optionally the AI report |
 | `lt_add_annotation` / `lt_clear_annotations` | Markers on the engineer's timeline |
+| `lt_set_view` / `lt_get_anomalies` | Steer the engineer's view; list the anomalies of the capture on screen |
+| `lt_self_test` | Check the analyzer against its own test-signal generator before trusting a measurement (§2.7) |
 
 Results carry `content[0].text` and `structuredContent` with the same JSON; `isError = true` only for
-real failures (a `TIMEOUT` is a valid result with `line_dump`). If `logictracer-gui` is running and
-connected, `capture` / `probe` are **routed through the GUI**, so the engineer sees what the agent
+real failures (a `TIMEOUT` is a valid result with `line_dump`) and for a self-test with a failed check. If `logictracer-gui` is running and
+connected, `capture` / `probe` / `selftest` are **routed through the GUI**, so the engineer sees what the agent
 requested and the port is not contended. Otherwise the device is opened directly (`--port`). Files
 requested by an agent are confined to `--output-dir`.
 

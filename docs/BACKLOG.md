@@ -25,6 +25,8 @@ open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not p
 - Verified on a Pico at 1, 3, 10, 24, 50 and 100 MHz; 50 consecutive runs at 100 MHz passed. It found and
   fixed the t = 0 off-by-one, the phantom pre-trigger samples, the generator being cut off by captures and
   the slow TIMEOUT.
+- [x] In the GUI (Tools → Self-test) and MCP (`lt_self_test`), routed through the GUI session when it
+      holds the port; verified on the Pico through the GUI, CLI and MCP.
 - Pico 2: the generator builds for it but has never run on one (no board; not planned). The Turbo image
   has not been run through the self-test either (see B-02).
 

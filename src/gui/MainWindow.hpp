@@ -5,6 +5,7 @@
 
 #include "device/AsyncDevice.hpp"
 #include "services/Operations.hpp"
+#include "services/SelfTest.hpp"
 #include "services/Session.hpp"
 #include "gui/WaveformWidget.hpp"
 
@@ -12,6 +13,7 @@
 
 #include <deque>
 #include <functional>
+#include <memory>
 
 class QCheckBox;
 class QComboBox;
@@ -171,6 +173,9 @@ private:
     bool checkCaptureId(const nlohmann::json& params, lt::session::Responder& reply);
     void sessionCapture(const nlohmann::json& params, lt::session::Responder reply);
     void sessionProbe(const nlohmann::json& params, lt::session::Responder reply);
+    // Runs the self-test on the worker thread; answers `reply` (session) or shows the result (menu).
+    void startSelfTest(const lt::SelfTestOptions& options, std::optional<lt::session::Responder> reply);
+    void onTaskFinished();
     [[nodiscard]] nlohmann::json stateJson() const;
     void buildUi();
     void buildMenus();
@@ -236,6 +241,11 @@ private:
 
     lt::session::Server m_session;
     std::optional<Pending> m_pending;
+    struct SelfTestRun {
+        std::shared_ptr<lt::SelfTestOutcome> outcome;
+        std::optional<lt::session::Responder> reply;
+    };
+    std::optional<SelfTestRun> m_selfTest;
     QString m_triggerDescription;
     QString m_pendingTriggerDescription;
     lt::SetupInfo m_setup;      // setup of the entry on screen (editable)

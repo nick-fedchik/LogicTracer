@@ -126,7 +126,7 @@ private Q_SLOTS:
         }
         const std::set<std::string> expected{"lt_detect_devices", "lt_probe_inputs", "lt_configure_and_capture",
                                              "lt_add_annotation", "lt_get_view", "lt_clear_annotations", "lt_set_view",
-                                             "lt_get_anomalies"};
+                                             "lt_get_anomalies", "lt_self_test"};
         QVERIFY(names == expected);
     }
 
@@ -197,6 +197,10 @@ private Q_SLOTS:
         const auto segVcd = client.tool("lt_configure_and_capture", {{"channels", "1"}, {"trigger", "1:rising"},
                                                                      {"segments", 3}, {"out_vcd", "x.vcd"}});
         QVERIFY(segVcd["result"]["isError"].get<bool>());
+
+        const auto badSelf = client.tool("lt_self_test", {{"a", 0}});
+        QVERIFY(badSelf["result"]["isError"].get<bool>());
+        QVERIFY(badSelf["result"]["content"][0]["text"].get<std::string>().find("channel number") != std::string::npos);
 
         const auto bad = client.tool("lt_configure_and_capture", {{"channels", "1"}, {"samples", "lots"}});
         QVERIFY(bad["result"]["isError"].get<bool>());

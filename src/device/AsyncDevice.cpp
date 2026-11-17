@@ -79,7 +79,15 @@ public:
         Q_EMIT probeFinished(r);
     }
 
+    void doTask(const std::function<void(IDevice&)>& task)
+    {
+        if (m_conn)
+            task(*m_conn);
+        Q_EMIT taskFinished();
+    }
+
 Q_SIGNALS:
+    void taskFinished();
     void opened(bool ok, const QString& error, const lt::DeviceInfo& info);
     void closed();
     void progress(int stage);
@@ -108,6 +116,7 @@ AsyncDevice::AsyncDevice(QObject* parent) : QObject(parent)
     connect(m_worker, &AsyncWorker::progress, this, &AsyncDevice::progress);
     connect(m_worker, &AsyncWorker::captureFinished, this, &AsyncDevice::onCaptureFinished);
     connect(m_worker, &AsyncWorker::probeFinished, this, &AsyncDevice::onProbeFinished);
+    connect(m_worker, &AsyncWorker::taskFinished, this, &AsyncDevice::onTaskFinished);
     m_thread->start();
 }
 
@@ -168,6 +177,22 @@ bool AsyncDevice::startProbe(const std::vector<lt::ChannelInfo>& channels, int w
         m_worker, [worker = m_worker, channels, windowMs, frequency] { worker->doProbe(channels, windowMs, frequency); },
         Qt::QueuedConnection);
     return true;
+}
+
+bool AsyncDevice::startTask(std::function<void(lt::IDevice&)> task)
+{
+    if (m_busy || !m_connected || !task)
+        return false;
+    setBusy(true);
+    QMetaObject::invokeMethod(
+        m_worker, [worker = m_worker, task = std::move(task)] { worker->doTask(task); }, Qt::QueuedConnection);
+    return true;
+}
+
+void AsyncDevice::onTaskFinished()
+{
+    setBusy(false);
+    Q_EMIT taskFinished();
 }
 
 void AsyncDevice::requestCancel()

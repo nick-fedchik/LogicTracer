@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace lt {
@@ -34,5 +35,11 @@ struct SelfTestOutcome {
 
 // Runs every check on an open device; the generator is always stopped before returning.
 [[nodiscard]] SelfTestOutcome runSelfTest(IDevice& device, const SelfTestOptions& options);
+
+// Session / MCP parameters: a, b (1-based channels, default 3 and 4), freq (Hz, number or "10M"), keep_dir.
+[[nodiscard]] std::optional<SelfTestOptions> selfTestOptionsFromJson(const nlohmann::json& params, std::string& error);
+
+// The report as a plain-text table (one line per check and a PASS/FAIL verdict).
+[[nodiscard]] std::string selfTestTable(const nlohmann::json& doc);
 
 }  // namespace lt

@@ -6,6 +6,8 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Self-test in the GUI (**Tools → Self-test**) and for AI agents (MCP tool `lt_self_test`); while the GUI
+  holds the port, `logictracer-cli selftest` and MCP run it through the GUI session (method `selftest`).
 - `logictracer-cli about` (and `--about`, `--json`) and a GUI `Help` menu with `About LogicTracer` and
   `About Qt`: version, author, licence and project links.
 

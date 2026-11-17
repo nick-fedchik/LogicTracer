@@ -7,6 +7,7 @@
 #include "core/Paths.hpp"
 #include "core/Segments.hpp"
 #include "core/SignalAnalyzer.hpp"
+#include "core/ArgParsing.hpp"
 #include "services/Operations.hpp"
 
 #include <algorithm>
@@ -639,6 +640,65 @@ private:
 SelfTestOutcome runSelfTest(IDevice& device, const SelfTestOptions& options)
 {
     return Runner(device, options).run();
+}
+
+std::optional<SelfTestOptions> selfTestOptionsFromJson(const json& params, std::string& error)
+{
+    if (!params.is_object()) {
+        error = "parameters must be an object";
+        return std::nullopt;
+    }
+    SelfTestOptions o;
+    for (const char* key : {"a", "b"}) {
+        if (!params.contains(key))
+            continue;
+        const auto& v = params[key];
+        if (!v.is_number_integer() || v.get<int64_t>() < 1 || v.get<int64_t>() > 32) {
+            error = std::string(key) + " must be a channel number 1..32";
+            return std::nullopt;
+        }
+        (key[0] == 'a' ? o.channelA : o.channelB) = static_cast<uint8_t>(v.get<int>() - 1);
+    }
+    if (params.contains("freq")) {
+        const auto& v = params["freq"];
+        std::optional<uint64_t> f;
+        if (v.is_number_unsigned())
+            f = v.get<uint64_t>();
+        else if (v.is_string())
+            f = cli::parseQuantity(v.get<std::string>());
+        if (!f || *f == 0 || *f > UINT32_MAX) {
+            error = "freq must be a sample rate in Hz, e.g. 100000000 or \"10M\"";
+            return std::nullopt;
+        }
+        o.frequency = static_cast<uint32_t>(*f);
+    }
+    if (params.contains("keep_dir")) {
+        if (!params["keep_dir"].is_string()) {
+            error = "keep_dir must be a string";
+            return std::nullopt;
+        }
+        o.keepDir = params["keep_dir"].get<std::string>();
+    }
+    return o;
+}
+
+std::string selfTestTable(const json& doc)
+{
+    std::ostringstream s;
+    const auto& setup = doc.at("setup");
+    s << "A = CH" << setup["a"]["channel"].get<int>() << " (GP0), B = CH" << setup["b"]["channel"].get<int>()
+      << " (GP1), " << setup["frequency"].get<uint64_t>() / 1e6 << " MHz\n";
+    for (const auto& c : doc.at("checks")) {
+        auto st = c["status"].get<std::string>();
+        auto name = c["name"].get<std::string>();
+        st.resize(std::max<std::size_t>(st.size(), 5), ' ');
+        name.resize(std::max<std::size_t>(name.size(), 18), ' ');
+        s << "  " << st << ' ' << name << ' ' << c["message"].get<std::string>() << '\n';
+    }
+    const auto& sum = doc.at("summary");
+    s << (doc.value("status", std::string()) == "OK" ? "PASS" : "FAIL") << ": " << sum["passed"].get<int>()
+      << " passed, " << sum["failed"].get<int>() << " failed, " << sum["skipped"].get<int>() << " skipped\n";
+    return s.str();
 }
 
 }  // namespace lt

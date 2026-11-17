@@ -220,9 +220,11 @@ bits + 1; the next number is the core's external trigger input.
 { "mcpServers": { "logictracer": { "command": "/path/to/logictracer-mcp" } } }
 ```
 
-Tools: `lt_detect_devices`, `lt_probe_inputs`, `lt_configure_and_capture`, `lt_get_view`,
-`lt_add_annotation`, `lt_clear_annotations`. While `logictracer-gui` is open, device calls are routed
-through it so the engineer sees what the agent requested.
+Tools: `lt_detect_devices`, `lt_probe_inputs`, `lt_configure_and_capture`, `lt_self_test`, `lt_get_view`,
+`lt_set_view`, `lt_get_anomalies`, `lt_add_annotation`, `lt_clear_annotations`. While `logictracer-gui` is
+open, device calls are routed through it so the engineer sees what the agent requested. `lt_self_test` lets
+an agent check the analyzer itself (two jumpers, see [docs/SELFTEST.md](docs/SELFTEST.md)) before it
+trusts a measurement.
 
 ## Firmware
 

@@ -9,6 +9,7 @@
 #include <QString>
 
 #include <chrono>
+#include <functional>
 #include <vector>
 
 class QThread;
@@ -44,6 +45,9 @@ public Q_SLOTS:
     void close();
     bool startCapture(const lt::CaptureConfig& config);
     bool startProbe(const std::vector<lt::ChannelInfo>& channels, int windowMs = 10, uint32_t frequency = 1'000'000);
+    // Runs `task` on the worker thread with the open device (a longer operation built from captures, such as
+    // the self-test); emits taskFinished() when it returns. Returns false if busy or not connected.
+    bool startTask(std::function<void(lt::IDevice&)> task);
     // Aborts the running capture/probe (finishes with CaptureStatus::Cancelled). No-op when idle.
     void requestCancel();
 
@@ -54,12 +58,14 @@ Q_SIGNALS:
     void captureFinished(const lt::CaptureResult& result);
     void probeFinished(const lt::ProbeResult& result);
     void busyChanged(bool busy);
+    void taskFinished();
 
 private Q_SLOTS:
     void onOpened(bool ok, const QString& error, const lt::DeviceInfo& info);
     void onClosed();
     void onCaptureFinished(const lt::CaptureResult& result);
     void onProbeFinished(const lt::ProbeResult& result);
+    void onTaskFinished();
 
 private:
     void setBusy(bool busy);

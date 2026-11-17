@@ -25,6 +25,11 @@ logictracer-cli selftest --port /dev/ttyACM0 --json     # docs/schema/selftest.s
 logictracer-cli selftest --freq 10M --keep /tmp/st      # another sample rate; save failed checks' captures
 ```
 
+The same self-test is available as **Tools → Self-test** in `logictracer-gui` (default channels; the JSON
+report under *Show Details*) and as the MCP tool `lt_self_test` (`a`, `b`, `freq`), so an AI agent can check
+the analyzer before it trusts a measurement. While the GUI holds the port, the CLI and MCP run it through
+the GUI.
+
 `--freq` takes 1 MHz up to the device maximum (default). Pulse widths, periods and gaps scale with the sample
 period (about 200 samples per pulse at every rate); the A → B delays stay absolute. A run takes about 2 s.
 The generator is always stopped at the end.

@@ -1203,7 +1203,8 @@ int cmdSelftest(const QStringList& args, Output o)
 {
     QCommandLineParser p;
     p.setApplicationDescription(
-        "Check the capture device against its own test-signal generator (LogicTracer firmware on a Pico or Pico 2).\n"
+        "Check the capture device against its own test-signal generator (LogicTracer firmware on a Pico; Pico 2\n"
+        "untested). Runs through the GUI when it holds the port.\n"
         "Wiring: jumper GP0 (pin 1) to the --a channel and GP1 (pin 2) to the --b channel; the defaults CH3 / CH4\n"
         "are GP4 (pin 6) / GP5 (pin 7). Checks: wiring, edge trigger position, pulse widths, A->B latency bounds,\n"
         "segmented trigger times, idle levels, trigger timeout. Exit 0 = all passed, 3 = a check failed.");
@@ -1215,6 +1216,8 @@ int cmdSelftest(const QStringList& args, Output o)
         {"freq", "Sample rate, 1M up to the device maximum (default: the maximum).", "Hz"},
         {"keep", "Save the capture of every failed check to this directory (lossless JSON).", "dir"},
         {"timeout", "Handshake timeout in ms (default 3000).", "ms", "3000"},
+        {"socket", "Session socket (default: $LOGICTRACER_SOCKET or the per-user default).", "path"},
+        {"no-session", "Do not run through a GUI session holding the port."},
     });
     if (auto rc = parse(p, args, o))
         return *rc;
@@ -1243,27 +1246,34 @@ int cmdSelftest(const QStringList& args, Output o)
             return report(o, ExitError, "--keep: cannot create '" + options.keepDir + "': " + ec.message());
     }
 
-    std::string error;
-    auto device = openDevice(p, *timeout, error);
-    if (!device)
-        return report(o, ExitError, error);
-    const auto outcome = lt::runSelfTest(*device, options);
-    if (!outcome.error.empty())
-        return report(o, ExitError, outcome.error);
+    lt::SelfTestOutcome outcome;
+    const QString sock = p.isSet("no-session") ? QString{} : socketPathFrom(p);
+    if (sessionHoldsTargetPort(sock, p.isSet("port") ? str(p.value("port")) : std::string{})) {
+        json params = {{"a", options.channelA + 1}, {"b", options.channelB + 1}};
+        if (options.frequency)
+            params["freq"] = options.frequency;
+        if (!options.keepDir.empty())  // the GUI resolves relative paths against its own directory
+            params["keep_dir"] = lt::utf8FromPath(std::filesystem::absolute(lt::pathFromUtf8(options.keepDir)));
+        const auto r = lt::session::call(sock, "selftest", params, 120'000);
+        if (!r.ok)
+            return report(o, r.errorCode == lt::session::error::InvalidParams ? ExitUsage : ExitError, r.error);
+        outcome.doc = r.result;
+        outcome.passed = r.result.value("status", std::string()) == "OK";
+    } else {
+        std::string error;
+        auto device = openDevice(p, *timeout, error);
+        if (!device)
+            return report(o, ExitError, error);
+        outcome = lt::runSelfTest(*device, options);
+        if (!outcome.error.empty())
+            return report(o, ExitError, outcome.error);
+    }
     const json& doc = outcome.doc;
     if (o.json) {
         std::cout << doc.dump(2) << std::endl;
     } else {
-        const auto& info = device->info();
-        std::cout << "Self-test of " << info.port << " (" << info.version.raw << "), A = CH"
-                  << doc["setup"]["a"]["channel"].get<int>() << ", B = CH" << doc["setup"]["b"]["channel"].get<int>()
-                  << ", " << lt::formatHz(doc["setup"]["frequency"].get<uint32_t>()) << "\n";
-        for (const auto& c : doc["checks"])
-            std::cout << "  " << std::left << std::setw(5) << c["status"].get<std::string>() << ' ' << std::setw(18)
-                      << c["name"].get<std::string>() << ' ' << c["message"].get<std::string>() << '\n';
-        const auto& sum = doc["summary"];
-        std::cout << (outcome.passed ? "PASS" : "FAIL") << ": " << sum["passed"].get<int>() << " passed, "
-                  << sum["failed"].get<int>() << " failed, " << sum["skipped"].get<int>() << " skipped\n";
+        std::cout << "Self-test of " << doc["device"].value("port", std::string()) << " ("
+                  << doc["device"].value("version", std::string()) << "), " << lt::selfTestTable(doc);
     }
     return outcome.passed ? ExitOk : ExitExpectFailed;
 }

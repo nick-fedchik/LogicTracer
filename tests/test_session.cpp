@@ -399,6 +399,10 @@ private Q_SLOTS:
         auto r = awaitOffThread([path] { return sess::call(path, "capture", {{"channels", "1,2"}}); });
         QVERIFY(!r.ok);
         QCOMPARE(r.errorCode, sess::error::NoDevice);
+        r = awaitOffThread([path] { return sess::call(path, "selftest", json::object()); });
+        QCOMPARE(r.errorCode, sess::error::NoDevice);
+        r = awaitOffThread([path] { return sess::call(path, "selftest", {{"a", 0}}); });
+        QCOMPARE(r.errorCode, sess::error::InvalidParams);
 
         win.setPortText(QString::fromStdString(dev.port()));
         for (auto* b : win.findChildren<QPushButton*>())
@@ -451,6 +455,18 @@ private Q_SLOTS:
         const auto cliProbe = runCli({"probe", "--port", QString::fromStdString(dev.port()), "--channels", "1,2", "--json"}, path);
         QVERIFY2(cliProbe.exitCode == 0, qPrintable(cliProbe.out));
         QCOMPARE(cliProbe.doc["status"].get<std::string>(), std::string("OK"));
+
+        // Self-test through the GUI: this firmware has no generator, which the answer must say; the GUI stays usable.
+        r = awaitOffThread([path] { return sess::call(path, "selftest", {{"freq", "10M"}}, 10000); });
+        QVERIFY(!r.ok);
+        QCOMPARE(r.errorCode, sess::error::Failed);
+        QVERIFY2(r.error.find("test-signal generator") != std::string::npos, r.error.c_str());
+        const auto cliSelf = runCli({"selftest", "--port", QString::fromStdString(dev.port()), "--json"}, path);
+        QCOMPARE(cliSelf.exitCode, 1);
+        QVERIFY(cliSelf.doc["error"].get<std::string>().find("test-signal generator") != std::string::npos);
+        QVERIFY(!win.device().isBusy());
+        r = awaitOffThread([path] { return sess::call(path, "probe", {{"channels", "1"}, {"window_ms", 2}}, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
     }
 
     void cliAiAndCopyWriteToClipboardBackend()

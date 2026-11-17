@@ -6,6 +6,7 @@
 #include "core/ArgParsing.hpp"
 #include "core/Exporters.hpp"
 #include "services/Operations.hpp"
+#include "services/SelfTest.hpp"
 #include "services/Session.hpp"
 
 #include <algorithm>
@@ -148,6 +149,18 @@ json McpServer::toolList()
              "pulses, min/max pulse width, frequency, duty cycle, glitches). On TIMEOUT (status \"TIMEOUT\") the "
              "result includes line_dump with the current level of every channel.",
              schema(capture)),
+        tool("lt_self_test",
+             "Check the analyzer itself before trusting its measurements: the device's test-signal generator "
+             "(GP0/GP1, exact timing) is looped back by two jumpers (GP0 -> GP4 = CH3, GP1 -> GP5 = CH4 by default) "
+             "and every capture feature is compared with the known stimulus (trigger position, pre-trigger data, "
+             "pulse widths, A->B latency bounds, segment trigger times, idle levels, timeout). status OK = every "
+             "check passed; FAILED lists the failing checks (a wiring failure names the missing jumper). Needs "
+             "LogicTracer firmware 0.6+ on a Pico; takes about 2 s. Do not run it while a device under test drives "
+             "those channels.",
+             schema({{"port", prop("string", "Serial port; default: the GUI's device or the first capture device found.")},
+                     {"a", prop("integer", "Channel wired to GP0 (default 3).")},
+                     {"b", prop("integer", "Channel wired to GP1 (default 4).")},
+                     {"freq", quantity("Sample rate (default: the device maximum, at least 1M).")}})),
         tool("lt_add_annotation",
              "Place a marker on the timeline of the engineer's open logictracer-gui window. Time is relative to "
              "the capture's trigger (t=0).",
@@ -352,6 +365,32 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
     }
     if (name == "lt_probe_inputs" || name == "lt_configure_and_capture")
         return runDeviceTool(name, args);
+    if (name == "lt_self_test") {
+        if (args.contains("port") && !args["port"].is_string())
+            return errorResult("port must be a string");
+        json params = args;
+        params.erase("port");
+        params.erase("keep_dir");  // no file output from MCP
+        std::string error;
+        const auto options = selfTestOptionsFromJson(params, error);
+        if (!options)
+            return errorResult(error);
+        const std::string requestedPort = args.value("port", std::string{});
+        if (sessionHoldsDevice(requestedPort)) {
+            const auto r = session::call(m_options.socketPath, "selftest", params, 120'000);
+            if (!r.ok)
+                return errorResult(r.error);
+            return textResult(r.result, r.result.value("status", std::string()) != "OK");
+        }
+        auto device = openDevice(requestedPort.empty() ? m_options.defaultPort : requestedPort,
+                                 std::chrono::milliseconds(3000), error);
+        if (!device)
+            return errorResult(error);
+        const auto outcome = runSelfTest(*device, *options);
+        if (!outcome.error.empty())
+            return errorResult(outcome.error);
+        return textResult(outcome.doc, !outcome.passed);
+    }
 
     if (name == "lt_add_annotation") {
         json params = {{"author", "ai"}};

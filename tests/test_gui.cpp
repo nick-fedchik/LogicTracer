@@ -249,6 +249,22 @@ private Q_SLOTS:
         QVERIFY(text.contains(LT_VERSION));
     }
 
+    void selfTestMenuNeedsADevice()
+    {
+        MainWindow win;
+        QAction* self = nullptr;
+        for (auto* act : win.findChildren<QAction*>())
+            if (act->text() == "&Self-test")
+                self = act;
+        QVERIFY(self);
+        self->trigger();
+        bool told = false;
+        for (auto* label : win.findChildren<QLabel*>())
+            told = told || label->text().contains("connect a device");
+        QVERIFY(told);
+        QVERIFY(!win.device().isBusy());
+    }
+
     void hideInactiveChannelsKeepsBufferIndices()
     {
         MainWindow win;

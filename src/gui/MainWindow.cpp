@@ -70,6 +70,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     connect(&m_device, &lt::AsyncDevice::probeFinished, this, &MainWindow::onProbeFinished);
     connect(&m_device, &lt::AsyncDevice::progress, this, &MainWindow::onProgress);
     connect(&m_device, &lt::AsyncDevice::busyChanged, this, &MainWindow::onBusyChanged);
+    connect(&m_device, &lt::AsyncDevice::taskFinished, this, &MainWindow::onTaskFinished);
     connect(&m_device, &lt::AsyncDevice::closed, this, [this] {
         stopRepeat(tr("Repeat stopped: device disconnected"));
         updateControls();
@@ -354,6 +355,11 @@ void MainWindow::buildMenus()
     connect(m_snapAction, &QAction::toggled, m_waveform, &WaveformWidget::setSnapToEdges);
     view->addAction(tr("&Clear cursors"), m_waveform, &WaveformWidget::clearCursors);
     view->addAction(tr("Clear &annotations"), m_waveform, &WaveformWidget::clearAnnotations);
+
+    auto* tools = menuBar()->addMenu(tr("&Tools"));
+    tools->addAction(tr("&Self-test"), this, [this] { startSelfTest({}, std::nullopt); })
+        ->setToolTip(tr("Check the connected device against its own test-signal generator (jumpers GP0 -> GP4 = CH3, "
+                        "GP1 -> GP5 = CH4; LogicTracer firmware 0.6+ on a Pico)"));
 
     auto* help = menuBar()->addMenu(tr("&Help"));
     help->addAction(tr("&About LogicTracer"), this, &MainWindow::showAbout)->setMenuRole(QAction::AboutRole);
@@ -680,6 +686,8 @@ void MainWindow::startProbe()
 
 void MainWindow::onProgress(int stage)
 {
+    if (m_selfTest)
+        return;  // the self-test's own captures: keep its status line
     switch (static_cast<lt::CaptureStage>(stage)) {
     case lt::CaptureStage::Starting: showStatus(tr("Starting capture...")); break;
     case lt::CaptureStage::WaitingForTrigger: showStatus(tr("Waiting for trigger... (Cancel to abort)")); break;
@@ -1663,6 +1671,13 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
         sessionCapture(params, std::move(reply));
     } else if (method == "probe") {
         sessionProbe(params, std::move(reply));
+    } else if (method == "selftest") {
+        std::string err;
+        const auto options = lt::selfTestOptionsFromJson(params, err);
+        if (!options)
+            reply.fail(sess::error::InvalidParams, err);
+        else
+            startSelfTest(*options, std::move(reply));
     } else {
         reply.fail(sess::error::MethodNotFound, "unknown method '" + method + "'");
     }
@@ -1989,6 +2004,67 @@ void MainWindow::sessionProbe(const json& p, sess::Responder reply)
         m_pendingTriggerDescription.clear();
         failed->reply.fail(sess::error::Busy, "could not start the probe");
     }
+}
+
+void MainWindow::startSelfTest(const lt::SelfTestOptions& options, std::optional<sess::Responder> reply)
+{
+    auto refuse = [&](int code, const QString& message) {
+        if (reply)
+            reply->fail(code, message.toStdString());
+        else
+            showStatus(message, true);
+    };
+    if (!m_device.isConnected())
+        return refuse(sess::error::NoDevice, tr("Self-test: connect a device first"));
+    if (m_device.isBusy() || m_pending || m_selfTest)
+        return refuse(sess::error::Busy, tr("Self-test: the device is busy with another operation"));
+    auto outcome = std::make_shared<lt::SelfTestOutcome>();
+    m_selfTest = SelfTestRun{outcome, std::move(reply)};
+    showStatus(tr("Self-test running (about 2 s)..."));
+    if (!m_device.startTask([outcome, options](lt::IDevice& device) { *outcome = lt::runSelfTest(device, options); })) {
+        auto run = std::exchange(m_selfTest, std::nullopt);
+        if (run->reply)
+            run->reply->fail(sess::error::Busy, "could not start the self-test");
+        showStatus(tr("Self-test: could not start"), true);
+    }
+}
+
+void MainWindow::onTaskFinished()
+{
+    updateControls();
+    auto run = std::exchange(m_selfTest, std::nullopt);
+    if (!run)
+        return;
+    const auto& o = *run->outcome;
+    if (!o.error.empty() || o.doc.is_null()) {
+        const std::string error = o.error.empty() ? "the device closed during the self-test" : o.error;
+        showStatus(tr("Self-test: %1").arg(QString::fromStdString(error)), true);
+        if (run->reply)
+            run->reply->fail(sess::error::Failed, error);
+        else
+            QMessageBox::warning(this, tr("Self-test"), QString::fromStdString(error));
+        return;
+    }
+    const auto& sum = o.doc["summary"];
+    showStatus(tr("Self-test %1: %2 passed, %3 failed, %4 skipped")
+                   .arg(o.passed ? tr("PASS") : tr("FAIL"))
+                   .arg(sum["passed"].get<int>())
+                   .arg(sum["failed"].get<int>())
+                   .arg(sum["skipped"].get<int>()),
+               !o.passed);
+    if (run->reply) {
+        run->reply->ok(o.doc);
+        return;
+    }
+    auto* box = new QMessageBox(o.passed ? QMessageBox::Information : QMessageBox::Warning, tr("Self-test"),
+                                QStringLiteral("<pre>%1</pre>")
+                                    .arg(QString::fromStdString(lt::selfTestTable(o.doc)).toHtmlEscaped()),
+                                QMessageBox::Ok, this);
+    box->setObjectName("selfTestResult");
+    box->setTextFormat(Qt::RichText);
+    box->setDetailedText(QString::fromStdString(o.doc.dump(2)));
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->open();
 }
 
 }  // namespace lt::gui
