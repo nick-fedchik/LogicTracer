@@ -362,14 +362,17 @@ void MainWindow::buildMenus()
 
 void MainWindow::showAbout()
 {
+    QMessageBox::about(this, tr("About LogicTracer"), aboutText());  // modeless on macOS
+}
+
+QString MainWindow::aboutText()
+{
     namespace a = lt::about;
     const auto link = [](const char* url) { return QStringLiteral("<a href=\"%1\">%1</a>").arg(url); };
-    QMessageBox::about(
-        this, tr("About LogicTracer"),
-        QStringLiteral("<h3>%1 %2</h3><p>%3</p><p>%4: %5<br>%6: %7<br>%8: %9<br>%10: %11</p><p><small>%12</small></p>")
+    return QStringLiteral("<h3>%1 %2</h3><p>%3</p><p>%4: %5<br>%6: %7<br>%8: %9<br>%10: %11</p><p><small>%12</small></p>")
             .arg(a::kProduct, LT_VERSION, QString::fromUtf8(a::kSummary), tr("Author"), a::kAuthor, tr("Repository"),
                  link(a::kRepository), tr("Issues"), link(a::kIssues), tr("Licence"), a::kLicense)
-            .arg(QString::fromUtf8(a::kUpstream).toHtmlEscaped()));
+            .arg(QString::fromUtf8(a::kUpstream).toHtmlEscaped());
 }
 
 void MainWindow::showStatus(const QString& text, bool error)

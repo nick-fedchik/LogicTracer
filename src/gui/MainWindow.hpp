@@ -28,6 +28,8 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
+    // Rich text of Help > About (version, author, licence, links).
+    [[nodiscard]] static QString aboutText();
     explicit MainWindow(QWidget* parent = nullptr);
 
     [[nodiscard]] WaveformWidget* waveform() noexcept { return m_waveform; }

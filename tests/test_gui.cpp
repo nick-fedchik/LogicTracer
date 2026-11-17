@@ -242,14 +242,8 @@ private Q_SLOTS:
             if (act->text() == "&About LogicTracer")
                 about = act;
         QVERIFY(about);
-        QString text;
-        QTimer::singleShot(0, [&] {
-            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
-                text = box->text();
-                box->accept();
-            }
-        });
-        about->trigger();
+        QCOMPARE(about->menuRole(), QAction::AboutRole);
+        const QString text = MainWindow::aboutText();
         QVERIFY(text.contains("Mykola Fedchyk"));
         QVERIFY(text.contains("https://github.com/nick-fedchik/LogicTracer"));
         QVERIFY(text.contains(LT_VERSION));
