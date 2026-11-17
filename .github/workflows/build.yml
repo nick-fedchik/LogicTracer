@@ -54,7 +54,7 @@ jobs:
       - name: nlohmann-json
         run: vcpkg install nlohmann-json:x64-windows
       - name: Configure
-        run: cmake --preset default -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+        run: cmake --preset default -DLOGICTRACER_WARNINGS_AS_ERRORS=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
       - name: Build
         run: cmake --build --preset default -- -k 0  # report every failing file at once
       - name: Test

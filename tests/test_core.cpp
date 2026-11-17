@@ -455,11 +455,13 @@ private Q_SLOTS:
 
         // Output path sandbox checks (A-04).
         static constexpr std::string_view kVcd[]{".vcd"};
-        QVERIFY(!lt::resolveSafeOutputPath("../escape.vcd", kVcd, "/tmp", &err));
-        QVERIFY(!lt::resolveSafeOutputPath("/tmp/.hidden.vcd", kVcd, "/tmp", &err));
-        QVERIFY(!lt::resolveSafeOutputPath("/tmp/script.sh", kVcd, "/tmp", &err));
-        QVERIFY(!lt::resolveSafeOutputPath("/etc/hosts.vcd", kVcd, "/tmp", &err));
-        QVERIFY(lt::resolveSafeOutputPath("/tmp/valid_out.vcd", kVcd, "/tmp", &err).has_value());
+        QTemporaryDir sandboxDir, outsideDir;
+        const std::string sandbox = sandboxDir.path().toStdString();
+        QVERIFY(!lt::resolveSafeOutputPath("../escape.vcd", kVcd, sandbox, &err));
+        QVERIFY(!lt::resolveSafeOutputPath(sandbox + "/.hidden.vcd", kVcd, sandbox, &err));
+        QVERIFY(!lt::resolveSafeOutputPath(sandbox + "/script.sh", kVcd, sandbox, &err));
+        QVERIFY(!lt::resolveSafeOutputPath(outsideDir.path().toStdString() + "/hosts.vcd", kVcd, sandbox, &err));
+        QVERIFY2(lt::resolveSafeOutputPath(sandbox + "/valid_out.vcd", kVcd, sandbox, &err).has_value(), err.c_str());
 
         // Shell-safe '..' separator in parseLatencyArg and legacy .lac import.
         const auto latSpec = lt::cli::parseLatencyArg("1:rising..2:falling", 24, &err);
