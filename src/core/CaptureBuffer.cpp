@@ -53,6 +53,7 @@ CaptureBuffer CaptureBuffer::slice(std::size_t first, std::size_t count) const
     CaptureBuffer out(m_channels, m_frequency, 0,
                       std::vector<uint32_t>(begin, begin + static_cast<std::ptrdiff_t>(count)));
     out.m_triggerIndex = m_triggerIndex - static_cast<int64_t>(first);
+    out.m_exactTiming = m_exactTiming;
     return out;
 }
 

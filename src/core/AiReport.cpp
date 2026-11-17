@@ -532,7 +532,11 @@ std::string latencyMarkdown(const LatencyStats& l)
             x << std::fixed << std::setprecision(2) << v;
             return x.str();
         };
-        ss << "- Step T = " << ns(t) << " ns; a delay measured as d samples is truly in ((d-1)·T, (d+1)·T)\n";
+        if (l.exact)
+            ss << "- Step T = " << ns(t) << " ns of the design clock; in-design capture: every delay is an exact "
+                  "number of clock cycles\n";
+        else
+            ss << "- Step T = " << ns(t) << " ns; a delay measured as d samples is truly in ((d-1)·T, (d+1)·T)\n";
         std::string hist;
         for (const auto& [d, c] : l.histogram)
             hist += (hist.empty() ? "" : ", ") + std::to_string(d) + "×" + std::to_string(c);
@@ -542,7 +546,13 @@ std::string latencyMarkdown(const LatencyStats& l)
            << ns(l.upperBoundNs(l.p99Samples)) << " ns), **max " << l.maxSamples << " (" << ns(l.maxNs)
            << " ns, true ≤ " << ns(l.upperBoundNs(l.maxSamples)) << " ns)**; mean " << ns(l.meanNs)
            << " ns, stdev " << ns(l.stdevNs) << " ns (nearest-rank percentiles)\n";
-        if (l.constantDelayConsistent())
+        if (l.exact && l.constantDelayConsistent())
+            ss << "- **Verdict: constant delay of " << l.minSamples << " clock cycles (" << ns(l.minNs)
+               << " ns), exact.**\n";
+        else if (l.exact)
+            ss << "- Delay varies by " << (l.maxSamples - l.minSamples)
+               << " clock cycles between pairs (exact cycle counts: real variation, not sampling)\n";
+        else if (l.constantDelayConsistent())
             ss << "- **Verdict: constant-delay consistent.** All pairs fit ONE fixed delay in (" << ns(l.constantDelayLowerNs()) << ", "
                << ns(l.constantDelayUpperNs())
                << ") ns; the histogram spread is sampling phase, not proven jitter\n";
@@ -596,7 +606,9 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
     ss << "- Sample rate: " << formatHz(b.frequency()) << " (period " << formatTime(b.samplePeriodSeconds())
        << "), " << b.size() << " samples, duration "
        << formatTime(static_cast<double>(b.size()) * b.samplePeriodSeconds())
-       << " | quantization ±1 sample (±" << formatTime(b.samplePeriodSeconds()) << ")\n";
+       << (b.exactTiming() ? std::string(" | exact clock cycles of the design (in-design capture)")
+                           : " | quantization ±1 sample (±" + formatTime(b.samplePeriodSeconds()) + ")")
+       << "\n";
     ss << "- Trigger: " << (o.triggerDescription.empty() ? "immediate / unknown" : o.triggerDescription)
        << ", t = 0 at sample " << b.triggerIndex() << "\n";
     ss << "- " << (r.clampedToCursors ? "Cursor range (A..B)" : "Visible range") << ": samples [" << r.first << ", "

@@ -113,6 +113,7 @@ struct LatencyStats {
     bool reactFalling = false;
     double sampleRateHz = 0.0;
     double quantizationStepNs = 0.0;  // 1 LSB = 1e9 / sampleRateHz
+    bool exact = false;               // in-design capture: a delay of d samples is exactly d * T
 
     uint64_t count = 0;               // matched STIM -> REACT pairs
     // STIM edges with no matching REACT: superseded by the next STIM, or the REACT came later than
@@ -160,18 +161,26 @@ struct LatencyStats {
     };
     std::optional<ReversedHint> reversed;
 
+    // Uncertainty of one measured delay: one sample for asynchronous sampling, none for exact timing.
+    [[nodiscard]] double uncertaintyNs() const noexcept { return exact ? 0.0 : quantizationStepNs; }
     [[nodiscard]] double lowerBoundNs(uint32_t deltaSamples) const noexcept
     {
+        if (exact)
+            return static_cast<double>(deltaSamples) * quantizationStepNs;
         return deltaSamples > 0 ? static_cast<double>(deltaSamples - 1) * quantizationStepNs : 0.0;
     }
     [[nodiscard]] double upperBoundNs(uint32_t deltaSamples) const noexcept
     {
-        return static_cast<double>(deltaSamples + 1) * quantizationStepNs;
+        return static_cast<double>(deltaSamples + (exact ? 0 : 1)) * quantizationStepNs;
     }
     // If every pair has the same true delay, each measured d confines it to ((d-1)T, (d+1)T); the
     // intersection over all pairs is ((max-1)T, (min+1)T). It is empty (inconsistent) when the spread
     // exceeds one sample, which proves the true delay itself varies (real jitter, not sampling phase).
-    [[nodiscard]] bool constantDelayConsistent() const noexcept { return count > 0 && maxSamples - minSamples <= 1; }
+    // With exact timing every pair is known exactly, so one delay explains them only if all are equal.
+    [[nodiscard]] bool constantDelayConsistent() const noexcept
+    {
+        return count > 0 && maxSamples - minSamples <= (exact ? 0u : 1u);
+    }
     [[nodiscard]] double constantDelayLowerNs() const noexcept { return lowerBoundNs(maxSamples); }
     [[nodiscard]] double constantDelayUpperNs() const noexcept { return upperBoundNs(minSamples); }
 };

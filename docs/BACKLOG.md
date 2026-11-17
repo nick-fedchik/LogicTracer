@@ -92,7 +92,13 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       demos and offline review; CLI, GUI (`AsyncDevice`) and MCP use the interface.
 - [x] B2: `lt_capture` RTL core (CERN-OHL-W-2.0) with self-checking simulation, Verilator lint and
       Yosys synthesis (18 × RAMB36E1) in CTest/CI; see [hdl/README.md](../hdl/README.md).
-- [ ] B3: board agent + `PynqConnection : IDevice`; integrate `lt_capture` into one DUT top level.
+- [x] B3 (software): board agent `scripts/rigs/pynq-z1/logictracer_agent.py` (UIO or `/dev/mem`, JSON over
+      TCP, loopback by default, an event-driven register model of `lt_capture` for development) and
+      `PynqConnection : IDevice` (`pynq://host[:port]`, rise/fall/external triggers, cancel, probe). Captures
+      carry exact timing: latency bounds collapse to exact cycles, `diff` and `--expect` drop the ±1-sample
+      allowance, the flag survives the JSON. Tested against the model (Python unit tests, C++ connection test).
+- [ ] B3 (hardware): integrate `lt_capture` into one DUT top level, build the bitstream (Vivado), map the
+      AXI window (UIO), run the agent on the board.
 - [ ] B4: live cross-check of the PL core against the RP2040 on the same pins.
       Design: [design/pynq-capture-backend.md](design/pynq-capture-backend.md).
 

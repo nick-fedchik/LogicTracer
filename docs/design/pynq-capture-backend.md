@@ -1,7 +1,9 @@
 # Design: PYNQ-Z1 as a capture backend
 
 Status: B1 (`IDevice`, replay device) and B2 (`lt_capture` RTL with simulation, lint and synthesis
-checks, see [hdl/README.md](../../hdl/README.md)) are done; B3 and B4 are planned.
+checks, see [hdl/README.md](../../hdl/README.md)) are done. B3: the board agent
+(`scripts/rigs/pynq-z1/logictracer_agent.py`, with a register-level model of the core) and `PynqConnection`
+are done and tested against the model; integrating the core into a DUT bitstream and B4 are pending.
 
 ## Why
 

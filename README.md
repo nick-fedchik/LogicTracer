@@ -193,6 +193,23 @@ scripts/rigs/pynq-z1/pynq-burst-hil.sh --bitstream /home/xilinx/my_design.bit \
     --switches "SW0=1,SW1=1" --start "press BTN1"
 ```
 
+### In-design capture on the PYNQ-Z1 (`pynq://`)
+
+With the `lt_capture` core in the FPGA design ([hdl/README.md](hdl/README.md)), the board agent serves it to
+every LogicTracer front-end. Samples are the design's own clock cycles, so delays are exact:
+
+```bash
+# on the board (Python 3 standard library only; --devmem 0x43C00000 instead of --uio works as root)
+python3 logictracer_agent.py --uio /dev/uio0 --probes STIM,REACT
+# on the host: tunnel the agent's loopback port, then use it like any device
+ssh -N -L 7878:localhost:7878 xilinx@pynq &
+build/src/cli/logictracer-cli capture --port pynq://localhost:7878 --freq 100M --samples 10k \
+    --channels 1:STIM,2:REACT --trigger 1:rising --measure-latency 1..2
+```
+
+`--sim` runs the agent with a register-level model of the core (no board needed). Channel numbers are probe
+bits + 1; the next number is the core's external trigger input.
+
 ### MCP
 
 ```json

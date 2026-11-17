@@ -46,6 +46,10 @@ public:
     [[nodiscard]] int64_t triggerIndex() const noexcept { return m_triggerIndex; }
     void setTriggerIndex(int64_t index) noexcept { m_triggerIndex = index; }
     [[nodiscard]] double samplePeriodSeconds() const noexcept { return m_frequency ? 1.0 / m_frequency : 0.0; }
+    // True when the samples are taken in the clock domain of the signals (in-design capture without a
+    // synchronizer): edge positions are exact clock cycles, not ±1 sample of an asynchronous sampler.
+    [[nodiscard]] bool exactTiming() const noexcept { return m_exactTiming; }
+    void setExactTiming(bool exact) noexcept { m_exactTiming = exact; }
 
     [[nodiscard]] bool bit(std::size_t sample, std::size_t channelIndex) const noexcept
     {
@@ -65,6 +69,7 @@ private:
     std::vector<ChannelInfo> m_channels;
     uint32_t m_frequency = 0;
     int64_t m_triggerIndex = 0;
+    bool m_exactTiming = false;
     std::vector<uint32_t> m_samples;
 };
 

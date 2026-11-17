@@ -332,7 +332,7 @@ std::vector<ExpectationCheck> evaluateExpectations(const std::vector<Expectation
                 else if (base == "p95") s = l.p95Samples;
                 else if (base == "p99") s = l.p99Samples;
                 else if (base == "mean")
-                    return upper ? l.meanNs + l.quantizationStepNs : std::max(0.0, l.meanNs - l.quantizationStepNs);
+                    return upper ? l.meanNs + l.uncertaintyNs() : std::max(0.0, l.meanNs - l.uncertaintyNs());
                 else
                     return std::nullopt;
                 return upper ? l.upperBoundNs(s) : l.lowerBoundNs(s);
@@ -468,8 +468,8 @@ std::vector<ExpectationCheck> evaluateExpectations(const std::vector<Expectation
             (c.op == CompareOp::Le || c.op == CompareOp::Lt) && c.metric.ends_with("_ns") &&
             !c.metric.ends_with("_ub_ns") && !c.metric.ends_with("_lb_ns") && c.metric != "stdev_ns" &&
             c.metric != "jitter_ns") {
-            const double ub = *chk.actual + latencyStats->quantizationStepNs;
-            if (!compare(ub, c.op, c.threshold))
+            const double ub = *chk.actual + latencyStats->uncertaintyNs();
+            if (!latencyStats->exact && !compare(ub, c.op, c.threshold))
                 ss << "; INCONCLUSIVE within +-1 sample: true value may reach " << ub << " ns, use "
                    << c.metric.substr(0, c.metric.size() - 3) << "_ub_ns for a guaranteed check";
         }

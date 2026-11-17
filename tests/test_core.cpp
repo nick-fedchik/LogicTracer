@@ -1227,6 +1227,46 @@ private Q_SLOTS:
             QVERIFY2(!lt::parseInvariants(bad, &err), bad);
     }
 
+    // In-design capture (exact timing): a delay of d samples is exactly d cycles, so the bounds collapse,
+    // a 1-cycle difference is a real change, and the flag survives the lossless JSON.
+    void exactTimingRemovesTheQuantizationAllowance()
+    {
+        auto make = [](std::size_t delay, bool exact) {
+            std::vector<uint32_t> s(400, 0u);
+            for (std::size_t t0 : {50u, 150u, 250u})
+                for (std::size_t w = 0; w < 40; ++w) {
+                    s[t0 + w] |= 1u;
+                    s[t0 + delay + w] |= 2u;
+                }
+            lt::CaptureBuffer b({{0, "STIM"}, {1, "REACT"}}, 100'000'000, 0, s);
+            b.setExactTiming(exact);
+            return b;
+        };
+        const auto lat = lt::SignalAnalyzer::analyzeLatency(make(5, true), {0, false, 1, false, std::nullopt});
+        QVERIFY(lat.exact);
+        QCOMPARE(lat.lowerBoundNs(5), 50.0);
+        QCOMPARE(lat.upperBoundNs(5), 50.0);
+        QVERIFY(lat.constantDelayConsistent());
+        QVERIFY(lt::markdownSummary(make(5, true), [] {
+                    lt::ReportOptions o;
+                    o.latency = lt::LatencyPairSpec{0, false, 1, false, std::nullopt};
+                    return o;
+                }()).find("constant delay of 5 clock cycles") != std::string::npos);
+
+        lt::DiffOptions o;
+        o.latency = lt::DiffOptions::Latency{0, false, 1, false};
+        QCOMPARE(lt::diffCaptures(make(5, false), make(6, false), o)["verdict"].get<std::string>(), std::string("equivalent"));
+        QCOMPARE(lt::diffCaptures(make(5, true), make(6, true), o)["verdict"].get<std::string>(), std::string("regression"));
+
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        const auto b = make(5, true);
+        lt::LoadedCapture loaded;
+        QVERIFY(lt::readCaptureJson(lt::captureToJson(b, lt::SignalAnalyzer(opts).analyze(b), true), loaded));
+        QVERIFY(loaded.buffer.exactTiming());
+        QVERIFY(loaded.buffer.slice(10, 100).exactTiming());
+    }
+
     // Segmented capture: windows are analysed one by one, so the seams create no edges or latency pairs, and
     // windows after the first get the trigger edge back through one synthetic pre-trigger sample.
     void segmentsAreAnalysedWindowByWindow()

@@ -476,6 +476,7 @@ nlohmann::json toJson(const DeviceInfo& info)
                         {"channels", info.channels},
                         {"edge_sensitive_trigger", info.supportsEdgeTrigger()},
                         {"segment_trigger_times", info.supportsEdgeBurstTimestamps()},
+                        {"clock_domain", info.dutClock ? "dut" : "async"},
                         {"max_samples",
                          {{"8ch", info.limits(CaptureMode::Channels8).maxTotalSamples},
                           {"16ch", info.limits(CaptureMode::Channels16).maxTotalSamples},
@@ -603,7 +604,9 @@ nlohmann::json toJson(const LatencyStats& lat, bool includeEvents)
         {"coincident_count", lat.coincidentCount},
         {"censor_window_samples", lat.censorWindowSamples},
         {"percentile_method", "nearest_rank"},
-        {"uncertainty_note", "true delay of a pair measured as d samples lies in ((d-1)*T, (d+1)*T)"},
+        {"exact_timing", lat.exact},
+        {"uncertainty_note", lat.exact ? "in-design capture: a delay of d samples is exactly d*T (DUT clock cycles)"
+                                       : "true delay of a pair measured as d samples lies in ((d-1)*T, (d+1)*T)"},
         {"outlier_count", lat.outlierCount},
     };
     if (lat.count) {
@@ -670,7 +673,7 @@ nlohmann::json captureToJson(const CaptureBuffer& buffer, const std::vector<Chan
     for (const auto& st : stats)
         channels.push_back(toJson(st, includeEdges, board));
     const double duration = static_cast<double>(buffer.size()) * buffer.samplePeriodSeconds();
-    return {{"schema_version", kCaptureSchemaVersion},
+    nlohmann::json j = {{"schema_version", kCaptureSchemaVersion},
             {"format", "logictracer-capture-v1"},
             {"captured_at_utc", utcNowIso8601()},
             {"sample_rate_hz", buffer.frequency()},
@@ -682,6 +685,9 @@ nlohmann::json captureToJson(const CaptureBuffer& buffer, const std::vector<Chan
             {"duration_us", duration * kUs},
             {"time_origin", "trigger (t=0 at sample index trigger_sample)"},
             {"channels", std::move(channels)}};
+    if (buffer.exactTiming())
+        j["exact_timing"] = true;  // in-design capture: sample instants are the DUT clock edges
+    return j;
 }
 
 void writeVcd(std::ostream& out, const CaptureBuffer& buffer)
@@ -943,6 +949,8 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
     out = {};
     out.buffer = CaptureBuffer(std::move(channels), static_cast<uint32_t>(rate), 0, std::move(samples));
     out.buffer.setTriggerIndex(triggerSample);
+    out.buffer.setExactTiming(cap.contains("exact_timing") && cap["exact_timing"].is_boolean() &&
+                              cap["exact_timing"].get<bool>());
 
     if (doc.contains("trigger_description") && doc["trigger_description"].is_string()) {
         out.triggerDescription = doc["trigger_description"].get<std::string>();

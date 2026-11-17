@@ -6,6 +6,10 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- PYNQ in-design capture backend: `logictracer_agent.py` serves the `lt_capture` core (UIO, `/dev/mem`, or a
+  register-level model with `--sim`) over TCP, and `--port pynq://host[:port]` uses it from the CLI, GUI and
+  MCP. Such captures have exact timing: latency is reported in exact clock cycles ("constant delay of N
+  cycles"), and `diff` / `--expect` no longer allow ±1 sample for them.
 - Release packages: every published release gets a Windows zip (Qt DLLs included), a macOS app bundle
   (with the CLI and MCP server inside) and a Linux tarball for Ubuntu 24.04, built from the tag in CI.
 - GUI: a `Windows` field next to `Samples` records a segmented capture from the GUI; the pre-flight line

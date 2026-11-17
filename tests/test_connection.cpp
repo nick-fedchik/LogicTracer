@@ -5,6 +5,7 @@
 #include "device/AsyncDevice.hpp"
 #include "FakeDevice.hpp"
 #include "device/PicoConnection.hpp"
+#include "device/PynqConnection.hpp"
 #include "device/ReplayDevice.hpp"
 #include "core/Exporters.hpp"
 #include "services/Operations.hpp"
@@ -19,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <thread>
 
 using namespace std::chrono_literals;
 using fake::Device;
@@ -631,6 +633,84 @@ private Q_SLOTS:
         QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
         QVERIFY(!r.warnings.empty());
         QVERIFY(r.warnings.front().find("x/z") != std::string::npos);
+    }
+
+    // PYNQ in-design capture through the board agent with its simulated lt_capture core.
+    void pynqConnectionAgainstSimulatedCore()
+    {
+#if !defined(LT_AGENT_SCRIPT)
+        QSKIP("Python 3 was not found at configure time");
+#else
+        QProcess agentProc;
+        agentProc.start(LT_PYTHON, {LT_AGENT_SCRIPT, "--sim", "--port", "0"});
+        QVERIFY(agentProc.waitForStarted(5000));
+        QString port;
+        for (int i = 0; i < 100 && port.isEmpty(); ++i) {
+            agentProc.waitForReadyRead(100);
+            const auto line = QString::fromUtf8(agentProc.readAllStandardOutput()).trimmed();
+            if (line.startsWith("LISTENING "))
+                port = line.mid(10);
+        }
+        QVERIFY2(!port.isEmpty(), "the agent did not start");
+        struct Stop {
+            QProcess& p;
+            ~Stop() { p.kill(); p.waitForFinished(2000); }
+        } stop{agentProc};
+
+        const std::string url = "pynq://127.0.0.1:" + port.toStdString();
+        auto dev = lt::createDevice(url);
+        QVERIFY2(dev->open(url, 3000ms), dev->lastError().c_str());
+        QVERIFY(dev->info().dutClock);
+        QCOMPARE(int(dev->info().channels), 2);
+        QCOMPARE(dev->info().maxFrequency, 100'000'000u);
+
+        lt::CaptureConfig c;
+        c.channels = {{0, {}}, {1, {}}};
+        c.frequency = 100'000'000;
+        c.preSamples = 200;
+        c.postSamples = 800;
+        c.trigger = lt::EdgeTrigger{0, false};
+        bool armed = false;
+        dev->setProgressCallback([&](lt::CaptureStage s) { armed |= s == lt::CaptureStage::WaitingForTrigger; });
+        auto r = dev->capture(c);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(armed);
+        QCOMPARE(r.buffer->size(), std::size_t{1000});
+        QCOMPARE(r.buffer->triggerIndex(), int64_t{200});
+        QVERIFY(r.buffer->exactTiming());
+        QCOMPARE(r.buffer->channels()[1].name, std::string("REACT"));  // probe names from the agent
+        QVERIFY(!r.buffer->bit(199, 0) && r.buffer->bit(200, 0));
+        QVERIFY(!r.buffer->bit(204, 1) && r.buffer->bit(205, 1));  // exactly 5 cycles
+        const auto lat = lt::SignalAnalyzer::analyzeLatency(*r.buffer, {0, false, 1, false, std::nullopt});
+        QVERIFY(lat.exact && lat.constantDelayConsistent());
+        QCOMPARE(lat.upperBoundNs(lat.maxSamples), 50.0);
+
+        c.frequency = 1'000'000;  // the core samples at the DUT clock only
+        QVERIFY(dev->capture(c).error.find("--freq 100000000") != std::string::npos);
+        c.frequency = 100'000'000;
+        c.trigger = lt::EdgeTrigger{2, false};  // channel 3 = the core's external trigger input, never asserted
+        c.timeout = 10s;
+        std::thread canceller([&] {
+            std::this_thread::sleep_for(300ms);
+            dev->requestCancel();  // from another thread, like AsyncDevice
+        });
+        QElapsedTimer t;
+        t.start();
+        r = dev->capture(c);
+        canceller.join();
+        QVERIFY2(r.status == lt::CaptureStatus::Cancelled, r.error.c_str());
+        QVERIFY(t.elapsed() < 5000);
+        c.timeout = 100ms;
+        QVERIFY(dev->capture(c).status == lt::CaptureStatus::Timeout);
+
+        const auto probe = dev->probe(c.channels, 1ms, 0);
+        QVERIFY2(probe.status == lt::CaptureStatus::Ok, probe.error.c_str());
+        QCOMPARE(probe.buffer->size(), std::size_t{100'000});
+
+        lt::PynqConnection bad;
+        QVERIFY(!bad.open("pynq://127.0.0.1:1", 500ms));  // nothing listens there
+        QVERIFY(!bad.open("pynq://", 500ms));
+#endif
     }
 
     void replayDeviceRecordsSegments()

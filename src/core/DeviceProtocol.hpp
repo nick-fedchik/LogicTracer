@@ -89,7 +89,7 @@ struct CaptureRequestPacket {
 //   LogicTracer  this project's firmware, identifies as LOGICTRACER_<BOARD>_<SemVer 2.0>
 //                (e.g. LOGICTRACER_PICO_0.2.0); built on the upstream V6_5 protocol with fast polling.
 //   Replay       a recorded capture played back by the host (no firmware involved).
-enum class FirmwareFamily { Upstream, LogicTracer, Replay };
+enum class FirmwareFamily { Upstream, LogicTracer, Replay, Pynq };
 
 struct FirmwareVersion {
     std::string raw;    // full identification line, e.g. "LOGICTRACER_PICO_0.2.0"
@@ -135,6 +135,10 @@ struct DeviceInfo {
     uint32_t bufferSize = 128 * 1024;
     uint8_t channels = 24;
     uint32_t features = 0;  // FEATURES handshake bits (0 for firmware that does not report them)
+    // In-design capture (PYNQ lt_capture): samples are DUT clock cycles, exact unless the probes pass a
+    // synchronizer (syncStages > 0 adds a fixed latency and ±1 cycle). False for external, asynchronous sampling.
+    bool dutClock = false;
+    uint8_t syncStages = 0;
 
     static constexpr uint32_t kFeatureEdgeTrigger = 1u << 0;
     [[nodiscard]] bool supportsEdgeTrigger() const noexcept { return (features & kFeatureEdgeTrigger) != 0; }

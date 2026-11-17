@@ -58,6 +58,7 @@ protected:
 
 // Port syntax selects the implementation:
 //   "replay:<file>"   ReplayDevice: a saved capture (.json, .vcd, .lac) acting as a device
+//   "pynq://host[:port]"  PynqConnection: the in-design FPGA core through the board agent
 //   anything else     PicoConnection: RP2040/RP2350 serial device (e.g. /dev/ttyACM0)
 [[nodiscard]] bool isReplayPort(std::string_view port) noexcept;
 [[nodiscard]] std::unique_ptr<IDevice> createDevice(std::string_view port);

@@ -269,6 +269,7 @@ LatencyStats SignalAnalyzer::mergeLatency(const std::vector<LatencyStats>& windo
     out.reactFalling = first.reactFalling;
     out.sampleRateHz = first.sampleRateHz;
     out.quantizationStepNs = first.quantizationStepNs;
+    out.exact = first.exact;
     std::vector<LatencyEvent> events;
     for (std::size_t w = 0; w < windows.size(); ++w) {
         const auto& l = windows[w];
@@ -323,6 +324,7 @@ LatencyStats SignalAnalyzer::analyzeLatencyImpl(const CaptureBuffer& buffer, con
     out.reactFalling = spec.reactFalling;
     out.sampleRateHz = buffer.frequency();
     out.quantizationStepNs = buffer.frequency() > 0 ? 1e9 / buffer.frequency() : 0.0;
+    out.exact = buffer.exactTiming();
 
     const std::size_t n = buffer.size();
     if (n < 2 || spec.stimChannelIndex >= buffer.channels().size() ||

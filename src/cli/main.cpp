@@ -154,7 +154,11 @@ void printLatency(const lt::LatencyStats& lat)
                   << lat.upperBoundNs(lat.maxSamples) << "), stdev=" << lat.stdevNs << " ns\n  histogram (samples x count):";
         for (const auto& [d, c] : lat.histogram)
             std::cout << ' ' << d << 'x' << c;
-        if (lat.constantDelayConsistent())
+        if (lat.exact)
+            std::cout << (lat.constantDelayConsistent() ? " | exact: constant delay of " + std::to_string(lat.minSamples) +
+                                                              " clock cycles"
+                                                        : std::string(" | exact cycle counts: the delay varies"));
+        else if (lat.constantDelayConsistent())
             std::cout << " | consistent with one fixed delay in (" << lat.constantDelayLowerNs() << ", "
                       << lat.constantDelayUpperNs() << ") ns";
         else

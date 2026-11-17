@@ -27,6 +27,16 @@ logictracer_add_test(logictracer-connection-tests
     DEFINES LT_CLI_PATH="$<TARGET_FILE:logictracer-cli>")
 add_dependencies(logictracer-connection-tests logictracer-cli)
 
+# PYNQ board agent: its lt_capture register model (Python), and PynqConnection against it.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    set(LT_AGENT_SCRIPT "${PROJECT_SOURCE_DIR}/scripts/rigs/pynq-z1/logictracer_agent.py")
+    add_test(NAME logictracer-pynq-agent-tests
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_pynq_agent.py" "${LT_AGENT_SCRIPT}")
+    target_compile_definitions(logictracer-connection-tests PRIVATE
+        LT_PYTHON="${Python3_EXECUTABLE}" LT_AGENT_SCRIPT="${LT_AGENT_SCRIPT}")
+endif()
+
 if(TARGET LogicTracer::Gui)
     logictracer_add_test(logictracer-gui-tests
         SOURCES test_gui.cpp FakeDevice.hpp

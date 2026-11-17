@@ -137,6 +137,7 @@ std::chrono::milliseconds defaultPollLatencyFor(const FirmwareVersion& v) noexce
     switch (v.family) {
     case FirmwareFamily::LogicTracer: return 150ms;
     case FirmwareFamily::Replay: return 0ms;
+    case FirmwareFamily::Pynq: return 0ms;
     case FirmwareFamily::Upstream: break;
     }
     return 2200ms;
@@ -209,7 +210,7 @@ std::optional<FirmwareVersion> parseVersionLine(std::string_view line)
 
 std::string FirmwareVersion::versionString() const
 {
-    if (family == FirmwareFamily::Replay)
+    if (family == FirmwareFamily::Replay || family == FirmwareFamily::Pynq)
         return {};
     if (family == FirmwareFamily::Upstream)
         return std::to_string(major) + "." + std::to_string(minor);
@@ -226,6 +227,7 @@ std::string_view toString(FirmwareFamily family) noexcept
     switch (family) {
     case FirmwareFamily::LogicTracer: return "logictracer";
     case FirmwareFamily::Replay: return "replay";
+    case FirmwareFamily::Pynq: return "pynq";
     case FirmwareFamily::Upstream: break;
     }
     return "upstream";

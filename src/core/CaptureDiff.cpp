@@ -127,7 +127,7 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
     if (latA && latB) {
         const auto& la = *latA;
         const auto& lb = *latB;
-        const double tolerance = la.quantizationStepNs + lb.quantizationStepNs;
+        const double tolerance = la.uncertaintyNs() + lb.uncertaintyNs();
         auto metric = [&](const char* name, double va, double vb, bool hasValue) {
             json m = {{"a", hasValue ? json(va) : json(nullptr)}, {"b", hasValue ? json(vb) : json(nullptr)}};
             if (hasValue) {

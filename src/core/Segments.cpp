@@ -119,6 +119,7 @@ std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const Segm
     out.reserve(layout.count);
     out.emplace_back(buffer.channels(), buffer.frequency(), layout.preSamples,
                      std::vector<uint32_t>(s.begin(), s.begin() + layout.preSamples + layout.postSamples));
+    out.back().setExactTiming(buffer.exactTiming());
     for (uint32_t k = 1; k < layout.count; ++k) {
         const auto first = s.begin() + layout.preSamples + static_cast<std::ptrdiff_t>(k) * layout.postSamples;
         std::vector<uint32_t> w;
@@ -130,6 +131,7 @@ std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const Segm
         w.insert(w.end(), first, first + layout.postSamples);
         CaptureBuffer win(buffer.channels(), buffer.frequency(), 0, std::move(w));
         win.setTriggerIndex(trigBit ? 1 : 0);
+        win.setExactTiming(buffer.exactTiming());
         out.push_back(std::move(win));
     }
     return out;
