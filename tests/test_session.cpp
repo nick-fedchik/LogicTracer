@@ -8,6 +8,7 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QLocalSocket>
 #include <QTimer>
 #include <QProcess>
@@ -411,8 +412,10 @@ private Q_SLOTS:
         QCOMPARE(r.result["status"].get<std::string>(), std::string("OK"));
         QCOMPARE(r.result["capture"]["samples"].get<int>(), 300);
         QCOMPARE(r.result["capture"]["channels"][0]["name"].get<std::string>(), std::string("A"));
-        QCOMPARE(r.result["outputs"]["vcd"].get<std::string>(), vcd);
         QVERIFY(QFile::exists(QString::fromStdString(vcd)));
+        // The session reports the validated (canonical) path; macOS temp dirs sit behind /var -> /private/var.
+        QCOMPARE(QFileInfo(QString::fromStdString(r.result["outputs"]["vcd"].get<std::string>())).canonicalFilePath(),
+                 QFileInfo(QString::fromStdString(vcd)).canonicalFilePath());
         // The engineer sees the capture the agent asked for.
         QCOMPARE(win.waveform()->capture().size(), std::size_t{300});
 

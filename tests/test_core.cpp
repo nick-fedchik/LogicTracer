@@ -939,7 +939,9 @@ private Q_SLOTS:
         QVERIFY(!lt::writeJsonFile(viaLink, {{"x", 1}}, &err, true));
         QVERIFY(!QFile::exists(elsewhere.filePath("out.json")));
         QVERIFY(lt::writeJsonFile(viaLink, {{"x", 1}}, &err, false));  // direct CLI use may follow symlinks
-        QVERIFY(lt::writeJsonFile(dir.filePath("real/out.json").toStdString(), {{"x", 1}}, &err, true));
+        // Confined writes take validated (canonical) paths: macOS temp dirs live behind the /var -> /private/var link.
+        const QString realDir = QFileInfo(dir.filePath("real")).canonicalFilePath();
+        QVERIFY(lt::writeJsonFile((realDir + "/out.json").toStdString(), {{"x", 1}}, &err, true));
         QVERIFY(QDir(dir.filePath("real")).entryList(QDir::Hidden | QDir::Files).size() == 1);  // no temp left
     }
 

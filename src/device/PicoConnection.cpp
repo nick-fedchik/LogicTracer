@@ -53,8 +53,14 @@ bool PicoConnection::open(const std::string& port, milliseconds handshakeTimeout
     close();
     m_error.clear();
     // Opt-in guard for audits and automated harnesses: never touch a serial device by accident.
-    // Pseudo-terminals (/dev/pts/*, used by the test emulators) are not hardware and stay allowed.
-    if (qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE") && !port.starts_with("/dev/pts/")) {
+    // Pseudo-terminals (Linux /dev/pts/*, macOS /dev/ttys*, used by the test emulators) are not hardware and stay
+    // allowed.
+#if defined(__APPLE__)
+    const bool pseudoTerminal = port.starts_with("/dev/ttys");
+#else
+    const bool pseudoTerminal = port.starts_with("/dev/pts/");
+#endif
+    if (qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE") && !pseudoTerminal) {
         m_error = "serial access is denied by LOGICTRACER_DENY_HARDWARE";
         return false;
     }
