@@ -22,6 +22,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -667,6 +668,46 @@ private Q_SLOTS:
 
         QVERIFY2(reader.openCaptureFile(vcdFile, &err), qPrintable(err));
         QCOMPARE(reader.waveform()->capture().samples(), buf.samples());
+    }
+
+    // The Windows control records a segmented capture (here from a replayed recording, so it runs everywhere).
+    void windowsControlRecordsSegments()
+    {
+        QTemporaryDir dir;
+        std::vector<uint32_t> s(700, 0u);
+        for (std::size_t t0 : {100u, 300u, 500u})
+            for (std::size_t w = 0; w < 20; ++w) {
+                s[t0 + w] |= 1u;
+                s[t0 + 2 + w] |= 2u;
+            }
+        const lt::CaptureBuffer rec({{0, "STIM"}, {1, "REACT"}}, 1'000'000, 0, s);
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        const QString file = dir.filePath("rec.json");
+        QVERIFY(lt::writeJsonFile(file.toStdString(), lt::captureToJson(rec, lt::SignalAnalyzer(opts).analyze(rec), true)));
+
+        MainWindow win;
+        win.show();
+        win.setPortText("replay:" + file);
+        QTest::mouseClick(button(win, "Connect"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        field(win, "channels")->setText("1,2");
+        field(win, "samples")->setText("50");
+        field(win, "trigger")->setText("1:rising");
+        auto* windows = win.findChild<QSpinBox*>("windows");
+        QVERIFY(windows);
+        windows->setValue(3);
+        auto* preflight = win.findChild<QLabel*>("preflight");
+        QVERIFY(preflight->text().contains("3 windows"));
+        QVERIFY(preflight->text().contains("samples stored"));
+        QTest::mouseClick(button(win, "Capture"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(win.waveform()->hasCapture(), 5000);
+        QCOMPARE(win.waveform()->segmentStarts().size(), std::size_t{3});
+        QVERIFY(win.aiReport().contains("**3 trigger windows**"));
+        QVERIFY(win.aiReport().contains("Trigger-to-trigger spacing"));  // replay knows the exact times
+
+        field(win, "trigger")->setText("none");  // windows need a trigger: refused before reaching the device
+        QVERIFY(preflight->text().contains("needs a trigger"));
     }
 
     // A saved segmented capture opens with window seams and a window-by-window report and anomaly list.

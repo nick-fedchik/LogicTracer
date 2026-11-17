@@ -89,6 +89,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     for (auto* field : {m_channels, m_rate, m_samples, m_trigger, m_latencySpec})
         connect(field, &QLineEdit::textChanged, this, [this] { updatePreflight(); });
     connect(m_timeout, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
+    connect(m_windows, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
     connect(&m_device, &lt::AsyncDevice::opened, this, [this](bool, const QString&) { updatePreflight(); });
     connect(m_waveform, &WaveformWidget::captureChanged, this, [this] { updatePreflight(); });
 
@@ -128,6 +129,12 @@ void MainWindow::buildUi()
     m_rate->setObjectName("rate");
     m_samples->setObjectName("samples");
     m_trigger->setObjectName("trigger");
+    m_windows = new QSpinBox;
+    m_windows->setObjectName("windows");
+    m_windows->setRange(1, 65536);
+    m_windows->setValue(1);
+    m_windows->setToolTip(tr("Trigger windows per run (segmented capture, needs a trigger): Samples is one window, "
+                             "the firmware re-arms on the next edge; pre-trigger samples precede window 1 only"));
     m_timeout = new QSpinBox;
     m_timeout->setRange(0, 600000);
     m_timeout->setValue(5000);
@@ -152,6 +159,8 @@ void MainWindow::buildUi()
     grid->addWidget(m_rate, 0, col++);
     grid->addWidget(new QLabel(tr("Samples")), 0, col++);
     grid->addWidget(m_samples, 0, col++);
+    grid->addWidget(new QLabel(tr("Windows")), 0, col++);
+    grid->addWidget(m_windows, 0, col++);
     grid->addWidget(new QLabel(tr("Trigger")), 0, col++);
     grid->addWidget(withBuilder(m_trigger, "triggerBuilderButton", [this] {
         lt::gui::showTriggerBuilder(m_trigger, m_trigger, builderChannels());
@@ -392,7 +401,7 @@ void MainWindow::updateControls()
     m_cancel->setEnabled(busy);
     for (QWidget* w : {static_cast<QWidget*>(m_channels), static_cast<QWidget*>(m_rate),
                        static_cast<QWidget*>(m_samples), static_cast<QWidget*>(m_trigger),
-                       static_cast<QWidget*>(m_timeout)})
+                       static_cast<QWidget*>(m_timeout), static_cast<QWidget*>(m_windows)})
         w->setEnabled(!busy);
     updateHistoryUi();
     m_deviceInfo->setText(connected ? QString("%1  |  %2 channels, max %3, buffer %4 KiB")
@@ -490,6 +499,7 @@ bool MainWindow::buildSpec(lt::CaptureRequestSpec& spec, QString& error) const
     if (!trigger->none)
         spec.trigger = trigger->trigger;
     spec.timeout = std::chrono::milliseconds(m_timeout->value());
+    spec.segments = static_cast<uint32_t>(m_windows->value());
     return true;
 }
 
@@ -599,6 +609,12 @@ void MainWindow::updatePreflight()
     text = tr("Window %1 | Step %2")
                .arg(QString::fromStdString(lt::formatTime(step * static_cast<double>(*samples))),
                     QString::fromStdString(lt::formatTime(step)));
+    if (m_windows->value() > 1)
+        text += tr(" | %1 windows (time between them %2)")
+                    .arg(m_windows->value())
+                    .arg(m_device.isConnected() && m_device.info().supportsEdgeBurstTimestamps() && m_windows->value() <= 254
+                             ? tr("timestamped")
+                             : tr("not recorded"));
     if (m_device.isConnected()) {
         lt::CaptureConfig config;
         QString trig;
@@ -609,6 +625,9 @@ void MainWindow::updatePreflight()
                         .arg(config.trigger ? config.preSamples : 0)
                         .arg(QString::fromStdString(lt::formatTime(
                             step * static_cast<double>(config.trigger ? config.preSamples : 0))));
+            if (config.segments > 1)
+                text += tr(" | %1 samples stored").arg(config.preSamples +
+                                                         static_cast<uint64_t>(config.postSamples) * config.segments);
             for (const auto& w : warnings)
                 text += "\n" + tr("Warning: %1").arg(QString::fromStdString(w));
         } else {

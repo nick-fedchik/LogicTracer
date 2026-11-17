@@ -67,7 +67,8 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       (±1 cycle of 5 ns around the 5 us PYNQ period), span 495 us; latency 100/100 pairs.
       Observation: one run had a single 70 ns pair (window 1); the repeat and all earlier rising-edge
       captures stay within 50..60 ns, so it is not systematic. Watch for it in longer series.
-- [ ] A `Windows` control in the GUI capture setup.
+- [x] A `Windows` control in the GUI capture setup (pre-flight shows the window count, whether the time
+      between windows is recorded, and the stored samples).
 - [x] Edge-fire on hardware with the PYNQ burst (BTN1, 100 MHz, 1000 pre-samples): `1:rising` fires on the
       first STIM rise (sample 1000, REACT at 994); `1:falling` on an idle-LOW line waits and fires on the
       first STIM fall with the rise 201 samples earlier in the pre-trigger buffer; `2:rising` with

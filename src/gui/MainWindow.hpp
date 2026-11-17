@@ -206,6 +206,7 @@ private:
     QLineEdit* m_samples = nullptr;
     QLineEdit* m_trigger = nullptr;
     QSpinBox* m_timeout = nullptr;
+    QSpinBox* m_windows = nullptr;  // segmented capture: trigger windows per run
     QPushButton* m_capture = nullptr;
     QPushButton* m_probe = nullptr;
     QPushButton* m_cancel = nullptr;

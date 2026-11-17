@@ -5,6 +5,10 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- GUI: a `Windows` field next to `Samples` records a segmented capture from the GUI; the pre-flight line
+  shows the window count, whether trigger times are recorded and the samples stored.
+
 ## [0.4.0] - 2026-11-17
 
 ### Added
