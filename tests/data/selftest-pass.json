@@ -1,0 +1,360 @@
+{
+  "checks": [
+    {
+      "data": {
+        "delay_ns": 50.0,
+        "gap_ns": 100000.0,
+        "high_ns": 2000.0,
+        "period_ns": 5000.0,
+        "pulses": 20,
+        "sysclk_hz": 200000000
+      },
+      "message": "running at 200000000 Hz system clock",
+      "name": "generator",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "a_transitions": 400,
+        "b_transitions": 400
+      },
+      "message": "CH3 and CH4 toggle",
+      "name": "wiring",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "edge_sensitive": true,
+        "nearest_edge_offset_samples": 0,
+        "trigger_index": 64
+      },
+      "message": "the rising edge is at the trigger sample",
+      "name": "trigger_rising",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "edge_sensitive": true,
+        "nearest_edge_offset_samples": 0,
+        "trigger_index": 64
+      },
+      "message": "the falling edge is at the trigger sample",
+      "name": "trigger_falling",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "high_samples": [
+          200,
+          200
+        ],
+        "partial_warning": true,
+        "pre_samples": 389,
+        "requested_pre_samples": 1501
+      },
+      "message": "389 of 1501 pre-trigger samples recorded, the rest left out with a warning",
+      "name": "pretrigger",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "a_bursts": 3,
+        "a_high_samples": [
+          200,
+          200
+        ],
+        "a_period_samples": [
+          500,
+          500
+        ],
+        "b_bursts": 3,
+        "b_high_samples": [
+          200,
+          200
+        ],
+        "b_period_samples": [
+          500,
+          500
+        ],
+        "burst_pulses": 20,
+        "expected_high_ns": 2000.0,
+        "expected_period_ns": 5000.0,
+        "sample_ns": 10.0
+      },
+      "message": "high 2000 ns and period 5000 ns within one sample on both channels",
+      "name": "waveform",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "falling": {
+          "bound_ns": [
+            0.0,
+            10.0
+          ],
+          "drops": 0,
+          "max_samples": 0,
+          "min_samples": 0,
+          "pairs": 20,
+          "spurious": 0
+        },
+        "rising": {
+          "bound_ns": [
+            0.0,
+            10.0
+          ],
+          "drops": 0,
+          "max_samples": 0,
+          "min_samples": 0,
+          "pairs": 21,
+          "spurious": 0
+        },
+        "sample_ns": 10.0,
+        "true_delay_ns": 0.0
+      },
+      "message": "every pair admits the true delay 0 ns on both edges",
+      "name": "latency_0ns",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "falling": {
+          "bound_ns": [
+            10.0,
+            30.0
+          ],
+          "drops": 0,
+          "max_samples": 2,
+          "min_samples": 2,
+          "pairs": 20,
+          "spurious": 0
+        },
+        "rising": {
+          "bound_ns": [
+            10.0,
+            30.0
+          ],
+          "drops": 0,
+          "max_samples": 2,
+          "min_samples": 2,
+          "pairs": 21,
+          "spurious": 0
+        },
+        "sample_ns": 10.0,
+        "true_delay_ns": 20.0
+      },
+      "message": "every pair admits the true delay 20 ns on both edges",
+      "name": "latency_20ns",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "falling": {
+          "bound_ns": [
+            40.0,
+            60.0
+          ],
+          "drops": 0,
+          "max_samples": 5,
+          "min_samples": 5,
+          "pairs": 20,
+          "spurious": 0
+        },
+        "rising": {
+          "bound_ns": [
+            40.0,
+            60.0
+          ],
+          "drops": 0,
+          "max_samples": 5,
+          "min_samples": 5,
+          "pairs": 21,
+          "spurious": 0
+        },
+        "sample_ns": 10.0,
+        "true_delay_ns": 50.0
+      },
+      "message": "every pair admits the true delay 50 ns on both edges",
+      "name": "latency_50ns",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "falling": {
+          "bound_ns": [
+            90.0,
+            110.0
+          ],
+          "drops": 0,
+          "max_samples": 10,
+          "min_samples": 10,
+          "pairs": 20,
+          "spurious": 0
+        },
+        "rising": {
+          "bound_ns": [
+            90.0,
+            110.0
+          ],
+          "drops": 0,
+          "max_samples": 10,
+          "min_samples": 10,
+          "pairs": 21,
+          "spurious": 0
+        },
+        "sample_ns": 10.0,
+        "true_delay_ns": 100.0
+      },
+      "message": "every pair admits the true delay 100 ns on both edges",
+      "name": "latency_100ns",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "falling": {
+          "bound_ns": [
+            990.0,
+            1010.0
+          ],
+          "drops": 0,
+          "max_samples": 100,
+          "min_samples": 100,
+          "pairs": 20,
+          "spurious": 0
+        },
+        "rising": {
+          "bound_ns": [
+            990.0,
+            1010.0
+          ],
+          "drops": 0,
+          "max_samples": 100,
+          "min_samples": 100,
+          "pairs": 20,
+          "spurious": 0
+        },
+        "sample_ns": 10.0,
+        "true_delay_ns": 1000.0
+      },
+      "message": "every pair admits the true delay 1000 ns on both edges",
+      "name": "latency_1000ns",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "across_bursts": 2,
+        "expected_ns": [
+          5000.0,
+          55000.0
+        ],
+        "in_burst": 17,
+        "tolerance_ns": 15.000000000000002,
+        "windows": 20,
+        "worst_error_ns": 4.999999999998258
+      },
+      "message": "every trigger spacing is a period or a burst gap within 15 ns (worst 5 ns)",
+      "name": "segments",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "a_level": 0,
+        "a_transitions": 0,
+        "b_level": 0,
+        "b_transitions": 0
+      },
+      "message": "both channels stay low after the generator stops",
+      "name": "idle",
+      "status": "PASS"
+    },
+    {
+      "data": {
+        "elapsed_ms": 506,
+        "line_state": true,
+        "status": "TIMEOUT",
+        "timeout_ms": 300
+      },
+      "message": "TIMEOUT after 506 ms with the line state",
+      "name": "timeout",
+      "status": "PASS"
+    }
+  ],
+  "command": "selftest",
+  "device": {
+    "blast_frequency_hz": 200000000,
+    "board": "PICO",
+    "buffer_bytes": 131072,
+    "channels": 24,
+    "clock_domain": "async",
+    "edge_sensitive_trigger": true,
+    "firmware_family": "logictracer",
+    "firmware_version": "0.5.0",
+    "gpio_map": {
+      "1": 2,
+      "10": 11,
+      "11": 12,
+      "12": 13,
+      "13": 14,
+      "14": 15,
+      "15": 16,
+      "16": 17,
+      "17": 18,
+      "18": 19,
+      "19": 20,
+      "2": 3,
+      "20": 21,
+      "21": 22,
+      "22": 26,
+      "23": 27,
+      "24": 28,
+      "3": 4,
+      "4": 5,
+      "5": 6,
+      "6": 7,
+      "7": 8,
+      "8": 9,
+      "9": 10,
+      "ext_trigger": 1
+    },
+    "max_frequency_hz": 100000000,
+    "max_immediate_samples": {
+      "16ch": 65534,
+      "24ch": 32766,
+      "8ch": 131070
+    },
+    "max_samples": {
+      "16ch": 65536,
+      "24ch": 32768,
+      "8ch": 131072
+    },
+    "min_frequency_hz": 3051,
+    "port": "/dev/ttyACM0",
+    "protocol": "v6",
+    "segment_trigger_times": true,
+    "serial_number": "E66118604B78A622",
+    "version": "LOGICTRACER_PICO_0.5.0"
+  },
+  "elapsed_ms": 1027,
+  "schema_version": 1,
+  "setup": {
+    "a": {
+      "channel": 3,
+      "gpio": 4,
+      "source": "GP0"
+    },
+    "b": {
+      "channel": 4,
+      "gpio": 5,
+      "source": "GP1"
+    },
+    "frequency": 100000000,
+    "sysclk_hz": 200000000
+  },
+  "status": "OK",
+  "summary": {
+    "failed": 0,
+    "passed": 14,
+    "skipped": 0
+  },
+  "warnings": []
+}

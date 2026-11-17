@@ -27,6 +27,7 @@ bool StartCaptureFast(uint32_t freq, uint32_t preLength, uint32_t postLength, co
 void StopCapture();
 bool IsCapturing();
 uint8_t* GetBuffer(uint32_t* bufferSize, uint32_t* firstSample, CHANNEL_MODE* captureMode);
+uint32_t GetRecordedSamples();
 volatile uint32_t* GetTimestamps(uint8_t* length);
 void check_fast_interrupt();
 

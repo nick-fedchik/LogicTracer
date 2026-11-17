@@ -17,11 +17,15 @@ open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not p
 - [x] Determinism: identical runs give identical JSON and AI reports apart from `x-volatile` fields.
 - [ ] Schemas for the GUI session responses (`annotate`, `view`).
 
-## B-11. Firmware self-test without external hardware (priority)
-- [ ] Test-signal generator in the firmware (GP0/GP1, exact clock cycles, PIO + DMA), advertised in
-      `FEATURES`; jumpers GP0 → CH3 (GP4), GP1 → CH4 (GP5).
-- [ ] `logictracer-cli selftest`: triggers, latency bounds against the known delay, segments and
-      trigger times, timeouts; a pass/fail JSON report, repeatable after every firmware change.
+## B-11. Firmware self-test without external hardware — done
+- [x] Test-signal generator in the firmware (GP0/GP1, exact clock cycles, PIO + DMA), advertised in
+      `FEATURES` bit 2; jumpers GP0 → CH3 (GP4), GP1 → CH4 (GP5).
+- [x] `logictracer-cli selftest`: triggers, pre-trigger data, latency bounds against the known delay,
+      segments and trigger times, idle, timeouts; a pass/fail JSON report (`docs/SELFTEST.md`).
+- Verified on a Pico at 1, 3, 10, 24, 50 and 100 MHz; 50 consecutive runs at 100 MHz passed. It found and
+  fixed the t = 0 off-by-one, the phantom pre-trigger samples, the generator being cut off by captures and
+  the slow TIMEOUT.
+- Open: segmented captures keep the one-sample t = 0 ambiguity in window 1; not run on a Pico 2 yet.
 
 ## Done recently
 - Independent audit by four models plus a re-audit (`docs/audit/`): all confirmed P0/P1 findings fixed

@@ -10,8 +10,8 @@ Every JSON document printed by a command has:
 | Field | Meaning |
 |---|---|
 | `schema_version` | `1`. Raised when a field is removed or renamed or changes its type. |
-| `command` | the sub-command (`detect`, `probe`, `capture`, `analyze`, `diff`, `bootloader`, ...) |
-| `status` | `OK`, `TIMEOUT`, `ERROR`, `CANCELLED`; `detect` also `NOT_FOUND` |
+| `command` | the sub-command (`detect`, `probe`, `capture`, `analyze`, `diff`, `selftest`, `bootloader`, ...) |
+| `status` | `OK`, `TIMEOUT`, `ERROR`, `CANCELLED`; `detect` also `NOT_FOUND`; `selftest` also `FAILED` |
 | `warnings` | array of strings; caveats the result carries (an empty array when there are none) |
 | `error` | present when the command did not succeed |
 
@@ -24,7 +24,7 @@ Exactly one JSON document is printed on stdout, also on errors; diagnostics go t
 | 0 | OK |
 | 1 | error: device or file problem; `detect` found no device |
 | 2 | the trigger did not occur within `--timeout` |
-| 3 | `--expect` or `--invariant` failed, or `diff --strict` found a regression |
+| 3 | `--expect` or `--invariant` failed, `diff --strict` found a regression, or a `selftest` check failed |
 | 64 | usage error: invalid arguments or a request the device cannot do |
 
 ## Documents and schemas
@@ -39,6 +39,7 @@ The schemas ([JSON Schema 2020-12](https://json-schema.org/)) are in [`docs/sche
 | `probe --json` | [`probe.schema.json`](schema/probe.schema.json) |
 | `detect --json` | [`detect.schema.json`](schema/detect.schema.json) |
 | `bootloader --json` | [`bootloader.schema.json`](schema/bootloader.schema.json) |
+| `selftest --json` | [`selftest.schema.json`](schema/selftest.schema.json) (check names and `data` in [SELFTEST.md](SELFTEST.md)) |
 | an error before the command could run (usage, missing file, ...) | [`error.schema.json`](schema/error.schema.json) |
 | the lossless capture file (`--out-json`) | [`capturefile.schema.json`](schema/capturefile.schema.json) |
 | shared parts: latency, invariants, assertions, segments, device, per-channel summary, setup | [`common.schema.json`](schema/common.schema.json) |

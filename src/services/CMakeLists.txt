@@ -4,6 +4,7 @@
 add_library(logictracer_services STATIC
     Clipboard.cpp Clipboard.hpp
     Operations.cpp Operations.hpp
+    SelfTest.cpp SelfTest.hpp
     Session.cpp Session.hpp
 )
 add_library(LogicTracer::Services ALIAS logictracer_services)

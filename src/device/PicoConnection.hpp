@@ -61,6 +61,9 @@ public:
 
     // Reboots the RP2040 into USB UF2 bootloader mode (RPI-RP2 mass storage) via protocol command 4.
     bool enterBootloader() override;
+    // LogicTracer firmware with FEATURES bit 2: pulse pairs on GP0/GP1 (protocol command 7).
+    [[nodiscard]] std::optional<TestSignalInfo> setTestSignal(const TestSignalRequest& request,
+                                                              std::string& error) override;
 
     [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config) const override;
     [[nodiscard]] CaptureResult capture(const CaptureConfig& config) override;
@@ -78,9 +81,11 @@ private:
         std::string error;
         std::optional<CaptureBuffer> buffer;
         std::vector<uint32_t> timestamps;  // raw burst timestamps (measure)
+        std::optional<uint32_t> recorded;  // samples holding recorded levels (FEATURES bit 3)
     };
 
     bool handshake(std::chrono::milliseconds timeout);
+    static void alignTriggerToEdge(CaptureBuffer& buffer, const EdgeTrigger& trigger);
     Attempt runCapture(const CaptureRequestPacket& req, const std::vector<ChannelInfo>& channels,
                        std::chrono::milliseconds triggerWait, bool waitPreFill);
     void reportProgress(CaptureStage stage) const

@@ -29,7 +29,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | `src/core` | Pure C++20 (no Qt): wire protocol, capture model, `SignalAnalyzer`, AI reports, file formats |
 | `src/device` | Qt SerialPort driver (`PicoConnection`) and its worker-thread wrapper (`AsyncDevice`) |
 | `src/services` | Operations shared by all front-ends, IPC session, clipboard |
-| `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `diff`, `annotate`, `view`, `bootloader` |
+| `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `diff`, `annotate`, `view`, `selftest`, `bootloader` |
 | `src/gui` | `logictracer-gui`: waveform viewer with cursors, snap-to-edge and the AI grounding bar |
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
 | `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
@@ -172,7 +172,7 @@ build/src/gui/logictracer-gui --port /dev/ttyACM0
 
 JSON output follows the schemas in [docs/schema](docs/schema) ([contracts](docs/CONTRACTS.md)).
 Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` / `--invariant` failed (or `diff --strict`
-found a regression), `64` usage error.
+found a regression, or a `selftest` check failed), `64` usage error.
 
 `--port replay:<file>` plays a saved capture (`.json`, `.vcd`, `.lac`) back as if it were a device:
 triggered captures find the next real edge in the recording, so the CLI, GUI, MCP and HIL scripts
@@ -230,6 +230,10 @@ through it so the engineer sees what the agent requested.
 completion polling). It identifies itself as `LOGICTRACER_<BOARD>_<version>`. Build and flash with
 `scripts/build_firmware.sh` (needs the Pico SDK 2.x and `arm-none-eabi-gcc`). The host also works
 with unmodified upstream firmware (V5_x, V6_0–V6_5); it then waits ~2 s longer per capture.
+
+After flashing, check the analyzer against its own test-signal generator (two jumpers: `GP0` → `GP4`,
+`GP1` → `GP5`; Pico and Pico 2): `logictracer-cli selftest --port /dev/ttyACM0` (exit `0` = every check
+passed). See [docs/SELFTEST.md](docs/SELFTEST.md).
 
 ## Versioning
 

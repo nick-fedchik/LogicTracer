@@ -43,7 +43,33 @@ inline constexpr uint8_t Capture = 1;
 inline constexpr uint8_t Bootloader = 4;
 inline constexpr uint8_t BlinkOn = 5;
 inline constexpr uint8_t BlinkOff = 6;
+inline constexpr uint8_t TestSignal = 7;  // LogicTracer: test-signal generator on GP0/GP1 (FEATURES bit 2)
 }  // namespace cmd
+
+// Test-signal generator: pulse pairs on GP0 (A) and GP1 (B); B follows A by delayNs on both edges;
+// `pulses` pulses every periodNs form a burst, followed by gapNs of idle. enable = false stops it.
+struct TestSignalRequest {
+    bool enable = true;
+    uint16_t pulses = 20;
+    uint32_t highNs = 2000;
+    uint32_t delayNs = 50;
+    uint32_t periodNs = 5000;
+    uint32_t gapNs = 100'000;
+};
+// What the firmware actually generates, in system clock cycles (its exact timing: the self-test ground truth).
+struct TestSignalInfo {
+    bool running = false;
+    uint32_t sysclkHz = 0;
+    uint64_t highCycles = 0, delayCycles = 0, periodCycles = 0, gapCycles = 0;
+    uint32_t pulses = 0;
+    [[nodiscard]] double seconds(uint64_t cycles) const noexcept
+    {
+        return sysclkHz ? static_cast<double>(cycles) / sysclkHz : 0.0;
+    }
+};
+[[nodiscard]] std::vector<uint8_t> serialize(const TestSignalRequest& req);
+// "TESTSIGNAL:<sysclk>,<high>,<delay>,<period>,<gap>,<pulses>" or "TESTSIGNAL:OFF"; nullopt otherwise.
+[[nodiscard]] std::optional<TestSignalInfo> parseTestSignalReply(std::string_view line);
 
 // Any single byte sent while a capture is running aborts it (no reply is sent).
 inline constexpr uint8_t kCancelByte = 0xFF;
@@ -59,7 +85,7 @@ struct CaptureRequestPacket {
     uint32_t preSamples = 0;
     uint32_t postSamples = 0;
     uint16_t loopCount = 0;
-    uint8_t measure = 0;
+    uint8_t measure = 0;  // bit 0: burst timestamps; bit 1: report the recorded-sample count (FEATURES bit 3)
     CaptureMode captureMode = CaptureMode::Channels8;
 };
 
@@ -144,6 +170,11 @@ struct DeviceInfo {
     [[nodiscard]] bool supportsEdgeTrigger() const noexcept { return (features & kFeatureEdgeTrigger) != 0; }
     // Burst timestamps (`measure`) with the edge-sensitive trigger; they tick at the system clock (= blastFrequency).
     static constexpr uint32_t kFeatureEdgeBurstTimestamps = 1u << 1;
+    static constexpr uint32_t kFeatureTestSignal = 1u << 2;
+    // After the capture trailer the firmware sends how many of the samples it really recorded (request measure bit 1).
+    static constexpr uint32_t kFeatureRecordedCount = 1u << 3;
+    [[nodiscard]] bool supportsRecordedCount() const noexcept { return (features & kFeatureRecordedCount) != 0; }
+    [[nodiscard]] bool supportsTestSignal() const noexcept { return (features & kFeatureTestSignal) != 0; }
     [[nodiscard]] bool supportsEdgeBurstTimestamps() const noexcept
     {
         return (features & kFeatureEdgeBurstTimestamps) != 0 && blastFrequency > 0;

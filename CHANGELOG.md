@@ -9,11 +9,26 @@ All notable changes are documented here. The format follows
 - JSON contracts: schemas for every `--json` document of `logictracer-cli` and for the lossless capture file
   (`docs/schema`, described in `docs/CONTRACTS.md`), an exit-code table, and conformance and determinism
   tests on every platform.
+- Firmware self-test: a test-signal generator in the firmware (GP0/GP1, exact clock-cycle timing; Pico and
+  Pico 2, `FEATURES` bit 2) and `logictracer-cli selftest`, which loops it back with two jumpers and checks
+  trigger position, pre-trigger data, pulse widths, A -> B latency bounds (0..1000 ns), segmented trigger
+  times, idle levels and the timeout against the known stimulus; JSON report (`selftest.schema.json`),
+  `--keep` saves the captures of failed checks. See `docs/SELFTEST.md`.
+
+### Fixed
+- Found by the self-test: the edge-sensitive trigger put t = 0 one sample after the edge when the edge fell
+  between the program's sample and its pin test; the host now aligns t = 0 to the edge when the trigger
+  channel is captured.
+- Found by the self-test: when the trigger fired before the pre-trigger window filled, the oldest pre-trigger
+  samples were the firmware's zero fill, shown as LOW levels (phantom edges). The firmware now reports the
+  recorded-sample count (`FEATURES` bit 3); the host leaves the unrecorded samples out and warns.
 
 ### Changed
 - Every JSON document carries the same envelope: `schema_version`, `command`, `status` and `warnings`
   (`diff`, `detect`, `bootloader` and error documents lacked some of them). `diff --json` lists the import
   caveats of its two files in `warnings` (the Markdown output keeps them under notes).
+- A capture that ends in TIMEOUT returns about 0.6 s sooner: the firmware acknowledges the cancel
+  (`CAPTURE_CANCELLED`, `FEATURES` bit 3) instead of the host waiting out its poll window.
 
 ## [0.5.0] - 2026-11-17
 

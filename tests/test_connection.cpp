@@ -19,7 +19,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 
 using namespace std::chrono_literals;
@@ -272,6 +274,185 @@ private Q_SLOTS:
             QVERIFY(std::abs(t[k] - 1e-3 * static_cast<double>(k)) < 1e-12);
         QCOMPARE(r.segments->triggerTimeResolutionSeconds, 5e-9);
         QVERIFY(lt::triggerSpacing(*r.segments)->median > 0.999e-3);
+    }
+
+    // Command 7 (FEATURES bit 2): 20-byte little-endian request, the reply gives the generated timing in cycles.
+    void testSignalCommand()
+    {
+        std::vector<std::vector<uint8_t>> requests;
+        std::mutex mutex;
+        Device dev([&](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.6.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:7\nCHANNELS:24\n"));
+            } else if (payload[0] == 7) {
+                {
+                    std::lock_guard lock(mutex);
+                    requests.emplace_back(payload.begin() + 1, payload.end());
+                }
+                if (payload[1] == 0)
+                    d.send("TESTSIGNAL:OFF\n");
+                else if (payload[3] == 0xE7)  // pulses 999: rejected
+                    d.send("ERR_TEST_SIGNAL\n");
+                else
+                    d.send("TESTSIGNAL:200000000,400,10,1000,20000,20\n");
+            }
+        });
+        LT_REQUIRE_PTY(dev);
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        QVERIFY(conn.info().supportsTestSignal());
+
+        lt::TestSignalRequest req;
+        std::string error;
+        const auto on = conn.setTestSignal(req, error);
+        QVERIFY2(on, error.c_str());
+        QVERIFY(on->running);
+        QCOMPARE(on->sysclkHz, 200'000'000u);
+        QCOMPARE(on->highCycles, uint64_t{400});
+        QCOMPARE(on->delayCycles, uint64_t{10});
+        QCOMPARE(on->pulses, 20u);
+        QCOMPARE(on->seconds(on->periodCycles), 5e-6);
+        {
+            std::lock_guard lock(mutex);
+            const std::vector<uint8_t> expected{1, 0, 20, 0, 0xD0, 0x07, 0, 0, 50, 0, 0, 0,
+                                                0x88, 0x13, 0, 0, 0xA0, 0x86, 0x01, 0};
+            QVERIFY(requests.back() == expected);
+        }
+
+        req.pulses = 999;
+        QVERIFY(!conn.setTestSignal(req, error));
+        QVERIFY(error.find("ERR_TEST_SIGNAL") != std::string::npos);
+        req.enable = false;
+        const auto off = conn.setTestSignal(req, error);
+        QVERIFY(off && !off->running);
+
+        QVERIFY(!lt::parseTestSignalReply("TESTSIGNAL:200000000,400,10"));
+        QVERIFY(!lt::parseTestSignalReply("TESTSIGNAL:0,400,10,1000,20000,20"));
+        QVERIFY(!lt::parseTestSignalReply("TESTSIGNAL:200000000,400,10,1000,20000,20x"));
+    }
+
+    void testSignalNeedsTheFeature()
+    {
+        int commands = 0;
+        Device dev([&](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0)
+                d.send(fake::idReply("0.5.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:3\nCHANNELS:24\n"));
+            else if (payload[0] == 7)
+                ++commands;
+        });
+        LT_REQUIRE_PTY(dev);
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        std::string error;
+        QVERIFY(!conn.setTestSignal({}, error));
+        QVERIFY(error.find("no test-signal generator") != std::string::npos);
+        QCOMPARE(commands, 0);
+    }
+
+    // FEATURES bit 3: the host asks for the recorded-sample count; pre-trigger samples the firmware never
+    // recorded (the trigger came before the window filled) are left out with a warning.
+    void unrecordedPreTriggerSamplesAreLeftOut()
+    {
+        Device dev([](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.6.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:11\nCHANNELS:24\n"));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.recordRequest(r);
+                d.send("CAPTURE_STARTED\n");
+                // 6 zero-filled samples, 4 recorded LOW pre-trigger samples, then HIGH from the trigger on.
+                d.send(fake::captureSamples(r, {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}, true, 0, r.totalSamples() - 6));
+            }
+        });
+        LT_REQUIRE_PTY(dev);
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        QVERIFY(conn.info().supportsRecordedCount());
+        auto cfg = config(10, 20);
+        cfg.trigger = lt::EdgeTrigger{0, false};
+        const auto r = conn.capture(cfg);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QCOMPARE(int(dev.requests().back().measure), 2);
+        QCOMPARE(r.buffer->size(), std::size_t{24});
+        QCOMPARE(r.buffer->preSamples(), 4u);
+        QCOMPARE(r.warnings.size(), std::size_t{1});
+        QVERIFY(r.warnings[0].find("4 of 10 pre-trigger samples") != std::string::npos);
+
+        // Segmented: the layout keeps describing the shortened buffer.
+        cfg.segments = 2;
+        const auto seg = conn.capture(cfg);
+        QVERIFY2(seg.status == lt::CaptureStatus::Ok, seg.error.c_str());
+        QCOMPARE(int(dev.requests().back().measure), 3);
+        QCOMPARE(seg.buffer->size(), std::size_t{44});
+        QVERIFY(seg.segments && seg.segments->preSamples == 4 && seg.segments->totalSamples() == 44);
+        QCOMPARE(lt::splitSegments(*seg.buffer, *seg.segments).size(), std::size_t{2});
+    }
+
+    // The edge programs read the sample and test the trigger pin one instruction apart: an edge already visible
+    // in the last pre-trigger sample moves t = 0 back onto it, for rising and falling triggers.
+    void triggerIsAlignedToTheEdge()
+    {
+        std::atomic<int> edgeAt{10};
+        std::atomic<bool> falling{false};
+        Device dev([&](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.6.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:1\nCHANNELS:24\n"));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                std::vector<uint8_t> s(r.totalSamples(), falling ? 1 : 0);
+                for (std::size_t i = static_cast<std::size_t>(edgeAt.load()); i < s.size(); ++i)
+                    s[i] = falling ? 0 : 1;
+                d.send("CAPTURE_STARTED\n");
+                d.send(fake::captureSamples(r, s));
+            }
+        });
+        LT_REQUIRE_PTY(dev);
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        auto cfg = config(10, 20);
+        for (const bool f : {false, true}) {
+            falling = f;
+            cfg.trigger = lt::EdgeTrigger{0, f};
+            edgeAt = 10;
+            auto r = conn.capture(cfg);
+            QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+            QCOMPARE(r.buffer->triggerIndex(), int64_t{10});
+            edgeAt = 9;
+            r = conn.capture(cfg);
+            QCOMPARE(r.buffer->triggerIndex(), int64_t{9});
+            edgeAt = 5;  // not the one-sample ambiguity: left alone
+            r = conn.capture(cfg);
+            QCOMPARE(r.buffer->triggerIndex(), int64_t{10});
+        }
+    }
+
+    // Firmware with FEATURES bit 3 acknowledges a cancel: a TIMEOUT returns without waiting out the cancel window.
+    void cancelIsAcknowledged()
+    {
+        Device dev([](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.6.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:11\nCHANNELS:24\n"));
+            } else if (payload[0] == 1) {
+                d.send("CAPTURE_STARTED\n");
+            }
+        });
+        dev.onCancel([](Device& d) { d.send("CAPTURE_CANCELLED\n"); });
+        LT_REQUIRE_PTY(dev);
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        auto cfg = config(10, 20, 100ms);
+        cfg.trigger = lt::EdgeTrigger{0, false};
+        cfg.probeOnTimeout = false;
+        const auto r = conn.capture(cfg);
+        QVERIFY(r.status == lt::CaptureStatus::Timeout);
+        // timeout + poll latency (150 ms) + the acknowledgement; without it another 450 + 200 ms.
+        QVERIFY2(r.elapsed < 450ms, std::to_string(r.elapsed.count()).c_str());
+        QCOMPARE(dev.cancelCount(), 1);
     }
 
     void handshakeV5UsesDefaults()

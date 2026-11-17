@@ -62,6 +62,9 @@
     
     #if defined (BUILD_PICO)
 
+        //LogicTracer: test-signal generator on GP0/GP1 (free when no complex/fast trigger is used)
+        #define SUPPORTS_TEST_SIGNAL
+        #define TEST_SIGNAL_PIN_BASE 0
         #define BOARD_NAME "PICO"
         #define SUPPORTS_COMPLEX_TRIGGER
         #define INPUT_PIN_BASE 2
@@ -83,6 +86,9 @@
 
     #elif defined (BUILD_PICO_2)
 
+        //LogicTracer: test-signal generator on GP0/GP1 (free when no complex/fast trigger is used)
+        #define SUPPORTS_TEST_SIGNAL
+        #define TEST_SIGNAL_PIN_BASE 0
         #define BOARD_NAME "PICO_2"
         #define SUPPORTS_COMPLEX_TRIGGER
         #define INPUT_PIN_BASE 2

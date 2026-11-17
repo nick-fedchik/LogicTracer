@@ -1,5 +1,6 @@
 #include "LogicAnalyzer_Board_Settings.h"
 #include "LogicAnalyzer_Capture.h"
+#include "LogicAnalyzer_TestSignal.h"
 #include "hardware/gpio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
@@ -47,6 +48,8 @@ static uint8_t lastCaptureType;
 static uint8_t lastTriggerPinBase;
 static uint32_t lastTriggerPinCount;
 static uint32_t lastTail;
+static volatile uint32_t dmaWraps;                  //Completed passes over the whole capture buffer
+static uint32_t lastWraps;                          //dmaWraps when the tail was found (aborting raises one more)
 static CHANNEL_MODE lastCaptureMode = MODE_8_CHANNEL;
 
 //Static information of the current capture
@@ -226,6 +229,8 @@ uint32_t find_capture_tail()
         transferPos = dma_channel_hw_addr(dmaPingPong1)->transfer_count;
     }
 
+    lastWraps = dmaWraps;
+
     //No channel busy?? WTF???
     if(transferPos == 0xFFFFFFFF) 
         return 0xFFFFFFFF;
@@ -241,8 +246,12 @@ uint32_t find_capture_tail()
 void disable_gpios()
 {
     #ifdef SUPPORTS_COMPLEX_TRIGGER
-    gpio_deinit(COMPLEX_TRIGGER_OUT_PIN);
-    gpio_deinit(COMPLEX_TRIGGER_IN_PIN); 
+    //The test-signal generator owns GP0/GP1 while it runs (complex/fast captures stop it first)
+    if(!TestSignalRunning())
+    {
+        gpio_deinit(COMPLEX_TRIGGER_OUT_PIN);
+        gpio_deinit(COMPLEX_TRIGGER_IN_PIN);
+    }
     #endif
 
     for(uint8_t i = 0; i < lastCapturePinCount; i++)
@@ -256,6 +265,8 @@ void disable_gpios()
 //DMA channel handler, not in memory to speed it up
 void __not_in_flash_func(dma_handler)()
 {
+
+    dmaWraps++;
 
     //Did channel0 triggered the irq?
     if(dma_channel_get_irq0_status(dmaPingPong0))
@@ -520,6 +531,11 @@ void configureCaptureDMAs(CHANNEL_MODE channelMode)
 
     dmaPingPong0 = dma_claim_unused_channel(true);
     dmaPingPong1 = dma_claim_unused_channel(true);
+    //Aborting the previous capture raised a completion flag: clear it before the IRQ is enabled, or the
+    //handler runs at once and counts a wrap that never happened
+    dma_channel_acknowledge_irq0(dmaPingPong0);
+    dma_channel_acknowledge_irq0(dmaPingPong1);
+    dmaWraps = 0;
 
     //Configure first capture DMA
     dmaPingPong0Config = dma_channel_get_default_config(dmaPingPong0);
@@ -1286,6 +1302,19 @@ bool IsCapturing()
 {
     //If you need an explanation of this, you're a fool. :P
     return !captureFinished;
+}
+
+//Samples of the last capture that hold recorded levels. The DMA ring starts at the beginning of the zeroed
+//buffer, so before its first wrap only the samples up to the tail are real: a trigger that fires before the
+//pre-trigger window has filled leaves the oldest pre-trigger samples at their initial zero.
+uint32_t GetRecordedSamples()
+{
+    const uint32_t totalSamples = lastPreSize + (lastPostSize * (lastLoopCount + 1));
+
+    if(lastCaptureType == CAPTURE_TYPE_BLAST || lastWraps > 0 || lastTail == 0xFFFFFFFF || lastTail + 1 >= totalSamples)
+        return totalSamples;
+
+    return lastTail + 1;
 }
 
 uint8_t* GetBuffer(uint32_t* bufferSize, uint32_t* firstSample, CHANNEL_MODE* captureMode)

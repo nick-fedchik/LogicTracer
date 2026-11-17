@@ -44,6 +44,22 @@
     //The host serializes this exact layout (src/core/DeviceProtocol.cpp, V6): 56 bytes
     _Static_assert(sizeof(CAPTURE_REQUEST) == 56, "CAPTURE_REQUEST must match the host protocol layout");
 
+    //LogicTracer test-signal generator (command 7): pulse pairs on GP0 (A) and GP1 (B), B following A by
+    //delayNs on both edges, `pulses` pulses per burst every periodNs, then gapNs of idle. enable = 0 stops.
+    typedef struct _TEST_SIGNAL_REQUEST
+    {
+        uint8_t enable;
+        uint8_t reserved;
+        uint16_t pulses;
+        uint32_t highNs;
+        uint32_t delayNs;
+        uint32_t periodNs;
+        uint32_t gapNs;
+
+    }TEST_SIGNAL_REQUEST;
+
+    _Static_assert(sizeof(TEST_SIGNAL_REQUEST) == 20, "TEST_SIGNAL_REQUEST must match the host protocol layout");
+
     #ifdef USE_CYGW_WIFI
 
         typedef struct _WIFI_SETTINGS

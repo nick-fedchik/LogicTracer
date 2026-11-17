@@ -47,7 +47,8 @@ upstream; upstream `Firmware/LogicAnalyzer`, V5_x) and the upstream C# driver. I
 ### 2.1. Command framing (host → device)
 Each command is `0x55 0xAA` + payload + `0xAA 0x55`. Bytes `0xAA`, `0x55` and `0xF0` inside the
 payload are escaped as `0xF0, b ^ 0xF0`. `payload[0]` is the command: `0` = identify, `1` = capture,
-`4` = reboot to bootloader, `5`/`6` = blink on/off. The firmware frame buffer is 128 bytes.
+`4` = reboot to bootloader, `5`/`6` = blink on/off, `7` = test-signal generator (LogicTracer, §2.7). The
+firmware frame buffer is 128 bytes.
 
 ### 2.2. Capture request (`CAPTURE_REQUEST`)
 The struct is **not packed**: it is sent as laid out by the ARM EABI, so padding is part of the
@@ -67,7 +68,7 @@ wire format.
 | `preSamples` u32 | 44 | 36 |
 | `postSamples` u32 | 48 | 40 |
 | `loopCount` | 52 (u16) | 44 (u8) |
-| `measure` u8 | 54 | 45 |
+| `measure` u8 (bit 0 burst timestamps; bit 1 extended trailer, LogicTracer `FEATURES` bit 3) | 54 | 45 |
 | `captureMode` u8 (0 = 8 ch, 1 = 16 ch, 2 = 24 ch) | 55 | 46 (+1 pad) |
 
 `captureMode` follows the highest channel number: < 8 → 8 ch, < 16 → 16 ch, otherwise 24 ch.
@@ -95,6 +96,12 @@ are then used (100 MHz, 131072 bytes, 24 channels).
    8 channels → 1 byte, 16 → 2 bytes, **24 → 4 bytes** (`uint32`). Bit *i* belongs to the *i*-th
    entry of `channels[]`.
 3. `u8` number of burst timestamps; if > 1, followed by `count × 4` bytes.
+4. Only when the request set `measure` bit 1 (LogicTracer `FEATURES` bit 3): `u32 LE` count of samples that
+   hold recorded levels. The capture memory starts zeroed and the DMA ring fills it from the beginning, so a
+   trigger that fires before the pre-trigger window has filled leaves the oldest pre-trigger samples at zero.
+   The host leaves those `total − recorded` samples out (t = 0 stays on the trigger) and warns
+   "the trigger fired before the pre-trigger window filled: K of P pre-trigger samples were recorded"; older
+   firmware sends them as LOW levels that never happened.
 
 **Notes:**
 * The simple edge trigger (type 0) in PIO is **level-sensitive** (`jmp pin`): a rising trigger fires
@@ -102,7 +109,11 @@ are then used (100 MHz, 131072 bytes, 24 channels).
 * LogicTracer firmware adds trigger **type 4, edge-sensitive**: the PIO program samples while the line
   has the opposite level and fires only on the transition (re-armed the same way for `loopCount`). The
   firmware advertises it with `FEATURES:<bits>` (bit 0) in the identify reply, before `CHANNELS`; the
-  host then uses type 4 for every user trigger and type 0 for immediate captures and probes.
+  host then uses type 4 for every user trigger and type 0 for immediate captures and probes. The program stores
+  a sample (`in pins`) and then tests the trigger pin (`jmp pin`), one instruction apart: an edge that lands
+  between the two is already in the last pre-trigger sample. When the trigger channel is captured, the host
+  moves t = 0 back onto the first sample with the new level (single-window captures), so the trigger edge is
+  always at t = 0; found by the self-test (§2.7).
 * Segmented capture (`capture --segments N`): the host sends `loopCount = N - 1`; the firmware stores
   `pre + post × N` samples, the pre-trigger part before the first window only. With `FEATURES` bit 1 and
   2..254 windows the host also sets `measure`: the edge-sensitive programs then raise an NMI when armed and
@@ -121,8 +132,10 @@ are then used (100 MHz, 131072 bytes, 24 channels).
 * Upstream firmware (≤ V6_5) checks for completion every ~2 s (`sleep 1 s` × 2), so the host adds
   ~2200 ms to the timeout. LogicTracer firmware polls every 10 ms (~15 ms turnaround); the host
   recognises it by its identity line (`defaultPollLatencyFor` = 150 ms).
-* Any byte received during a capture cancels it without a reply (the host sends `0xFF` and drains
-  the input). Command `4` (`logictracer-cli bootloader --yes`) reboots the RP2040 into the `RPI-RP2`
+* Any byte received during a capture cancels it (the host sends `0xFF`). Older firmware does not reply, so the
+  host waits for the poll window and drains the input; firmware with `FEATURES` bit 3 answers
+  `CAPTURE_CANCELLED\n` when the request set `measure` bit 1, so a TIMEOUT returns about 0.6 s sooner
+  (`--timeout 300` → ~0.5 s with the line-state probe). Command `4` (`logictracer-cli bootloader --yes`) reboots the RP2040 into the `RPI-RP2`
   UF2 bootloader.
 * The firmware cannot configure pull resistors: RP2040 inputs default to pull-down, so a floating
   line reads LOW. `--pull-up` therefore only produces a warning.
@@ -182,6 +195,20 @@ redirection), with optional edges: `24:falling..2:rising`.
 
 ---
 
+### 2.7. Test-signal generator and self-test (LogicTracer, `FEATURES` bit 2)
+On a Pico or Pico 2 (not the W boards: their radio uses PIO1) command `7` drives known pulse pairs on `GP0` (A)
+and `GP1` (B) from a PIO1 program fed by a looping DMA pair, without CPU involvement, so the timing is exact in
+system clock cycles. Request (`TEST_SIGNAL_REQUEST`, 20 bytes, little-endian): `u8 enable`, `u8 reserved`,
+`u16 pulses` (1..256), `u32 highNs`, `u32 delayNs`, `u32 periodNs`, `u32 gapNs`. A burst is `pulses` pulses
+`highNs` wide every `periodNs`, B follows A by `delayNs` on both edges, then `gapNs` of idle; it repeats until
+stopped. Reply: `TESTSIGNAL:<sysclk Hz>,<high>,<delay>,<period>,<gap>,<pulses>\n` in cycles (the ground truth
+the checks use), `TESTSIGNAL:OFF\n`, `ERR_TEST_SIGNAL\n` (every segment must last ≥ 3 cycles, `period >
+high + delay`, `high > delay`) or `ERR_UNSUPPORTED\n`. Captures leave GP0/GP1 alone while the generator runs;
+complex/fast triggers and the external trigger (which use GP0/GP1) stop it first.
+
+`logictracer-cli selftest` loops the generator back with two jumpers (default `GP0 → CH3` (`GP4`) and
+`GP1 → CH4` (`GP5`), `--a/--b` choose others) and checks the analyzer against it; see `docs/SELFTEST.md`.
+
 ## 3. Repository layout
 
 ```text
@@ -233,7 +260,7 @@ front-ends.
 
 ### 4.2. CLI (`logictracer-cli`)
 For scripts, CI and HIL rigs, and for AI agents calling it directly. Commands: `detect`, `probe`,
-`capture`, `analyze`, `annotate`, `view`, `bootloader`.
+`capture`, `analyze`, `diff`, `annotate`, `view`, `selftest`, `bootloader`.
 
 ```bash
 logictracer-cli capture \
@@ -316,7 +343,8 @@ version; firmware images are named `LogicTracer-firmware-<version>-<board>-<vari
 * **Session and MCP:** IPC session with transparent proxying of `detect` / `probe` / `capture`
   through an open GUI, AI annotations (`annotate`, `view`), MCP server with output sandboxing.
 * **LogicTracer firmware** (`firmware/rp2040`, SemVer from `VERSION`): completion polling reduced from ~2.2 s to 10 ms (~15 ms
-  turnaround); 100 MHz and 200 MHz Turbo UF2 images via `scripts/build_firmware.sh`.
+  turnaround); 100 MHz and 200 MHz Turbo UF2 images via `scripts/build_firmware.sh`; test-signal generator
+  and `logictracer-cli selftest` (§2.7) as the firmware regression check.
 * **Hardware validation:** verified live with an RP2040 against a Digilent PYNQ-Z1 (100-transaction
   burst, stimulus → reaction latency, `--expect` PASS). Pending: NVIDIA Jetson AGX Orin `DO1` →
   RP2040 `GP28` (needs an external pull-up), see [BACKLOG.md](BACKLOG.md).

@@ -442,3 +442,15 @@ WAIT_LOW:
 
     jmp pin WAIT_LOW
     jmp POST_CAPTURE
+
+;--------------------------------------------------------------------------------------------
+; LogicTracer test-signal generator (PIO1): each 32-bit word holds the GP0/GP1 levels (bits 1:0) and a
+; duration count N (bits 31:2); the levels are held for exactly N + 3 cycles (out, out, N + 1 jmp).
+.program TEST_SIGNAL
+
+.wrap_target
+    out pins, 2                 ;new levels
+    out x, 30                   ;duration count
+HOLD:
+    jmp x-- HOLD                ;N + 1 cycles
+.wrap

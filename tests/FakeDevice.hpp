@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -87,6 +88,8 @@ public:
 
     [[nodiscard]] const std::string& port() const { return m_slaveName; }
     [[nodiscard]] int cancelCount() const { return m_cancels; }
+    // Called on the emulator thread for every cancel byte (set before the host connects).
+    void onCancel(std::function<void(Device&)> handler) { m_onCancel = std::move(handler); }
     [[nodiscard]] std::vector<Request> requests() const
     {
         std::lock_guard lock(m_mutex);
@@ -138,8 +141,11 @@ private:
                 if (state == 0) {
                     if (b == 0x55)
                         state = 1;
-                    else if (b == 0xFF)
+                    else if (b == 0xFF) {
                         ++m_cancels;
+                        if (m_onCancel)
+                            m_onCancel(*this);
+                    }
                 } else if (state == 1) {
                     state = b == 0xAA ? 2 : 0;
                     frame.clear();
@@ -184,6 +190,7 @@ private:
     }
 
     Handler m_handler;
+    std::function<void(Device&)> m_onCancel;
     int m_master = -1;
     int m_keepAlive = -1;
     std::string m_slaveName;
@@ -204,6 +211,7 @@ public:
     [[nodiscard]] static constexpr bool available() { return false; }
     [[nodiscard]] const std::string& port() const { return m_port; }
     [[nodiscard]] int cancelCount() const { return 0; }
+    void onCancel(std::function<void(Device&)>) {}
     [[nodiscard]] std::vector<Request> requests() const { return {}; }
     void send(const std::string&) {}
     void send(const std::vector<uint8_t>&) {}
@@ -235,20 +243,27 @@ inline std::string idReply(const std::string& version, bool extended,
     return s;
 }
 
-// length + samples (+ optional trailer). Every sample is `value` (little-endian, bytesPerSample wide).
-inline std::vector<uint8_t> captureData(const Request& r, uint8_t value, bool withTrailer = true,
-                                        uint32_t lengthOverride = 0)
+inline void putU32(std::vector<uint8_t>& out, uint32_t v)
+{
+    for (int b = 0; b < 4; ++b)
+        out.push_back(static_cast<uint8_t>(v >> (8 * b)));
+}
+
+// length + samples (+ trailer: burst timestamps for measure bit 0, the recorded-sample count for measure bit 1).
+// `samples` gives the low byte of every sample (padded with the last value); `recorded` defaults to all of them.
+inline std::vector<uint8_t> captureSamples(const Request& r, const std::vector<uint8_t>& samples, bool withTrailer = true,
+                                           uint32_t lengthOverride = 0, std::optional<uint32_t> recorded = {})
 {
     const uint32_t n = r.totalSamples();
     const uint32_t len = lengthOverride ? lengthOverride : n;
-    std::vector<uint8_t> out{static_cast<uint8_t>(len), static_cast<uint8_t>(len >> 8),
-                             static_cast<uint8_t>(len >> 16), static_cast<uint8_t>(len >> 24)};
+    std::vector<uint8_t> out;
+    putU32(out, len);
     for (uint32_t i = 0; i < n; ++i) {
-        out.push_back(value);
+        out.push_back(samples.empty() ? 0 : samples[std::min<std::size_t>(i, samples.size() - 1)]);
         for (std::size_t b = 1; b < r.bytesPerSample(); ++b)
             out.push_back(0);
     }
-    if (withTrailer && r.measure && r.loop > 0) {
+    if (withTrailer && (r.measure & 1) && r.loop > 0) {
         // Burst timestamps like the firmware: arm + one per window, (loops << 24) | SysTick down-counter at 200 MHz.
         // Windows trigger 1 ms apart, starting just before a 2^24-cycle rollover.
         const uint32_t count = r.loop + 2;
@@ -262,7 +277,16 @@ inline std::vector<uint8_t> captureData(const Request& r, uint8_t value, bool wi
     } else if (withTrailer) {
         out.push_back(0);
     }
+    if (withTrailer && (r.measure & 2))
+        putU32(out, recorded.value_or(n));
     return out;
+}
+
+// Every sample is `value`.
+inline std::vector<uint8_t> captureData(const Request& r, uint8_t value, bool withTrailer = true,
+                                        uint32_t lengthOverride = 0)
+{
+    return captureSamples(r, {value}, withTrailer, lengthOverride);
 }
 
 }  // namespace fake

@@ -201,6 +201,36 @@ bool PicoConnection::enterBootloader()
     return false;
 }
 
+std::optional<TestSignalInfo> PicoConnection::setTestSignal(const TestSignalRequest& request, std::string& error)
+{
+    if (!isOpen()) {
+        error = "device is not open";
+        return std::nullopt;
+    }
+    if (!m_info.supportsTestSignal()) {
+        error = "this firmware has no test-signal generator (LogicTracer 0.6+ on a Pico or Pico 2)";
+        return std::nullopt;
+    }
+    m_rx.clear();
+    m_port->clear(QSerialPort::Input);
+    if (!writeAll(encodeFrame(cmd::TestSignal, serialize(request)))) {
+        error = m_error;
+        return std::nullopt;
+    }
+    const auto deadline = Clock::now() + 2000ms;
+    while (auto line = readLine(deadline)) {
+        if (auto info = parseTestSignalReply(*line))
+            return info;
+        if (line->starts_with("ERR_")) {
+            error = "the firmware rejected the test signal (" + *line +
+                    "): every segment must last at least 3 system clock cycles and period > high + delay";
+            return std::nullopt;
+        }
+    }
+    error = "no reply to the test-signal command";
+    return std::nullopt;
+}
+
 std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) const
 {
     if (!isOpen())
@@ -272,8 +302,24 @@ CaptureRequestPacket PicoConnection::buildRequest(const CaptureConfig& c, const 
     // Burst timestamps give the time between windows; the firmware keeps at most 255 of them.
     if (edgeSensitive && m_info.supportsEdgeBurstTimestamps() && c.segments >= 2 && c.segments <= 254)
         req.measure = 1;
+    if (m_info.supportsRecordedCount())
+        req.measure |= 2;
     req.captureMode = captureModeFor(numbers);
     return req;
+}
+
+void PicoConnection::alignTriggerToEdge(CaptureBuffer& buffer, const EdgeTrigger& trigger)
+{
+    const auto& channels = buffer.channels();
+    const auto it = std::find_if(channels.begin(), channels.end(),
+                                 [&](const ChannelInfo& c) { return c.number == trigger.channel; });
+    const auto ti = buffer.triggerIndex();
+    if (it == channels.end() || ti < 2 || static_cast<std::size_t>(ti) >= buffer.size())
+        return;  // the trigger channel was not captured: t = 0 may be one sample after the edge
+    const auto bit = static_cast<std::size_t>(it - channels.begin());
+    const bool after = !trigger.inverted;
+    if (buffer.bit(ti, bit) == after && buffer.bit(ti - 1, bit) == after && buffer.bit(ti - 2, bit) != after)
+        buffer.setTriggerIndex(ti - 1);
 }
 
 CaptureResult PicoConnection::capture(const CaptureConfig& config)
@@ -320,6 +366,7 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
     const bool edgeSensitive = config.trigger.has_value() && m_info.supportsEdgeTrigger();
     result.edgeSensitive = edgeSensitive;
     std::vector<uint32_t> timestamps;
+    std::optional<uint32_t> recorded;
     for (const auto& trig : plan) {
         ++result.attempts;
         result.triggerUsed = trig;
@@ -329,6 +376,7 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
         result.error = attempt.error;
         result.buffer = std::move(attempt.buffer);
         timestamps = std::move(attempt.timestamps);
+        recorded = attempt.recorded;
         if (attempt.status != CaptureStatus::Timeout)
             break;
         if (m_cancelRequested) {
@@ -344,9 +392,24 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
     // Immediate mode: the trigger fires on the first sample, so the pre-trigger part holds stale memory.
     if (!config.trigger && result.buffer)
         result.buffer = result.buffer->dropFront(config.preSamples);
+    // A trigger that fires before the pre-trigger window has filled leaves its oldest samples unrecorded (the
+    // firmware's zero fill): leave them out instead of showing a LOW that never happened.
+    uint32_t preKept = config.preSamples;
+    if (config.trigger && result.buffer && recorded && *recorded < result.buffer->size()) {
+        const auto missing = std::min<std::size_t>(result.buffer->size() - *recorded, config.preSamples);
+        result.buffer = result.buffer->dropFront(missing);
+        preKept = config.preSamples - static_cast<uint32_t>(missing);
+        result.warnings.push_back("the trigger fired before the pre-trigger window filled: " + std::to_string(preKept) +
+                                  " of " + std::to_string(config.preSamples) +
+                                  " pre-trigger samples were recorded, the older ones are left out");
+    }
+    // The edge programs store a sample ("in pins") and then test the trigger pin ("jmp pin"): an edge between the
+    // two is already in the last pre-trigger sample. Put t = 0 on the first sample showing the new level.
+    if (edgeSensitive && config.segments == 1 && result.buffer && result.status == CaptureStatus::Ok)
+        alignTriggerToEdge(*result.buffer, *config.trigger);
     if (config.segments > 1 && config.trigger)
     {
-        result.segments = SegmentLayout{config.segments, config.preSamples, config.postSamples, config.trigger->channel,
+        result.segments = SegmentLayout{config.segments, preKept, config.postSamples, config.trigger->channel,
                                         config.trigger->inverted, {}, 0.0};
         if (!timestamps.empty()) {
             std::string why;
@@ -510,6 +573,15 @@ PicoConnection::Attempt PicoConnection::runCapture(const CaptureRequestPacket& r
         for (int k = 0; k < stampCount; ++k, s += 4)
             a.timestamps.push_back(s[0] | (s[1] << 8) | (s[2] << 16) | (static_cast<uint32_t>(s[3]) << 24));
     }
+    if (req.measure & 2) {
+        QByteArray rec;
+        if (!readExact(4, rec, 1000ms)) {
+            a.error = "capture trailer truncated (recorded-sample count)";
+            return a;
+        }
+        const auto* r = reinterpret_cast<const uint8_t*>(rec.constData());
+        a.recorded = r[0] | (r[1] << 8) | (r[2] << 16) | (static_cast<uint32_t>(r[3]) << 24);
+    }
 
     const std::span<const uint8_t> rawSpan(reinterpret_cast<const uint8_t*>(raw.constData()),
                                            static_cast<std::size_t>(raw.size()));
@@ -524,9 +596,16 @@ PicoConnection::CancelOutcome PicoConnection::cancelCapture()
     if (!writeAll({&cancel, 1}))
         return CancelOutcome::PortError;
     // The firmware checks for a cancel request once per poll cycle; the capture may also
-    // have completed in the meantime, in which case its data is still delivered.
-    if (waitForBytes(4, Clock::now() + m_pollLatency + 300ms))
-        return CancelOutcome::DataArrived;
+    // have completed in the meantime, in which case its data is still delivered. Firmware with the extended
+    // trailer (FEATURES bit 3) acknowledges a cancel with CAPTURE_CANCELLED; a sample count never starts with "CAPT".
+    const auto deadline = Clock::now() + m_pollLatency + 300ms;
+    if (waitForBytes(4, deadline)) {
+        if (!m_info.supportsRecordedCount() || !m_rx.startsWith("CAPT"))
+            return CancelOutcome::DataArrived;
+        (void)readLine(deadline);
+        m_rx.clear();
+        return CancelOutcome::Cancelled;
+    }
     if (portFailed()) {
         if (!m_portLost)
             m_error = "serial port error: " + m_port->errorString().toStdString();

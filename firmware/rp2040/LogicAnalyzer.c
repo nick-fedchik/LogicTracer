@@ -17,6 +17,7 @@
 #include "LogicAnalyzer.pio.h"
 #include "LogicAnalyzer_Structs.h"
 #include "LogicAnalyzer_Capture.h"
+#include "LogicAnalyzer_TestSignal.h"
 #include "hardware/structs/syscfg.h"
 #include "hardware/structs/systick.h"
 #include "tusb.h"
@@ -105,6 +106,9 @@ uint32_t blinkCount = 0;
 //Capture request pointer (always points to an aligned copy of the received request)
 CAPTURE_REQUEST* req;
 static CAPTURE_REQUEST requestCopy;
+//The host asked (measure bit 1) for the recorded-sample count after the capture trailer and for
+//CAPTURE_CANCELLED when a capture is cancelled
+static bool reportRecorded = false;
 
 #ifdef USE_CYGW_WIFI
 
@@ -325,7 +329,10 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             //Feature bits (sent before CHANNELS so older hosts consume and ignore the line):
                             //bit 0 = edge-sensitive simple trigger (trigger type 4)
                             //bit 1 = burst timestamps (measure) with the edge-sensitive trigger
-                            sprintf(msg, "FEATURES:%d\n", 3);
+                            //bit 2 = test-signal generator on GP0/GP1 (command 7)
+                            //bit 3 = request measure bit 1: recorded-sample count after the capture trailer and
+                            //        CAPTURE_CANCELLED after a cancel
+                            sprintf(msg, "FEATURES:%d\n", 11 | (TestSignalSupported() ? 4 : 0));
                             sendResponse(msg, fromWiFi);
                             sprintf(msg, "CHANNELS:%d\n", MAX_CHANNELS);
                             sendResponse(msg, fromWiFi);
@@ -343,6 +350,8 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
 
                         memcpy(&requestCopy, &messageBuffer[3], sizeof(CAPTURE_REQUEST)); //Aligned copy (Cortex-M0+ faults on unaligned words)
                         req = &requestCopy;
+                        reportRecorded = (req->measure & 2) != 0;
+                        req->measure &= 1;
 
                         if(!IsCaptureRequestValid(req))
                         {
@@ -351,6 +360,10 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                         }
 
                         bool started = false;
+
+                        //Complex/fast triggers and the external trigger input use GP0/GP1: release them first
+                        if(req->triggerType == 1 || req->triggerType == 2 || req->trigger >= MAX_CHANNELS)
+                            StopTestSignal();
 
                         #ifdef SUPPORTS_COMPLEX_TRIGGER
 
@@ -477,6 +490,22 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                         sendResponse("BLINKOFF\n", fromWiFi);
                         LED_ON();
                         break;
+
+                    case 7: //LogicTracer test-signal generator on GP0/GP1
+                    {
+                        if(dest != 5 + (int)sizeof(TEST_SIGNAL_REQUEST))
+                        {
+                            sendResponse("ERR_TEST_SIGNAL\n", fromWiFi);
+                            break;
+                        }
+
+                        TEST_SIGNAL_REQUEST tsRequest;
+                        memcpy(&tsRequest, &messageBuffer[3], sizeof(TEST_SIGNAL_REQUEST));
+                        char tsReply[96];
+                        ProcessTestSignalRequest(&tsRequest, tsReply, sizeof(tsReply));
+                        sendResponse(tsReply, fromWiFi);
+                        break;
+                    }
 
                     default:
 
@@ -708,6 +737,7 @@ int main()
 
                 uint8_t stampsLength;
                 volatile uint32_t* timestamps = GetTimestamps(&stampsLength);
+                uint32_t recorded = GetRecordedSamples(); //After GetBuffer (which processes the capture)
 
                 //Send the data to the host
                 uint8_t* lengthPointer = (uint8_t*)&length;
@@ -765,6 +795,9 @@ int main()
 
                         if(stampsLength > 1)
                             wifi_transfer((unsigned char*)timestamps, stampsLength * 4);
+
+                        if(reportRecorded)
+                            wifi_transfer((unsigned char*)&recorded, 4);
                     }
                     else
                     {
@@ -780,6 +813,9 @@ int main()
 
                         if(stampsLength > 1)
                             cdc_transfer((unsigned char*)timestamps, stampsLength * 4);
+
+                        if(reportRecorded)
+                            cdc_transfer((unsigned char*)&recorded, 4);
                     }
                 #else
 
@@ -795,6 +831,9 @@ int main()
                         
                     if(stampsLength > 1)
                         cdc_transfer((unsigned char*)timestamps, stampsLength * 4);
+
+                    if(reportRecorded)
+                        cdc_transfer((unsigned char*)&recorded, 4);
 
                 #endif
                 //Done!
@@ -824,6 +863,16 @@ int main()
                     capturing = false;
                     pollTick = 0;
                     LED_ON();
+
+                    //Hosts that asked for the extended trailer also understand the acknowledgement
+                    if(reportRecorded)
+                    {
+                        #ifdef USE_CYGW_WIFI
+                        sendResponse("CAPTURE_CANCELLED\n", usbDisabled);
+                        #else
+                        sendResponse("CAPTURE_CANCELLED\n", false);
+                        #endif
+                    }
                 }
                 else
                 {

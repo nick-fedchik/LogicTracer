@@ -44,6 +44,13 @@ public:
     virtual void setPollLatency(std::chrono::milliseconds /*latency*/) noexcept {}
     // Reboots into the firmware update mode, if the device has one.
     virtual bool enterBootloader() = 0;
+    // Starts or stops the device's test-signal generator (self-test stimulus), if it has one.
+    [[nodiscard]] virtual std::optional<TestSignalInfo> setTestSignal(const TestSignalRequest& /*request*/,
+                                                                      std::string& error)
+    {
+        error = "this device has no test-signal generator";
+        return std::nullopt;
+    }
 
     [[nodiscard]] virtual std::optional<std::string> validate(const CaptureConfig& config) const = 0;
     [[nodiscard]] virtual CaptureResult capture(const CaptureConfig& config) = 0;

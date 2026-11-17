@@ -260,4 +260,49 @@ CaptureLimits DeviceInfo::limits(CaptureMode mode) const noexcept
     return l;
 }
 
+std::vector<uint8_t> serialize(const TestSignalRequest& req)
+{
+    std::vector<uint8_t> out;
+    out.push_back(req.enable ? 1 : 0);
+    out.push_back(0);
+    out.push_back(static_cast<uint8_t>(req.pulses));
+    out.push_back(static_cast<uint8_t>(req.pulses >> 8));
+    for (const uint32_t v : {req.highNs, req.delayNs, req.periodNs, req.gapNs})
+        for (int b = 0; b < 4; ++b)
+            out.push_back(static_cast<uint8_t>(v >> (8 * b)));
+    return out;  // 20 bytes, TEST_SIGNAL_REQUEST in the firmware
+}
+
+std::optional<TestSignalInfo> parseTestSignalReply(std::string_view line)
+{
+    constexpr std::string_view prefix = "TESTSIGNAL:";
+    if (!line.starts_with(prefix))
+        return std::nullopt;
+    line.remove_prefix(prefix.size());
+    TestSignalInfo info;
+    if (line == "OFF")
+        return info;
+    uint64_t v[6] = {};
+    for (int k = 0; k < 6; ++k) {
+        const auto comma = k < 5 ? line.find(',') : line.size();
+        if (comma == std::string_view::npos)
+            return std::nullopt;
+        const auto field = line.substr(0, comma);
+        const auto [ptr, ec] = std::from_chars(field.data(), field.data() + field.size(), v[k]);
+        if (ec != std::errc{} || ptr != field.data() + field.size())
+            return std::nullopt;
+        line.remove_prefix(k < 5 ? comma + 1 : comma);
+    }
+    if (v[0] == 0 || v[0] > UINT32_MAX || v[5] == 0)
+        return std::nullopt;
+    info.running = true;
+    info.sysclkHz = static_cast<uint32_t>(v[0]);
+    info.highCycles = v[1];
+    info.delayCycles = v[2];
+    info.periodCycles = v[3];
+    info.gapCycles = v[4];
+    info.pulses = static_cast<uint32_t>(v[5]);
+    return info;
+}
+
 }  // namespace lt

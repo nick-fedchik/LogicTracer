@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/selftest.schema.json",
+  "title": "logictracer-cli selftest --json",
+  "description": "The device checked against its own test-signal generator (GP0 = A, GP1 = B, looped back by jumpers). status OK (exit 0) when no check failed, FAILED (exit 3) otherwise; a self-test that cannot run is an error document (exit 1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "checks",
+    "command",
+    "device",
+    "elapsed_ms",
+    "schema_version",
+    "setup",
+    "status",
+    "summary",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "selftest"
+    },
+    "status": {
+      "enum": [
+        "OK",
+        "FAILED"
+      ]
+    },
+    "device": {
+      "$ref": "common.schema.json#/$defs/device"
+    },
+    "setup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "a",
+        "b",
+        "frequency",
+        "sysclk_hz"
+      ],
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/line"
+        },
+        "b": {
+          "$ref": "#/$defs/line"
+        },
+        "frequency": {
+          "description": "Sample rate of every capture (Hz).",
+          "type": "integer"
+        },
+        "sysclk_hz": {
+          "description": "Generator clock: its timing is exact in these cycles.",
+          "type": "integer"
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "failed",
+        "passed",
+        "skipped"
+      ],
+      "properties": {
+        "passed": {
+          "type": "integer"
+        },
+        "failed": {
+          "type": "integer"
+        },
+        "skipped": {
+          "type": "integer"
+        }
+      }
+    },
+    "checks": {
+      "description": "In execution order. After a failed wiring check the remaining checks are SKIP.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "message",
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^(generator|wiring|trigger_rising|trigger_falling|pretrigger|waveform|latency(_[0-9]+ns)?|segments|idle|timeout)$"
+          },
+          "status": {
+            "enum": [
+              "PASS",
+              "FAIL",
+              "SKIP"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "description": "Check-specific measurements (see docs/SELFTEST.md); capture_file names the capture kept by --keep.",
+            "type": "object"
+          }
+        }
+      }
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "x-volatile": true
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel",
+        "source"
+      ],
+      "properties": {
+        "channel": {
+          "description": "1-based capture channel wired to the generator pin.",
+          "type": "integer"
+        },
+        "source": {
+          "enum": [
+            "GP0",
+            "GP1"
+          ]
+        },
+        "gpio": {
+          "description": "GPIO of the capture channel (the jumper's other end).",
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

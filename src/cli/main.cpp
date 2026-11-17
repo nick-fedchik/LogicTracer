@@ -5,7 +5,7 @@
 // LogicAnalyzer firmware (gusmanb protocol).
 //
 // Exit codes:
-//   0 = OK, 1 = error / nothing found, 2 = TIMEOUT, 3 = --expect assertion / --invariant failed, 64 = usage error.
+//   0 = OK, 1 = error / nothing found, 2 = TIMEOUT, 3 = --expect assertion / --invariant / selftest check failed, 64 = usage error.
 
 #include "core/AiReport.hpp"
 #include "core/CaptureDiff.hpp"
@@ -17,6 +17,7 @@
 #include "core/Paths.hpp"
 #include "services/Operations.hpp"
 #include "device/PicoConnection.hpp"
+#include "services/SelfTest.hpp"
 #include "services/Session.hpp"
 #include "core/SignalAnalyzer.hpp"
 
@@ -1197,6 +1198,75 @@ int cmdBootloader(const QStringList& args, Output o)
     return ExitOk;
 }
 
+int cmdSelftest(const QStringList& args, Output o)
+{
+    QCommandLineParser p;
+    p.setApplicationDescription(
+        "Check the capture device against its own test-signal generator (LogicTracer firmware on a Pico or Pico 2).\n"
+        "Wiring: jumper GP0 (pin 1) to the --a channel and GP1 (pin 2) to the --b channel; the defaults CH3 / CH4\n"
+        "are GP4 (pin 6) / GP5 (pin 7). Checks: wiring, edge trigger position, pulse widths, A->B latency bounds,\n"
+        "segmented trigger times, idle levels, trigger timeout. Exit 0 = all passed, 3 = a check failed.");
+    p.addOptions({
+        {"json", "Machine-readable JSON output."},
+        {"port", "Serial port (default: first detected device).", "path"},
+        {"a", "Channel wired to GP0 (default 3).", "ch", "3"},
+        {"b", "Channel wired to GP1 (default 4).", "ch", "4"},
+        {"freq", "Sample rate, 1M up to the device maximum (default: the maximum).", "Hz"},
+        {"keep", "Save the capture of every failed check to this directory (lossless JSON).", "dir"},
+        {"timeout", "Handshake timeout in ms (default 3000).", "ms", "3000"},
+    });
+    if (auto rc = parse(p, args, o))
+        return *rc;
+    const auto timeout = parseMs(p.value("timeout"));
+    if (!timeout)
+        return report(o, ExitUsage, "invalid --timeout");
+    lt::SelfTestOptions options;
+    for (const char* key : {"a", "b"}) {
+        bool ok = false;
+        const int ch = p.value(key).toInt(&ok);
+        if (!ok || ch < 1 || ch > kMaxProtocolChannels)
+            return report(o, ExitUsage, std::string("invalid --") + key + " '" + str(p.value(key)) + "'");
+        (key[0] == 'a' ? options.channelA : options.channelB) = static_cast<uint8_t>(ch - 1);
+    }
+    if (p.isSet("freq")) {
+        const auto freq = lt::cli::parseQuantity(str(p.value("freq")));
+        if (!freq || *freq == 0 || *freq > UINT32_MAX)
+            return report(o, ExitUsage, "invalid --freq '" + str(p.value("freq")) + "'");
+        options.frequency = static_cast<uint32_t>(*freq);
+    }
+    if (p.isSet("keep")) {
+        options.keepDir = str(p.value("keep"));
+        std::error_code ec;
+        std::filesystem::create_directories(lt::pathFromUtf8(options.keepDir), ec);
+        if (ec)
+            return report(o, ExitError, "--keep: cannot create '" + options.keepDir + "': " + ec.message());
+    }
+
+    std::string error;
+    auto device = openDevice(p, *timeout, error);
+    if (!device)
+        return report(o, ExitError, error);
+    const auto outcome = lt::runSelfTest(*device, options);
+    if (!outcome.error.empty())
+        return report(o, ExitError, outcome.error);
+    const json& doc = outcome.doc;
+    if (o.json) {
+        std::cout << doc.dump(2) << std::endl;
+    } else {
+        const auto& info = device->info();
+        std::cout << "Self-test of " << info.port << " (" << info.version.raw << "), A = CH"
+                  << doc["setup"]["a"]["channel"].get<int>() << ", B = CH" << doc["setup"]["b"]["channel"].get<int>()
+                  << ", " << lt::formatHz(doc["setup"]["frequency"].get<uint32_t>()) << "\n";
+        for (const auto& c : doc["checks"])
+            std::cout << "  " << std::left << std::setw(5) << c["status"].get<std::string>() << ' ' << std::setw(18)
+                      << c["name"].get<std::string>() << ' ' << c["message"].get<std::string>() << '\n';
+        const auto& sum = doc["summary"];
+        std::cout << (outcome.passed ? "PASS" : "FAIL") << ": " << sum["passed"].get<int>() << " passed, "
+                  << sum["failed"].get<int>() << " failed, " << sum["skipped"].get<int>() << " skipped\n";
+    }
+    return outcome.passed ? ExitOk : ExitExpectFailed;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Commands talking to a running GUI session.
 
@@ -1469,9 +1539,10 @@ void printUsage()
                  "  diff        Compare two saved captures (latency shift, drops, anomalies; --strict for CI)\n"
                  "  annotate    Place a marker on the timeline of the running GUI (--list / --clear)\n"
                  "  view        Read what the GUI currently shows (visible range, cursors, annotations)\n"
+                 "  selftest    Check the device against its own test-signal generator (GP0/GP1 jumpers)\n"
                  "  bootloader  Reboot the RP2040 into USB UF2 bootloader mode (requires --yes)\n\n"
                  "Run 'logictracer-cli <command> --help' for command options.\n"
-                 "Exit codes: 0 OK, 1 error, 2 timeout, 3 --expect / --invariant failed, 64 usage error.\n";
+                 "Exit codes: 0 OK, 1 error, 2 timeout, 3 --expect / --invariant / selftest check failed, 64 usage error.\n";
 }
 
 }  // namespace
@@ -1507,6 +1578,8 @@ int main(int argc, char* argv[])
         return cmdView(args, o);
     if (command == "bootloader")
         return cmdBootloader(args, o);
+    if (command == "selftest")
+        return cmdSelftest(args, o);
     if (command == "-h" || command == "--help" || command == "help") {
         printUsage();
         return ExitOk;
@@ -1518,7 +1591,7 @@ int main(int argc, char* argv[])
     if (o.json) {
         return report(o, ExitUsage,
                       "missing or unknown command '" + str(command) +
-                          "' (expected detect|probe|capture|analyze|diff|annotate|view|bootloader)");
+                          "' (expected detect|probe|capture|analyze|diff|annotate|view|selftest|bootloader)");
     }
     std::cerr << "logictracer-cli: unknown command '" << str(command) << "'\n\n";
     printUsage();

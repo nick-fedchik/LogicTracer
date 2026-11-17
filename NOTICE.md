@@ -33,10 +33,16 @@ Modified files carry a notice at the top. Changes, 2026, by Mykola Fedchyk:
 3. `LogicAnalyzer_Build_Settings.cmake`: `BOARD_TYPE` and `TURBO_MODE` can be set with `-D`;
    `TURBO_MODE` defaults to `0` (no 400 MHz overclock unless requested).
 4. Removed upstream IDE/publishing files (`.vscode/`, `publish.ps1`).
+5. Protocol extensions, advertised with a `FEATURES:<bits>` line in the identify reply and used only by hosts
+   that ask for them: an edge-sensitive simple trigger (type 4) with burst timestamps
+   (`LogicAnalyzer.c`, `LogicAnalyzer_Capture.c`, `LogicAnalyzer.pio`); a test-signal generator on GP0/GP1
+   for the self-test (command 7, new `LogicAnalyzer_TestSignal.{c,h}`); the recorded-sample count and a
+   `CAPTURE_CANCELLED` acknowledgement (`measure` bit 1), with the DMA ring wraps counted in
+   `LogicAnalyzer_Capture.c`. Request validation and a bounded receive buffer were added.
 
 LogicTracer firmware uses its own name and version numbers so it cannot be mistaken for an upstream
-release. The wire protocol is unchanged (upstream V6_5 command set and 56-byte capture request), but
-the upstream host software does not recognise the new identity line. The USB VID:PID `1209:3020`
+release. The upstream V6_5 command set and 56-byte capture request are kept (the extensions above are
+opt-in), but the upstream host software does not recognise the new identity line. The USB VID:PID `1209:3020`
 (pid.codes, allocated to LogicAnalyzer) is still used for driver-free compatibility; a dedicated PID
 for LogicTracer is planned.
 

@@ -10,6 +10,7 @@ Uses replay devices built from generated recordings, so it needs no hardware and
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,8 @@ class Validator:
             if not any(self.type_ok(value, t) for t in types):
                 yield f"{path}: expected {types}, got {type(value).__name__}"
                 return
+        if "pattern" in schema and isinstance(value, str) and not re.search(schema["pattern"], value):
+            yield f"{path}: {value!r} does not match {schema['pattern']!r}"
         if isinstance(value, dict):
             props = schema.get("properties", {})
             for key in schema.get("required", []):
@@ -220,6 +223,22 @@ class Contracts(unittest.TestCase):
         self.json_cli("error.schema.json", 1, "bootloader", "--port", "/dev/ttyNONE", "--yes")
 
     # -- determinism -------------------------------------------------------------------------------
+    def test_selftest_documents(self):
+        # Without hardware: the generator is missing (error, exit 1) or the options are wrong (usage, exit 64).
+        doc = self.json_cli("error.schema.json", 1, "selftest", "--port", self.port)
+        self.assertIn("test-signal generator", doc["error"])
+        self.json_cli("error.schema.json", 64, "selftest", "--a", "0")
+        # Recorded on a Pico: every check passing, and a missing jumper (the rest skipped).
+        data = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        for name, status in (("selftest-pass.json", "OK"), ("selftest-wiring-fail.json", "FAILED")):
+            with open(os.path.join(data, name), encoding="utf-8") as f:
+                doc = json.load(f)
+            self.assertEqual(self.v.check(doc, "selftest.schema.json"), [], name)
+            self.assertEqual(doc["status"], status, name)
+            counts = {s: sum(c["status"] == s for c in doc["checks"]) for s in ("PASS", "FAIL", "SKIP")}
+            self.assertEqual(doc["summary"], {"passed": counts["PASS"], "failed": counts["FAIL"],
+                                              "skipped": counts["SKIP"]}, name)
+
     def test_identical_runs_give_identical_output(self):
         volatile = self.v.volatile_keys()
         self.assertIn("elapsed_ms", volatile)
