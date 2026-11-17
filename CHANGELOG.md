@@ -5,6 +5,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
 ### Added
 - PYNQ in-design capture backend: `logictracer_agent.py` serves the `lt_capture` core (UIO, `/dev/mem`, or a
   register-level model with `--sim`) over TCP, and `--port pynq://host[:port]` uses it from the CLI, GUI and
@@ -18,6 +20,11 @@ All notable changes are documented here. The format follows
 ### Fixed
 - Windows: file paths with non-ASCII characters (UTF-8 is converted explicitly instead of through the
   ANSI code page).
+- Windows packages ship the MSVC runtime next to the programs (no Visual C++ Redistributable needed); the
+  packaging smoke test runs without Qt on `PATH`.
+- Independent review (Gemini 4 Carbon) of the PYNQ backend before release: pre-trigger history after long
+  waits, cancel/disconnect handling, lost-connection reporting, 16/24-channel limits, IPv6 addresses, and
+  exact-vs-asynchronous delay comparison in `diff`.
 
 ## [0.4.0] - 2026-11-17
 
@@ -148,6 +155,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.5.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.4.0
 [0.3.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.3.0
 [0.2.0]: https://github.com/nick-fedchik/LogicTracer/tree/v0.2.0

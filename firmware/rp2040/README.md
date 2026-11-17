@@ -10,6 +10,7 @@ The firmware is versioned with the whole product ([SemVer 2.0](https://semver.or
 
 | Version | Change |
 |---|---|
+| 0.5.0 | Version bump only (no firmware changes) |
 | 0.4.0 | Edge-sensitive simple trigger (type 4, re-armed per `loopCount` loop) advertised as `FEATURES:1` before `CHANNELS`; request validation (exact frame length, channels, trigger type, mode, frequency, post length, escapes); bounded receive buffer; WiFi `tcp_recved`; burst timestamps with the edge trigger (`FEATURES:3`), SysTick rollover race in the timestamp NMI fixed, `measure` without loops rejected (it would hang); Pico W WiFi build fixed |
 | 0.3.0 | Version bump only (no firmware changes) |
 | 0.2.0 | LogicTracer identity line, program name and USB strings; SemVer from `VERSION` |
