@@ -67,7 +67,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           foreach ($t in @("core", "connection", "gui", "session", "mcp")) {
-            $exe = Join-Path $PWD "build/tests/logictracer-$t-tests.exe"
+            $exe = (Get-ChildItem build -Recurse -Filter "logictracer-$t-tests.exe" | Select-Object -First 1).FullName
             & $exe -o "$t.txt,txt" -v1 | Out-Null
             Write-Host "=== $t exit code $LASTEXITCODE (last lines) ==="
             if (Test-Path "$t.txt") { Get-Content "$t.txt" -Tail 15 }
