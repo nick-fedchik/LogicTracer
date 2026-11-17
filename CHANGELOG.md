@@ -6,6 +6,9 @@ All notable changes are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Windows 10/11 (x64, MSVC 2022, Qt 6.8) builds with warnings as errors and passes the test suites in CI
+  (emulator-based tests are skipped); macOS (Homebrew Qt) builds and passes every suite. The GUI session
+  uses a user-only named pipe on Windows and verifies the server's user.
 - Segmented capture: `logictracer-cli capture --segments N --trigger ...` records N trigger windows in one run
   (firmware `loopCount`; the edge-sensitive trigger re-arms between windows). Each window is analysed on its own
   and the summary, latency, `--expect` and `--invariant` results are combined; the JSON gains `segments`

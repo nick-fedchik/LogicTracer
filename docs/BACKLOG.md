@@ -106,9 +106,13 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [ ] `./scripts/hil_j501_do1.sh`.
 
 ## B-07. Portability
-- [ ] Windows: replace the POSIX parts of `Session.cpp` (`getuid`, `lstat`, `/tmp` fallback) with
-      Qt equivalents / named pipes, and give the pty-based test emulator a Windows alternative or
-      skip those suites; add a `windows-latest` CI job (MSVC 2022, Qt via `install-qt-action`).
+- [x] Windows: `windows-latest` CI job (MSVC 2022 with `/WX`, Qt 6.8, vcpkg nlohmann-json), all suites
+      green. Win32 writer (exclusive temp file, `MoveFileExW`, no symlinked/junctioned directories in
+      confined mode), session named pipe `logictracer-<user>` with a token-SID check of the server,
+      `cmd.exe` for `--on-armed`, every COM port for `detect --all`, portable bit operations and `gmtime_s`.
+      The pty emulator is a stub there: 37 emulator tests and 3 POSIX file-mode/symlink tests are skipped.
+- [ ] Windows on hardware: `detect`, `probe`, a triggered capture and the GUI against the Pico; a
+      packaged build (`windeployqt` zip in the release); UTF-8 paths (`std::filesystem::path` from UTF-8).
 - [x] macOS: `macos-latest` CI job (Homebrew Qt, warnings as errors, all tests green): `getpeereid` for
       the session peer check, umask without `/proc`, `/dev/ttys*` pseudo-terminals under the hardware guard.
 

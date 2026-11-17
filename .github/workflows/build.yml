@@ -39,9 +39,8 @@ jobs:
         run: ctest --preset debug
 
   windows:
-    # Port in progress (B-07): MSVC 2022 + Qt 6.8; tests that need the pty emulator are skipped.
+    # MSVC 2022 + Qt 6.8, warnings as errors; tests that need the pty emulator are skipped (no pseudo-terminals).
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1

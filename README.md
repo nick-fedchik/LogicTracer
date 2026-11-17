@@ -44,7 +44,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | **Ubuntu 26.04 LTS** (x86_64) | ✅ Supported, tested on hardware | Qt 6.10, GCC 15 |
 | Other Linux (Debian 12+, Fedora 39+, aarch64 / NVIDIA Jetson) | ⚠️ Expected to work, not tested | needs Qt ≥ 6.4 and a C++20 compiler |
 | **macOS** (Apple silicon, `macos-latest`) | ✅ Built and tested in CI (no hardware run yet) | Homebrew Qt 6; device appears as `/dev/cu.usbmodem*` |
-| **Windows** 10/11 | ❌ Not supported yet | the IPC session, the confined file writer and the test emulator use POSIX APIs |
+| **Windows** 10/11 (x64) | ✅ Built and tested in CI (no hardware run yet) | MSVC 2022, Qt 6.8; device appears as `COMn`; emulator-based tests are skipped (no pseudo-terminals) |
 
 Requirements: CMake ≥ 3.24, Ninja, a C++20 compiler (GCC ≥ 12, Clang ≥ 15, Apple Clang ≥ 15),
 Qt ≥ 6.4 (Core, Network, SerialPort, Widgets, Test) and nlohmann_json ≥ 3.10.
@@ -82,11 +82,23 @@ export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
 No extra driver is needed: the RP2040 is a USB CDC device. The clipboard uses the built-in
 `pbcopy`.
 
-### Windows (not supported yet)
+### Windows 10/11
 
-A port is planned. The intended toolchain is Visual Studio 2022 (MSVC, C++20), Qt 6.4+
-for MSVC 2022 64-bit with the Qt Serial Port module (Qt Online Installer), and
-`vcpkg install nlohmann-json`.
+Visual Studio 2022 (MSVC, C++20, "Desktop development with C++"), Qt 6.4+ for MSVC 2022 64-bit
+with the Qt Serial Port module (Qt Online Installer), and nlohmann-json from vcpkg. In a
+"x64 Native Tools Command Prompt":
+
+```bat
+vcpkg install nlohmann-json:x64-windows
+cmake --preset default -DCMAKE_PREFIX_PATH="C:/Qt/6.8.3/msvc2022_64;%VCPKG_ROOT%/installed/x64-windows"
+cmake --build --preset default
+ctest --preset default
+```
+
+The device is a standard USB CDC port (`COM3`, ... ; `logictracer-cli detect` finds it by VID:PID,
+`--all` lists every COM port). The GUI session uses the named pipe `logictracer-<user>`, limited to the
+current user. Run `windeployqt` on the executables to copy the Qt DLLs next to them. Not yet tested on
+hardware; paths with non-ASCII characters may not work.
 
 ### Firmware toolchain (optional)
 
