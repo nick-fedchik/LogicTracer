@@ -5,6 +5,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-17
+
 ### Added
 - JSON contracts: schemas for every `--json` document of `logictracer-cli` and for the lossless capture file
   (`docs/schema`, described in `docs/CONTRACTS.md`), an exit-code table, and conformance and determinism
@@ -180,6 +182,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.6.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.0
 [0.5.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.5.0
 [0.4.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.4.0
 [0.3.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.3.0

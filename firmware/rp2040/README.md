@@ -10,7 +10,7 @@ The firmware is versioned with the whole product ([SemVer 2.0](https://semver.or
 
 | Version | Change |
 |---|---|
-| Unreleased | Test-signal generator on GP0/GP1 for the self-test (command 7, PIO1 + looping DMA, Pico and Pico 2 only, `FEATURES` bit 2); captures leave GP0/GP1 alone while it runs. Extended capture trailer on request (`measure` bit 1, `FEATURES` bit 3): the count of recorded samples (a trigger before the pre-trigger window filled used to show the zero fill as LOW levels) and `CAPTURE_CANCELLED` after a cancel |
+| 0.6.0 | Test-signal generator on GP0/GP1 for the self-test (command 7, PIO1 + looping DMA, Pico and Pico 2 only, `FEATURES` bit 2); captures leave GP0/GP1 alone while it runs. Extended capture trailer on request (`measure` bit 1, `FEATURES` bit 3): the count of recorded samples (a trigger before the pre-trigger window filled used to show the zero fill as LOW levels) and `CAPTURE_CANCELLED` after a cancel |
 | 0.5.0 | Version bump only (no firmware changes) |
 | 0.4.0 | Edge-sensitive simple trigger (type 4, re-armed per `loopCount` loop) advertised as `FEATURES:1` before `CHANNELS`; request validation (exact frame length, channels, trigger type, mode, frequency, post length, escapes); bounded receive buffer; WiFi `tcp_recved`; burst timestamps with the edge trigger (`FEATURES:3`), SysTick rollover race in the timestamp NMI fixed, `measure` without loops rejected (it would hang); Pico W WiFi build fixed |
 | 0.3.0 | Version bump only (no firmware changes) |

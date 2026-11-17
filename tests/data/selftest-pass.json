@@ -49,10 +49,10 @@
           200
         ],
         "partial_warning": true,
-        "pre_samples": 102,
+        "pre_samples": 225,
         "requested_pre_samples": 1501
       },
-      "message": "102 of 1501 pre-trigger samples recorded, the rest left out with a warning",
+      "message": "225 of 1501 pre-trigger samples recorded, the rest left out with a warning",
       "name": "pretrigger",
       "status": "PASS"
     },
@@ -250,7 +250,7 @@
         "in_burst": 17,
         "tolerance_ns": 15.000000000000002,
         "windows": 20,
-        "worst_error_ns": 5.000000000005034
+        "worst_error_ns": 4.999999999999952
       },
       "message": "window 1 edge at t = 0; every trigger spacing is a period or a burst gap within 15 ns (worst 5 ns)",
       "name": "segments",
@@ -269,12 +269,12 @@
     },
     {
       "data": {
-        "elapsed_ms": 506,
+        "elapsed_ms": 507,
         "line_state": true,
         "status": "TIMEOUT",
         "timeout_ms": 300
       },
-      "message": "TIMEOUT after 506 ms with the line state",
+      "message": "TIMEOUT after 507 ms with the line state",
       "name": "timeout",
       "status": "PASS"
     }
@@ -288,7 +288,7 @@
     "clock_domain": "async",
     "edge_sensitive_trigger": true,
     "firmware_family": "logictracer",
-    "firmware_version": "0.5.0",
+    "firmware_version": "0.6.0",
     "gpio_map": {
       "1": 2,
       "10": 11,
@@ -332,9 +332,9 @@
     "protocol": "v6",
     "segment_trigger_times": true,
     "serial_number": "E66118604B78A622",
-    "version": "LOGICTRACER_PICO_0.5.0"
+    "version": "LOGICTRACER_PICO_0.6.0"
   },
-  "elapsed_ms": 1033,
+  "elapsed_ms": 1017,
   "schema_version": 1,
   "setup": {
     "a": {
