@@ -23,9 +23,8 @@ jobs:
         run: ctest --preset debug
 
   macos:
-    # Not yet a required check: turns "expected to build" into "tested" on macOS (Homebrew Qt 6).
+    # Homebrew Qt 6 on Apple silicon: build with warnings as errors and run every test.
     runs-on: macos-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies

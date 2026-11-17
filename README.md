@@ -43,8 +43,8 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | **Ubuntu 24.04 LTS** (x86_64) | ✅ Supported, tested in CI | Qt 6.4, GCC 13 |
 | **Ubuntu 26.04 LTS** (x86_64) | ✅ Supported, tested on hardware | Qt 6.10, GCC 15 |
 | Other Linux (Debian 12+, Fedora 39+, aarch64 / NVIDIA Jetson) | ⚠️ Expected to work, not tested | needs Qt ≥ 6.4 and a C++20 compiler |
-| **macOS** 13+ | ⚠️ Expected to build, not tested | device appears as `/dev/cu.usbmodem*` |
-| **Windows** 10/11 | ❌ Not supported yet | the IPC session and the test emulator use POSIX APIs; the core library and the analysis CLI commands are portable |
+| **macOS** (Apple silicon, `macos-latest`) | ✅ Built and tested in CI (no hardware run yet) | Homebrew Qt 6; device appears as `/dev/cu.usbmodem*` |
+| **Windows** 10/11 | ❌ Not supported yet | the IPC session, the confined file writer and the test emulator use POSIX APIs |
 
 Requirements: CMake ≥ 3.24, Ninja, a C++20 compiler (GCC ≥ 12, Clang ≥ 15, Apple Clang ≥ 15),
 Qt ≥ 6.4 (Core, Network, SerialPort, Widgets, Test) and nlohmann_json ≥ 3.10.
@@ -71,7 +71,7 @@ sudo dnf install cmake ninja-build gcc-c++ qt6-qtbase-devel qt6-qtserialport-dev
 sudo usermod -aG dialout $USER
 ```
 
-### macOS (Homebrew, untested)
+### macOS (Homebrew)
 
 ```bash
 xcode-select --install
