@@ -55,8 +55,11 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [x] Firmware: edge-sensitive trigger (type 4, `FEATURES:1`) with re-arm for `loopCount` (the same pulse
       cannot re-trigger). Verified on the live Pico: a falling trigger on an idle-LOW line now waits
       (TIMEOUT) instead of firing at once; immediate captures and probes unchanged.
-- [ ] Expose `loopCount` (with edge re-arm) in the host for N = 1000 burst series; positive edge-fire check
-      on hardware with the PYNQ burst (needs BTN1 or the B-08 software start).
+- [ ] Expose `loopCount` (with edge re-arm) in the host for N = 1000 burst series.
+- [x] Edge-fire on hardware with the PYNQ burst (BTN1, 100 MHz, 1000 pre-samples): `1:rising` fires on the
+      first STIM rise (sample 1000, REACT at 994); `1:falling` on an idle-LOW line waits and fires on the
+      first STIM fall with the rise 201 samples earlier in the pre-trigger buffer; `2:rising` with
+      `--invariant` / `--expect` passes 100/100 pairs at 50..60 ns, and deliberately wrong rules fail.
 - [x] GUI: automatic anomaly markers (`View -> Show Anomaly Markers`, separate from annotations), MCP
       `lt_get_anomalies` / `lt_set_view`, CLI `view --anomalies` and steering flags, `F3` / `Shift+F3`
       navigation (#5-#7).
