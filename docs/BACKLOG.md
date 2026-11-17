@@ -10,9 +10,12 @@ Hardware designs under test, their bitstreams and their RTL are out of scope; th
 open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not planned (with the reason).
 
 ## B-10. Contracts for humans and AI (priority)
-- [ ] JSON Schemas for the documents of `capture`, `analyze`, `diff`, `probe`, `detect`, errors, and the
-      lossless capture file; one exit-code table; conformance tests on every platform (replay device).
-- [ ] Determinism: the same input gives byte-identical JSON and reports, except fields declared volatile.
+- [x] JSON Schemas for the documents of `capture`, `analyze`, `diff`, `probe`, `detect`, `bootloader`,
+      errors and the lossless capture file ([CONTRACTS.md](CONTRACTS.md), `docs/schema`); one envelope
+      (`schema_version`, `command`, `status`, `warnings`) for every document; exit-code table; conformance
+      tests on every platform through replay devices, including documents without data (no edges, no pairs).
+- [x] Determinism: identical runs give identical JSON and AI reports apart from `x-volatile` fields.
+- [ ] Schemas for the GUI session responses (`annotate`, `view`).
 
 ## B-11. Firmware self-test without external hardware (priority)
 - [ ] Test-signal generator in the firmware (GP0/GP1, exact clock cycles, PIO + DMA), advertised in

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/bootloader.schema.json",
+  "title": "logictracer-cli bootloader --json",
+  "description": "The device was rebooted into its UF2 bootloader.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "command",
+    "port",
+    "previous_version",
+    "schema_version",
+    "status",
+    "warnings"
+  ],
+  "properties": {
+    "port": {
+      "type": "string"
+    },
+    "previous_version": {
+      "type": "string"
+    },
+    "command": {
+      "const": "bootloader"
+    },
+    "status": {
+      "enum": [
+        "OK"
+      ]
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,272 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/capture.schema.json",
+  "title": "logictracer-cli capture --json (also session/MCP capture results)",
+  "description": "One capture: configuration, device, status and the requested analysis.",
+  "type": "object",
+  "properties": {
+    "command": {
+      "const": "capture"
+    },
+    "device": {
+      "$ref": "common.schema.json#/$defs/device"
+    },
+    "error": {
+      "type": "string"
+    },
+    "port": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "OK",
+        "TIMEOUT",
+        "ERROR",
+        "CANCELLED"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "assertions": {
+      "$ref": "common.schema.json#/$defs/assertions"
+    },
+    "attempts": {
+      "type": "integer"
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "gpio": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "channel",
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "firmware_poll_latency_ms": {
+          "type": "integer"
+        },
+        "frequency_hz": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "post_trigger_samples": {
+          "type": "integer"
+        },
+        "pre_trigger_samples": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "segments": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "trigger": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "integer"
+            },
+            "edge": {
+              "type": "string"
+            },
+            "sensitivity": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "channels",
+        "firmware_poll_latency_ms",
+        "frequency_hz",
+        "mode",
+        "post_trigger_samples",
+        "pre_trigger_samples",
+        "samples",
+        "segments",
+        "timeout_ms",
+        "trigger"
+      ],
+      "additionalProperties": false
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "x-volatile": true
+    },
+    "invariants": {
+      "$ref": "common.schema.json#/$defs/invariants"
+    },
+    "latency": {
+      "$ref": "common.schema.json#/$defs/latency"
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "csv": {
+          "type": "string"
+        },
+        "events_csv": {
+          "type": "string"
+        },
+        "json": {
+          "type": "string"
+        },
+        "vcd": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "capture": {
+      "$ref": "common.schema.json#/$defs/captureSummary"
+    },
+    "setup": {
+      "$ref": "common.schema.json#/$defs/setup"
+    },
+    "segments": {
+      "$ref": "common.schema.json#/$defs/segments"
+    },
+    "line_dump": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "integer"
+              },
+              "diagnosis": {
+                "type": "string"
+              },
+              "glitches": {
+                "type": "integer"
+              },
+              "high_time_percent": {
+                "type": "number"
+              },
+              "level": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mean_frequency_hz": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "transitions": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "channel",
+              "diagnosis",
+              "glitches",
+              "high_time_percent",
+              "level",
+              "mean_frequency_hz",
+              "message",
+              "name",
+              "state",
+              "transitions"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "sample_rate_hz": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "channels",
+        "sample_rate_hz",
+        "samples"
+      ],
+      "additionalProperties": false
+    },
+    "capture_id": {
+      "type": "integer",
+      "description": "GUI session only: the capture now on screen"
+    },
+    "report_error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "StaleCapture",
+            "ReportFailed"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "command",
+    "device",
+    "port",
+    "schema_version",
+    "status",
+    "warnings"
+  ],
+  "additionalProperties": false
+}

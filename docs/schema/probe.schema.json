@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/probe.schema.json",
+  "title": "logictracer-cli probe --json",
+  "description": "Untriggered snapshot of the line levels with a diagnosis per channel.",
+  "type": "object",
+  "properties": {
+    "auto_trigger": {
+      "type": "object",
+      "properties": {
+        "attempts": {
+          "type": "integer"
+        },
+        "channel": {
+          "type": "integer"
+        },
+        "level": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "attempts",
+        "channel",
+        "level"
+      ],
+      "additionalProperties": false
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "integer"
+          },
+          "diagnosis": {
+            "type": "string"
+          },
+          "glitches": {
+            "type": "integer"
+          },
+          "high_time_percent": {
+            "type": "number"
+          },
+          "level": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "mean_frequency_hz": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "transitions": {
+            "type": "integer"
+          },
+          "gpio": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "diagnosis",
+          "glitches",
+          "high_time_percent",
+          "level",
+          "mean_frequency_hz",
+          "message",
+          "name",
+          "state",
+          "transitions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "command": {
+      "const": "probe"
+    },
+    "device": {
+      "$ref": "common.schema.json#/$defs/device"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "x-volatile": true
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "port": {
+      "type": "string"
+    },
+    "sample_rate_hz": {
+      "type": "integer"
+    },
+    "samples": {
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "OK",
+        "TIMEOUT",
+        "ERROR",
+        "CANCELLED"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "window_us": {
+      "type": "number"
+    },
+    "error": {
+      "type": "string"
+    },
+    "usage_error": {
+      "type": "boolean",
+      "description": "the request was invalid (the CLI exits with 64)"
+    }
+  },
+  "required": [
+    "command",
+    "device",
+    "port",
+    "schema_version",
+    "status",
+    "warnings"
+  ],
+  "additionalProperties": false
+}

@@ -170,6 +170,7 @@ build/src/cli/logictracer-cli diff baseline.json run.json --measure-latency 1..2
 build/src/gui/logictracer-gui --port /dev/ttyACM0
 ```
 
+JSON output follows the schemas in [docs/schema](docs/schema) ([contracts](docs/CONTRACTS.md)).
 Exit codes: `0` OK, `1` error, `2` trigger timeout, `3` `--expect` / `--invariant` failed (or `diff --strict`
 found a regression), `64` usage error.
 

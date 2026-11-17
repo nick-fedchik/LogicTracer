@@ -28,7 +28,8 @@ std::string hex4(uint16_t v)
 json errorDocument(const char* command, CaptureStatus status, const std::string& message, const DeviceInfo& info,
                    const std::vector<std::string>& warnings)
 {
-    return {{"command", command},
+    return {{"schema_version", kCaptureSchemaVersion},
+            {"command", command},
             {"status", std::string(toString(status))},
             {"error", message},
             {"port", info.port},
@@ -164,7 +165,8 @@ json detectDocument(bool includeAllAcm, bool handshake, std::chrono::millisecond
             {"command", "detect"},
             {"status", found > 0 ? "OK" : "NOT_FOUND"},
             {"count", found},
-            {"devices", devices}};
+            {"devices", devices},
+            {"warnings", json::array()}};
 }
 
 std::unique_ptr<IDevice> openDevice(const std::string& port, std::chrono::milliseconds timeout, std::string& error)
@@ -565,13 +567,15 @@ ProbeDocument performProbe(IDevice& conn, const std::vector<ChannelInfo>& channe
     for (const auto& ch : channels) {
         if (ch.number >= conn.info().channels) {
             ProbeDocument d;
-            d.doc = {{"command", "probe"},
+            d.doc = {{"schema_version", kCaptureSchemaVersion},
+                     {"command", "probe"},
                      {"status", "ERROR"},
                      {"error", "channel " + std::to_string(ch.displayNumber()) + " out of range 1.." +
                                    std::to_string(conn.info().channels)},
                      {"port", conn.info().port},
                      {"device", toJson(conn.info())},
-                     {"usage_error", true}};
+                     {"warnings", json::array()},
+                     {"usage_error", true}};  // the request was invalid: the CLI exits with 64
             return d;
         }
     }

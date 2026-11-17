@@ -35,6 +35,10 @@ if(Python3_Interpreter_FOUND)
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_pynq_agent.py" "${LT_AGENT_SCRIPT}")
     target_compile_definitions(logictracer-connection-tests PRIVATE
         LT_PYTHON="${Python3_EXECUTABLE}" LT_AGENT_SCRIPT="${LT_AGENT_SCRIPT}")
+    # JSON contracts of the CLI (docs/schema), exit codes and determinism.
+    add_test(NAME logictracer-contract-tests
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_contracts.py"
+                "$<TARGET_FILE:logictracer-cli>" "${PROJECT_SOURCE_DIR}/docs/schema")
 endif()
 
 if(TARGET LogicTracer::Gui)

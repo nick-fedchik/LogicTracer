@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/capturefile.schema.json",
+  "title": "Lossless capture file (--out-json, logictracer-capture-v1)",
+  "description": "A capture document with the full capture (edge_samples per channel); readable by analyze, diff, replay and the GUI.",
+  "type": "object",
+  "properties": {
+    "assertions": {
+      "$ref": "common.schema.json#/$defs/assertions"
+    },
+    "attempts": {
+      "type": "integer"
+    },
+    "capture": {
+      "$ref": "common.schema.json#/$defs/captureSummary"
+    },
+    "command": {
+      "type": "string"
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "gpio": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "channel",
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "firmware_poll_latency_ms": {
+          "type": "integer"
+        },
+        "frequency_hz": {
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "post_trigger_samples": {
+          "type": "integer"
+        },
+        "pre_trigger_samples": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "segments": {
+          "type": "integer"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "trigger": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "integer"
+            },
+            "edge": {
+              "type": "string"
+            },
+            "sensitivity": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "channels",
+        "firmware_poll_latency_ms",
+        "frequency_hz",
+        "mode",
+        "post_trigger_samples",
+        "pre_trigger_samples",
+        "samples",
+        "segments",
+        "timeout_ms",
+        "trigger"
+      ],
+      "additionalProperties": false
+    },
+    "device": {
+      "$ref": "common.schema.json#/$defs/device"
+    },
+    "elapsed_ms": {
+      "type": "integer",
+      "x-volatile": true
+    },
+    "invariants": {
+      "$ref": "common.schema.json#/$defs/invariants"
+    },
+    "latency": {
+      "$ref": "common.schema.json#/$defs/latency"
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "csv": {
+          "type": "string"
+        },
+        "events_csv": {
+          "type": "string"
+        },
+        "json": {
+          "type": "string"
+        },
+        "vcd": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "json"
+      ],
+      "additionalProperties": false
+    },
+    "port": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "setup": {
+      "$ref": "common.schema.json#/$defs/setup"
+    },
+    "status": {
+      "enum": [
+        "OK",
+        "TIMEOUT",
+        "ERROR",
+        "CANCELLED"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "segments": {
+      "$ref": "common.schema.json#/$defs/segments"
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "trigger_description": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "attempts",
+    "capture",
+    "command",
+    "config",
+    "device",
+    "elapsed_ms",
+    "outputs",
+    "port",
+    "schema_version",
+    "status",
+    "warnings"
+  ],
+  "additionalProperties": false
+}

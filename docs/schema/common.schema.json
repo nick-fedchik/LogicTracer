@@ -1,0 +1,1112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/common.schema.json",
+  "title": "Shared parts of the LogicTracer JSON documents",
+  "$defs": {
+    "latency": {
+      "type": "object",
+      "properties": {
+        "bounds_ns": {
+          "type": "object",
+          "properties": {
+            "max_lb": {
+              "type": "number"
+            },
+            "max_ub": {
+              "type": "number"
+            },
+            "min_lb": {
+              "type": "number"
+            },
+            "min_ub": {
+              "type": "number"
+            },
+            "p50_ub": {
+              "type": "number"
+            },
+            "p99_ub": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "max_lb",
+            "max_ub",
+            "min_lb",
+            "min_ub",
+            "p50_ub",
+            "p99_ub"
+          ],
+          "additionalProperties": false
+        },
+        "censor_window_samples": {
+          "type": "integer"
+        },
+        "censored_reaction_count": {
+          "type": "integer"
+        },
+        "censored_stimulus_count": {
+          "type": "integer"
+        },
+        "coincident_count": {
+          "type": "integer"
+        },
+        "constant_delay_hypothesis": {
+          "type": "object",
+          "properties": {
+            "consistent": {
+              "type": "boolean"
+            },
+            "interval_ns": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "number"
+              }
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "consistent",
+            "interval_ns",
+            "note"
+          ],
+          "additionalProperties": false
+        },
+        "count": {
+          "type": "integer"
+        },
+        "drop_stim_samples": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "exact_timing": {
+          "type": "boolean"
+        },
+        "histogram": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "delta_samples": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count",
+              "delta_samples"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "max_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "max_reactions_per_stimulus": {
+          "type": "integer"
+        },
+        "mean_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "min_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "outlier_count": {
+          "type": "integer"
+        },
+        "outliers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/latencyEvent"
+          }
+        },
+        "p50_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "p90_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "p95_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "p99_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "percentile_method": {
+          "type": "string"
+        },
+        "quantization_step_ns": {
+          "type": "number"
+        },
+        "reaction": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "integer"
+            },
+            "edge": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "edge",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "sample_rate_hz": {
+          "type": "number"
+        },
+        "samples": {
+          "type": "object",
+          "properties": {
+            "max": {
+              "type": "integer"
+            },
+            "min": {
+              "type": "integer"
+            },
+            "p50": {
+              "type": "integer"
+            },
+            "p90": {
+              "type": "integer"
+            },
+            "p95": {
+              "type": "integer"
+            },
+            "p99": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "max",
+            "min",
+            "p50",
+            "p90",
+            "p95",
+            "p99"
+          ],
+          "additionalProperties": false
+        },
+        "spurious_react_samples": {
+          "type": "array",
+          "items": {}
+        },
+        "spurious_reaction_count": {
+          "type": "integer"
+        },
+        "stdev_ns": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "stimulus": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "integer"
+            },
+            "edge": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "channel",
+            "edge",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "uncertainty_note": {
+          "type": "string"
+        },
+        "unmatched_stimulus_count": {
+          "type": "integer"
+        },
+        "direction_warning": {
+          "type": "object",
+          "properties": {
+            "likely_swapped": {
+              "type": "boolean"
+            },
+            "message": {
+              "type": "string"
+            },
+            "reverse_p50_samples": {
+              "type": "integer"
+            },
+            "reverse_pairs": {
+              "type": "integer"
+            },
+            "stim_period_samples": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "likely_swapped",
+            "message",
+            "reverse_p50_samples",
+            "reverse_pairs",
+            "stim_period_samples"
+          ],
+          "additionalProperties": false
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/latencyEvent"
+          }
+        }
+      },
+      "required": [
+        "censor_window_samples",
+        "censored_reaction_count",
+        "censored_stimulus_count",
+        "coincident_count",
+        "count",
+        "drop_stim_samples",
+        "exact_timing",
+        "max_ns",
+        "max_reactions_per_stimulus",
+        "mean_ns",
+        "min_ns",
+        "outlier_count",
+        "p50_ns",
+        "p90_ns",
+        "p95_ns",
+        "p99_ns",
+        "percentile_method",
+        "quantization_step_ns",
+        "reaction",
+        "sample_rate_hz",
+        "spurious_react_samples",
+        "spurious_reaction_count",
+        "stdev_ns",
+        "stimulus",
+        "uncertainty_note",
+        "unmatched_stimulus_count"
+      ],
+      "additionalProperties": false
+    },
+    "invariants": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "checked": {
+                "type": "integer"
+              },
+              "examples": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "string"
+                    },
+                    "sample": {
+                      "type": "integer"
+                    },
+                    "time_us": {
+                      "type": "number"
+                    },
+                    "segment": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "detail",
+                    "sample",
+                    "time_us"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "passed": {
+                "type": "boolean"
+              },
+              "rule": {
+                "type": "string"
+              },
+              "violations": {
+                "type": "integer"
+              },
+              "error": {
+                "type": "string"
+              },
+              "censored": {
+                "type": "integer",
+                "description": "edges too close to the end of the capture to judge"
+              }
+            },
+            "required": [
+              "checked",
+              "examples",
+              "passed",
+              "rule",
+              "violations"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "passed",
+        "rules"
+      ],
+      "additionalProperties": false
+    },
+    "assertions": {
+      "type": "object",
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "actual": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "expression": {
+                "type": "string"
+              },
+              "passed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "actual",
+              "detail",
+              "expression",
+              "passed"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "passed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "checks",
+        "passed"
+      ],
+      "additionalProperties": false
+    },
+    "segments": {
+      "type": "object",
+      "properties": {
+        "layout": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer"
+            },
+            "note": {
+              "type": "string"
+            },
+            "post_samples": {
+              "type": "integer"
+            },
+            "pre_samples": {
+              "type": "integer"
+            },
+            "trigger_channel": {
+              "type": "integer"
+            },
+            "trigger_edge": {
+              "type": "string"
+            },
+            "trigger_time_resolution_ns": {
+              "type": "number"
+            },
+            "trigger_times_us": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "count",
+            "note",
+            "post_samples",
+            "pre_samples",
+            "trigger_channel",
+            "trigger_edge",
+            "trigger_time_resolution_ns",
+            "trigger_times_us"
+          ],
+          "additionalProperties": false
+        },
+        "windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "drops": {
+                "type": "integer"
+              },
+              "edges": {
+                "type": "integer"
+              },
+              "invariant_violations": {
+                "type": "integer"
+              },
+              "max_delay_samples": {
+                "type": "integer"
+              },
+              "pairs": {
+                "type": "integer"
+              },
+              "samples": {
+                "type": "integer"
+              },
+              "spurious": {
+                "type": "integer"
+              },
+              "trigger_time_us": {
+                "type": "number"
+              },
+              "window": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "edges",
+              "samples",
+              "trigger_time_us",
+              "window"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "layout",
+        "windows"
+      ],
+      "additionalProperties": false
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "blast_frequency_hz": {
+          "type": "integer"
+        },
+        "board": {
+          "type": "string"
+        },
+        "buffer_bytes": {
+          "type": "integer"
+        },
+        "channels": {
+          "type": "integer"
+        },
+        "clock_domain": {
+          "type": "string"
+        },
+        "edge_sensitive_trigger": {
+          "type": "boolean"
+        },
+        "firmware_family": {
+          "type": "string"
+        },
+        "firmware_version": {
+          "type": "string"
+        },
+        "max_frequency_hz": {
+          "type": "integer"
+        },
+        "max_immediate_samples": {
+          "type": "object",
+          "properties": {
+            "16ch": {
+              "type": "integer"
+            },
+            "24ch": {
+              "type": "integer"
+            },
+            "8ch": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "16ch",
+            "24ch",
+            "8ch"
+          ],
+          "additionalProperties": false
+        },
+        "max_samples": {
+          "type": "object",
+          "properties": {
+            "16ch": {
+              "type": "integer"
+            },
+            "24ch": {
+              "type": "integer"
+            },
+            "8ch": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "16ch",
+            "24ch",
+            "8ch"
+          ],
+          "additionalProperties": false
+        },
+        "min_frequency_hz": {
+          "type": "integer"
+        },
+        "port": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "segment_trigger_times": {
+          "type": "boolean"
+        },
+        "serial_number": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "gpio_map": {
+          "type": "object",
+          "properties": {
+            "1": {
+              "type": "integer"
+            },
+            "10": {
+              "type": "integer"
+            },
+            "11": {
+              "type": "integer"
+            },
+            "12": {
+              "type": "integer"
+            },
+            "13": {
+              "type": "integer"
+            },
+            "14": {
+              "type": "integer"
+            },
+            "15": {
+              "type": "integer"
+            },
+            "16": {
+              "type": "integer"
+            },
+            "17": {
+              "type": "integer"
+            },
+            "18": {
+              "type": "integer"
+            },
+            "19": {
+              "type": "integer"
+            },
+            "2": {
+              "type": "integer"
+            },
+            "20": {
+              "type": "integer"
+            },
+            "21": {
+              "type": "integer"
+            },
+            "22": {
+              "type": "integer"
+            },
+            "23": {
+              "type": "integer"
+            },
+            "24": {
+              "type": "integer"
+            },
+            "3": {
+              "type": "integer"
+            },
+            "4": {
+              "type": "integer"
+            },
+            "5": {
+              "type": "integer"
+            },
+            "6": {
+              "type": "integer"
+            },
+            "7": {
+              "type": "integer"
+            },
+            "8": {
+              "type": "integer"
+            },
+            "9": {
+              "type": "integer"
+            },
+            "ext_trigger": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "1",
+            "10",
+            "11",
+            "12",
+            "13",
+            "14",
+            "15",
+            "16",
+            "17",
+            "18",
+            "19",
+            "2",
+            "20",
+            "21",
+            "22",
+            "23",
+            "24",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8",
+            "9",
+            "ext_trigger"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "blast_frequency_hz",
+        "board",
+        "buffer_bytes",
+        "channels",
+        "clock_domain",
+        "edge_sensitive_trigger",
+        "firmware_family",
+        "firmware_version",
+        "max_frequency_hz",
+        "max_immediate_samples",
+        "max_samples",
+        "min_frequency_hz",
+        "port",
+        "protocol",
+        "segment_trigger_times",
+        "serial_number",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "captureSummary": {
+      "type": "object",
+      "properties": {
+        "captured_at_utc": {
+          "type": "string",
+          "x-volatile": true
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "integer"
+              },
+              "duty_cycle_percent": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "falling_edges": {
+                "type": "integer"
+              },
+              "final_level": {
+                "type": "integer"
+              },
+              "first_edge_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "glitch_detection": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "detected": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "count",
+                  "detected"
+                ],
+                "additionalProperties": false
+              },
+              "high_pulse_width_us": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "max": {
+                    "type": "number"
+                  },
+                  "mean": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "max",
+                  "mean",
+                  "min"
+                ],
+                "additionalProperties": false
+              },
+              "high_time_percent": {
+                "type": "number"
+              },
+              "idle_level": {
+                "type": "integer"
+              },
+              "last_edge_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "low_pulse_width_us": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "max": {
+                    "type": "number"
+                  },
+                  "mean": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "max",
+                  "mean",
+                  "min"
+                ],
+                "additionalProperties": false
+              },
+              "max_pulse_width_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "mean_frequency_hz": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "min_pulse_width_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "pulse_count_high": {
+                "type": "integer"
+              },
+              "pulse_count_low": {
+                "type": "integer"
+              },
+              "rising_edges": {
+                "type": "integer"
+              },
+              "samples": {
+                "type": "integer"
+              },
+              "trailing_level_us": {
+                "type": "number"
+              },
+              "transitions": {
+                "type": "integer"
+              },
+              "periodicity": {
+                "type": "object",
+                "properties": {
+                  "burst_gap_threshold_samples": {
+                    "type": "integer"
+                  },
+                  "bursts": {
+                    "type": "integer"
+                  },
+                  "cv": {
+                    "type": "number"
+                  },
+                  "edge": {
+                    "type": "string"
+                  },
+                  "irregular_edge_samples": {
+                    "type": "array",
+                    "items": {}
+                  },
+                  "irregular_periods": {
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "max_gap_samples": {
+                    "type": "integer"
+                  },
+                  "max_samples": {
+                    "type": "integer"
+                  },
+                  "median_period_ns": {
+                    "type": "number"
+                  },
+                  "median_samples": {
+                    "type": "integer"
+                  },
+                  "min_gap_samples": {
+                    "type": "integer"
+                  },
+                  "min_samples": {
+                    "type": "integer"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "periods": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "burst_gap_threshold_samples",
+                  "bursts",
+                  "cv",
+                  "edge",
+                  "irregular_edge_samples",
+                  "irregular_periods",
+                  "kind",
+                  "max_gap_samples",
+                  "max_samples",
+                  "median_period_ns",
+                  "median_samples",
+                  "min_gap_samples",
+                  "min_samples",
+                  "note",
+                  "periods"
+                ],
+                "additionalProperties": false
+              },
+              "edge_samples": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              },
+              "edge_times_us": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "edges_note": {
+                "type": "string"
+              },
+              "gpio": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "channel",
+              "duty_cycle_percent",
+              "falling_edges",
+              "final_level",
+              "first_edge_us",
+              "glitch_detection",
+              "high_pulse_width_us",
+              "high_time_percent",
+              "idle_level",
+              "last_edge_us",
+              "low_pulse_width_us",
+              "max_pulse_width_us",
+              "mean_frequency_hz",
+              "min_pulse_width_us",
+              "name",
+              "pulse_count_high",
+              "pulse_count_low",
+              "rising_edges",
+              "samples",
+              "trailing_level_us",
+              "transitions"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "duration_us": {
+          "type": "number"
+        },
+        "format": {
+          "type": "string"
+        },
+        "pre_trigger_samples": {
+          "type": "integer"
+        },
+        "sample_period_ns": {
+          "type": "number"
+        },
+        "sample_period_us": {
+          "type": "number"
+        },
+        "sample_rate_hz": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "schema_version": {
+          "type": "integer"
+        },
+        "time_origin": {
+          "type": "string"
+        },
+        "trigger_sample": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "captured_at_utc",
+        "channels",
+        "duration_us",
+        "format",
+        "pre_trigger_samples",
+        "sample_period_ns",
+        "sample_period_us",
+        "sample_rate_hz",
+        "samples",
+        "schema_version",
+        "time_origin",
+        "trigger_sample"
+      ],
+      "additionalProperties": false
+    },
+    "setup": {
+      "type": "object",
+      "description": "Test-setup metadata (--meta key=value): keys of [A-Za-z0-9_.-], single-line values.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "latencyEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "stim_sample",
+        "react_sample",
+        "delta_samples",
+        "delta_ns"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "integer"
+        },
+        "stim_sample": {
+          "type": "integer"
+        },
+        "stim_time_ns": {
+          "type": "number"
+        },
+        "react_sample": {
+          "type": "integer"
+        },
+        "react_time_ns": {
+          "type": "number"
+        },
+        "delta_samples": {
+          "type": "integer"
+        },
+        "delta_ns": {
+          "type": "number"
+        },
+        "segment": {
+          "type": "integer",
+          "description": "1-based window of a segmented capture"
+        }
+      }
+    }
+  }
+}

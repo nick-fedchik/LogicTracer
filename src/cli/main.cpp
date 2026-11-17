@@ -55,7 +55,11 @@ std::string str(const QString& s) { return s.toStdString(); }
 int report(const Output& o, ExitCode code, const std::string& message, json extra = json::object())
 {
     if (o.json) {
-        json j = {{"command", o.command}, {"status", code == ExitTimeout ? "TIMEOUT" : "ERROR"}, {"error", message}};
+        json j = {{"schema_version", lt::kCaptureSchemaVersion},
+                  {"command", o.command},
+                  {"status", code == ExitTimeout ? "TIMEOUT" : "ERROR"},
+                  {"error", message},
+                  {"warnings", json::array()}};
         j.update(extra);
         std::cout << j.dump(2) << std::endl;
     } else {
@@ -1123,15 +1127,21 @@ int cmdDiff(const QStringList& args, Output o)
         return report(o, ExitError, "B: " + error);
 
     json doc = lt::diffCaptures(a.buffer, b.buffer, options);
+    auto loadWarnings = json::array();  // import caveats of the two files (JSON: warnings; Markdown: notes)
     for (const auto& w : a.warnings)
-        doc["notes"].push_back("A: " + w);
+        loadWarnings.push_back("A: " + w);
     for (const auto& w : b.warnings)
-        doc["notes"].push_back("B: " + w);
+        loadWarnings.push_back("B: " + w);
+    if (!o.json)
+        for (const auto& w : loadWarnings)
+            doc["notes"].push_back(w);
     const int rc = p.isSet("strict") && doc["verdict"] == "regression" ? ExitExpectFailed : ExitOk;
     std::string text;
     if (o.json) {
+        doc["schema_version"] = lt::kCaptureSchemaVersion;
         doc["command"] = "diff";
         doc["status"] = "OK";
+        doc["warnings"] = loadWarnings;
         doc["a"]["file"] = str(files[0]);
         doc["b"]["file"] = str(files[1]);
         text = doc.dump(2) + "\n";
@@ -1173,7 +1183,12 @@ int cmdBootloader(const QStringList& args, Output o)
         return report(o, ExitError, conn.lastError(), {{"port", port}});
 
     if (o.json) {
-        std::cout << json{{"command", "bootloader"}, {"status", "OK"}, {"port", port}, {"previous_version", ver}}
+        std::cout << json{{"schema_version", lt::kCaptureSchemaVersion},
+                          {"command", "bootloader"},
+                          {"status", "OK"},
+                          {"port", port},
+                          {"previous_version", ver},
+                          {"warnings", json::array()}}
                          .dump(2)
                   << std::endl;
     } else {

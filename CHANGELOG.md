@@ -5,6 +5,16 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- JSON contracts: schemas for every `--json` document of `logictracer-cli` and for the lossless capture file
+  (`docs/schema`, described in `docs/CONTRACTS.md`), an exit-code table, and conformance and determinism
+  tests on every platform.
+
+### Changed
+- Every JSON document carries the same envelope: `schema_version`, `command`, `status` and `warnings`
+  (`diff`, `detect`, `bootloader` and error documents lacked some of them). `diff --json` lists the import
+  caveats of its two files in `warnings` (the Markdown output keeps them under notes).
+
 ## [0.5.0] - 2026-11-17
 
 ### Added

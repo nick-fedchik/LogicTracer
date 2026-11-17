@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/detect.schema.json",
+  "title": "logictracer-cli detect --json",
+  "description": "Connected capture devices.",
+  "type": "object",
+  "properties": {
+    "command": {
+      "const": "detect"
+    },
+    "count": {
+      "type": "integer"
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "device": {
+            "$ref": "common.schema.json#/$defs/device"
+          },
+          "manufacturer": {
+            "type": "string"
+          },
+          "port": {
+            "type": "string"
+          },
+          "responding": {
+            "type": "boolean"
+          },
+          "serial_number": {
+            "type": "string"
+          },
+          "usb_id": {
+            "type": "string"
+          },
+          "vid_pid_match": {
+            "type": "boolean"
+          },
+          "held_by_session": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "manufacturer",
+          "port",
+          "serial_number",
+          "usb_id",
+          "vid_pid_match"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "OK",
+        "NOT_FOUND"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "command",
+    "count",
+    "devices",
+    "schema_version",
+    "status",
+    "warnings"
+  ],
+  "additionalProperties": false
+}

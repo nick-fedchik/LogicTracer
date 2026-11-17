@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/error.schema.json",
+  "title": "Error document of any logictracer-cli command (--json)",
+  "description": "Printed instead of the command document when the command cannot run (usage errors, missing files, ...).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "error",
+    "schema_version",
+    "status",
+    "warnings"
+  ],
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "port": {
+      "type": "string"
+    },
+    "device": {
+      "$ref": "common.schema.json#/$defs/device"
+    },
+    "session_connected": {
+      "type": "boolean"
+    },
+    "error_kind": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "ERROR",
+        "TIMEOUT"
+      ]
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    }
+  }
+}

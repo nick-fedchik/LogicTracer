@@ -1,0 +1,483 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/diff.schema.json",
+  "title": "logictracer-cli diff --json",
+  "description": "Comparison of two captures of one test.",
+  "type": "object",
+  "properties": {
+    "a": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "integer"
+        },
+        "file": {
+          "type": "string"
+        },
+        "quantization_step_ns": {
+          "type": "number"
+        },
+        "sample_rate_hz": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "channels",
+        "file",
+        "quantization_step_ns",
+        "sample_rate_hz",
+        "samples"
+      ],
+      "additionalProperties": false
+    },
+    "anomalies": {
+      "type": "object",
+      "properties": {
+        "a_total": {
+          "type": "integer"
+        },
+        "b_total": {
+          "type": "integer"
+        },
+        "by_kind": {
+          "type": "object",
+          "description": "anomaly kind -> count in A and B",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "a",
+              "b"
+            ],
+            "properties": {
+              "a": {
+                "type": "integer"
+              },
+              "b": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "a_total",
+        "b_total",
+        "by_kind"
+      ],
+      "additionalProperties": false
+    },
+    "b": {
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": "integer"
+        },
+        "file": {
+          "type": "string"
+        },
+        "quantization_step_ns": {
+          "type": "number"
+        },
+        "sample_rate_hz": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "channels",
+        "file",
+        "quantization_step_ns",
+        "sample_rate_hz",
+        "samples"
+      ],
+      "additionalProperties": false
+    },
+    "channels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "duty_percent": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "frequency_hz": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "glitches": {
+                "type": "integer"
+              },
+              "max_pulse_ns": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "min_pulse_ns": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "transitions": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "duty_percent",
+              "frequency_hz",
+              "glitches",
+              "max_pulse_ns",
+              "min_pulse_ns",
+              "transitions"
+            ],
+            "additionalProperties": false
+          },
+          "b": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "duty_percent": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "frequency_hz": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "glitches": {
+                "type": "integer"
+              },
+              "max_pulse_ns": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "min_pulse_ns": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "transitions": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "duty_percent",
+              "frequency_hz",
+              "glitches",
+              "max_pulse_ns",
+              "min_pulse_ns",
+              "transitions"
+            ],
+            "additionalProperties": false
+          },
+          "channel": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "transitions_delta": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "a",
+          "b",
+          "channel",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "command": {
+      "const": "diff"
+    },
+    "improvements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "latency": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "integer"
+            },
+            "b": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        "drops": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "integer"
+            },
+            "b": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        "histogram_a": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "delta_samples": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count",
+              "delta_samples"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "histogram_b": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "delta_samples": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count",
+              "delta_samples"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "max_ns": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            },
+            "delta": {
+              "type": "number"
+            },
+            "within_quantization": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "a",
+            "b",
+            "delta",
+            "within_quantization"
+          ],
+          "additionalProperties": false
+        },
+        "p50_ns": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            },
+            "delta": {
+              "type": "number"
+            },
+            "within_quantization": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "a",
+            "b",
+            "delta",
+            "within_quantization"
+          ],
+          "additionalProperties": false
+        },
+        "p99_ns": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            },
+            "delta": {
+              "type": "number"
+            },
+            "within_quantization": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "a",
+            "b",
+            "delta",
+            "within_quantization"
+          ],
+          "additionalProperties": false
+        },
+        "same_fixed_delay_possible": {
+          "type": "boolean"
+        },
+        "sampling_phase_verdict": {
+          "type": "string"
+        },
+        "spurious": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "integer"
+            },
+            "b": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        "stdev_ns": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "a",
+            "b"
+          ],
+          "additionalProperties": false
+        },
+        "tolerance_ns": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "count",
+        "drops",
+        "histogram_a",
+        "histogram_b",
+        "max_ns",
+        "p50_ns",
+        "p99_ns",
+        "same_fixed_delay_possible",
+        "sampling_phase_verdict",
+        "spurious",
+        "stdev_ns",
+        "tolerance_ns"
+      ],
+      "additionalProperties": false
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "regressions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "OK"
+      ]
+    },
+    "verdict": {
+      "enum": [
+        "regression",
+        "improved",
+        "equivalent"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "a",
+    "anomalies",
+    "b",
+    "channels",
+    "command",
+    "improvements",
+    "notes",
+    "regressions",
+    "schema_version",
+    "status",
+    "verdict",
+    "warnings"
+  ],
+  "additionalProperties": false
+}

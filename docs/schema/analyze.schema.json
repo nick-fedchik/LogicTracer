@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/analyze.schema.json",
+  "title": "logictracer-cli analyze --json",
+  "description": "Analysis of a saved capture file.",
+  "type": "object",
+  "properties": {
+    "assertions": {
+      "$ref": "common.schema.json#/$defs/assertions"
+    },
+    "capture": {
+      "$ref": "common.schema.json#/$defs/captureSummary"
+    },
+    "command": {
+      "const": "analyze"
+    },
+    "invariants": {
+      "$ref": "common.schema.json#/$defs/invariants"
+    },
+    "latency": {
+      "$ref": "common.schema.json#/$defs/latency"
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "setup": {
+      "$ref": "common.schema.json#/$defs/setup"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "OK",
+        "ERROR"
+      ]
+    },
+    "trigger_description": {
+      "type": "string"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "segments": {
+      "$ref": "common.schema.json#/$defs/segments"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "capture",
+    "command",
+    "outputs",
+    "schema_version",
+    "source_file",
+    "status",
+    "trigger_description",
+    "warnings"
+  ],
+  "additionalProperties": false
+}
