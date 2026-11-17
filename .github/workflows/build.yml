@@ -56,7 +56,7 @@ jobs:
       - name: Configure
         run: cmake --preset default -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
       - name: Build
-        run: cmake --build --preset default
+        run: cmake --build --preset default -- -k 0  # report every failing file at once
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
