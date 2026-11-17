@@ -61,8 +61,10 @@ jobs:
             & "$bin/$exe.exe" --version
             if ($LASTEXITCODE -ne 0) { throw "the packaged $exe does not start" }
           }
-          & "$bin/logictracer-gui.exe" --version | Out-Null  # loads the deployed qwindows platform plugin
-          if ($LASTEXITCODE -ne 0) { throw "the packaged GUI does not start" }
+          # The GUI is a windowed program (--version would open a message box): check its deployment instead.
+          foreach ($f in @("Qt6Widgets.dll", "Qt6Gui.dll", "platforms/qwindows.dll", "vcruntime140.dll")) {
+            if (-not (Test-Path "$bin/$f")) { throw "missing $f in the package" }
+          }
           $env:PATH = $savedPath
           Compress-Archive -Path "dist/$root" -DestinationPath "$root.zip"
           "ASSET=$root.zip" >> $env:GITHUB_ENV

@@ -746,7 +746,8 @@ private Q_SLOTS:
             qputenv("LOGICTRACER_DENY_HARDWARE", previous);
         else
             qunsetenv("LOGICTRACER_DENY_HARDWARE");
-        QVERIFY2(ipv6Error.find("cannot reach") != std::string::npos, ipv6Error.c_str());  // loopback is allowed
+        // Loopback is allowed: whatever fails there (nothing listens, or something else answers), it is not the guard.
+        QVERIFY2(ipv6Error.find("LOGICTRACER_DENY_HARDWARE") == std::string::npos, ipv6Error.c_str());
         QVERIFY(remoteError.find("LOGICTRACER_DENY_HARDWARE") != std::string::npos);
 #endif
     }
