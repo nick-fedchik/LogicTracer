@@ -9,20 +9,75 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QPointer>
+#include <QRegularExpression>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <memory>
+#else
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 namespace lt::session {
 
 using json = nlohmann::json;
+
+#if defined(_WIN32)
+namespace {
+
+// The token user SID of a process (empty on failure).
+std::unique_ptr<char[]> tokenUser(HANDLE process)
+{
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(process, TOKEN_QUERY, &token))
+        return {};
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::unique_ptr<char[]> buf(size ? new char[size] : nullptr);
+    const bool ok = buf && GetTokenInformation(token, TokenUser, buf.get(), size, &size);
+    CloseHandle(token);
+    return ok ? std::move(buf) : nullptr;
+}
+
+// True when the process serving the pipe runs as the current user (another user could own a pipe of that name).
+bool pipeServerIsCurrentUser(HANDLE pipe)
+{
+    ULONG pid = 0;
+    if (!GetNamedPipeServerProcessId(pipe, &pid))
+        return false;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process)
+        return false;
+    const auto theirs = tokenUser(process);
+    CloseHandle(process);
+    const auto mine = tokenUser(GetCurrentProcess());
+    return theirs && mine &&
+           EqualSid(reinterpret_cast<TOKEN_USER*>(theirs.get())->User.Sid,
+                    reinterpret_cast<TOKEN_USER*>(mine.get())->User.Sid);
+}
+
+}  // namespace
+#endif
 
 QString defaultSocketPath()
 {
     const QByteArray env = qgetenv("LOGICTRACER_SOCKET");
     if (!env.isEmpty())
         return QString::fromLocal8Bit(env);
+#if defined(_WIN32)
+    // A named pipe (\\.\pipe\logictracer-<user>); QLocalServer::UserAccessOption limits it to this user.
+    QString user = QString::fromLocal8Bit(qgetenv("USERNAME"));
+    user.replace(QRegularExpression("[^A-Za-z0-9_.-]"), "_");
+    return "logictracer-" + (user.isEmpty() ? QString("user") : user);
+#else
     const QByteArray runtime = qgetenv("XDG_RUNTIME_DIR");
     if (!runtime.isEmpty())
         return QDir(QString::fromLocal8Bit(runtime)).filePath("logictracer.sock");
@@ -37,6 +92,7 @@ QString defaultSocketPath()
         return QDir(privDir).filePath("session.sock");
     }
     return QString("/tmp/logictracer-%1.sock").arg(static_cast<unsigned>(::getuid()));
+#endif
 }
 
 void Responder::ok(const json& result) const
@@ -172,6 +228,7 @@ void Server::onReadyRead(QLocalSocket* socket)
 CallResult call(const QString& socketPath, const std::string& method, const json& params, int timeoutMs)
 {
     CallResult out;
+#if !defined(_WIN32)
     // Never talk to (and trust reports from) a socket that another user could have created.
     struct stat st{};
     const QByteArray pathBytes = socketPath.toLocal8Bit();
@@ -179,12 +236,14 @@ CallResult call(const QString& socketPath, const std::string& method, const json
         out.error = "refusing the session socket " + socketPath.toStdString() + ": not a socket owned by the current user";
         return out;
     }
+#endif
     QLocalSocket socket;
     socket.connectToServer(socketPath);
     if (!socket.waitForConnected(std::min(timeoutMs, 1000))) {
         out.error = "no GUI session is listening on " + socketPath.toStdString();
         return out;
     }
+#if !defined(_WIN32)
     // The path check above is racy: also verify that the process we reached runs as the current user.
     {
         const int fd = static_cast<int>(socket.socketDescriptor());
@@ -203,6 +262,13 @@ CallResult call(const QString& socketPath, const std::string& method, const json
             return out;
         }
     }
+#else
+    if (!pipeServerIsCurrentUser(reinterpret_cast<HANDLE>(socket.socketDescriptor()))) {
+        out.error = "refusing the session pipe " + socketPath.toStdString() + ": server is not the current user";
+        socket.abort();
+        return out;
+    }
+#endif
     out.connected = true;
 
     socket.write(QByteArray::fromStdString(json{{"id", 1}, {"method", method}, {"params", params}}.dump()) + '\n');

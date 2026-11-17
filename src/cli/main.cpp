@@ -775,7 +775,11 @@ int cmdCapture(const QStringList& args, Output o)
                 }
             }
             if (!onArmedCmd.isEmpty())
+#if defined(_WIN32)
+                QProcess::startDetached("cmd.exe", {"/C", onArmedCmd});
+#else
                 QProcess::startDetached("/bin/sh", {"-c", onArmedCmd});
+#endif
         });
     }
 

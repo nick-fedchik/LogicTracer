@@ -38,6 +38,30 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: ctest --preset debug
 
+  windows:
+    # Port in progress (B-07): MSVC 2022 + Qt 6.8; tests that need the pty emulator are skipped.
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          arch: win64_msvc2022_64
+          modules: qtserialport
+          cache: true
+      - name: nlohmann-json
+        run: vcpkg install nlohmann-json:x64-windows
+      - name: Configure
+        run: cmake --preset default -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR;$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows"
+      - name: Build
+        run: cmake --build --preset default
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --preset default
+
   firmware:
     # Compile-only check of the RP2040 firmware (nothing is flashed). Not yet a required check.
     runs-on: ubuntu-24.04

@@ -163,6 +163,7 @@ private Q_SLOTS:
     void directDeviceAccessOverStdio()
     {
         fake::Device dev(emulatedDevice());
+        LT_REQUIRE_PTY(dev);
         McpClient client({"--no-session", "--port", QString::fromStdString(dev.port())});
         const auto init = client.request("initialize", {{"protocolVersion", "2025-06-18"}});
         QCOMPARE(init["result"]["serverInfo"]["name"].get<std::string>(), std::string("logictracer-mcp"));
@@ -210,6 +211,7 @@ private Q_SLOTS:
     void agentAndEngineerShareOneWindow()
     {
         fake::Device dev(emulatedDevice());
+        LT_REQUIRE_PTY(dev);
         QTemporaryDir dir;
         const QString socket = dir.filePath("mcp.sock");
 

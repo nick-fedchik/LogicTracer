@@ -22,8 +22,10 @@
 #include "core/Format.hpp"
 
 #include <cstring>
+#if !defined(_WIN32)
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 #include <limits>
 #include <locale>
 #include <sstream>
@@ -914,6 +916,9 @@ private Q_SLOTS:
 
     void exportFollowsUmaskAndKeepsExistingMode()
     {
+#if defined(_WIN32)
+        QSKIP("POSIX file modes and umask (Windows uses inherited ACLs)");
+#else
         QTemporaryDir dir;
         const mode_t old = ::umask(077);
         std::string err;
@@ -926,11 +931,15 @@ private Q_SLOTS:
         QVERIFY(lt::writeJsonFile(path.toStdString(), {{"a", 2}}, &err));
         QVERIFY(QFileInfo(path).permissions() & QFile::ReadGroup);  // the replaced file's mode is kept
         QVERIFY(!QFile::exists(dir.filePath(".lt-XXXXXX")));
+#endif
     }
 
     // A directory swapped for a symlink after validation must not let a confined write escape.
     void confinedWriteRefusesSymlinkedDirectories()
     {
+#if defined(_WIN32)
+        QSKIP("QFile::link makes .lnk shortcuts on Windows, not symlinks");
+#endif
         QTemporaryDir dir, elsewhere;
         QVERIFY(QDir(dir.path()).mkdir("real"));
         QVERIFY(QFile::link(elsewhere.path(), dir.filePath("swapped")));
@@ -985,6 +994,9 @@ private Q_SLOTS:
     // The export temp file is random: a pre-planted symlink with a predictable name must not be followed.
     void exportDoesNotFollowPlantedTempSymlink()
     {
+#if defined(_WIN32)
+        QSKIP("QFile::link makes .lnk shortcuts on Windows, not symlinks");
+#endif
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         const QString victim = dir.filePath("victim.json");

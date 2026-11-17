@@ -6,10 +6,12 @@
 // Minimal emulator of the gusmanb LogicAnalyzer firmware on a pseudo-terminal, for tests that must not
 // depend on real hardware. QSerialPort can open the slave side like any /dev/ttyACM*.
 
+#if !defined(_WIN32)
 #include <fcntl.h>
 #include <poll.h>
 #include <termios.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cstdint>
@@ -59,6 +61,7 @@ inline Request parseRequest(const std::vector<uint8_t>& payload)
     return r;
 }
 
+#if !defined(_WIN32)
 class Device {
 public:
     using Handler = std::function<void(Device&, const std::vector<uint8_t>& payload)>;
@@ -79,6 +82,8 @@ public:
     }
 
     ~Device() { shutdown(); }
+
+    [[nodiscard]] static constexpr bool available() { return true; }
 
     [[nodiscard]] const std::string& port() const { return m_slaveName; }
     [[nodiscard]] int cancelCount() const { return m_cancels; }
@@ -188,6 +193,36 @@ private:
     mutable std::mutex m_mutex;
     std::vector<Request> m_requests;
 };
+
+#else
+// Windows has no pseudo-terminals: the emulator is unavailable and tests that need it are skipped
+// (LT_REQUIRE_PTY). The protocol logic they cover is the same on every platform.
+class Device {
+public:
+    using Handler = std::function<void(Device&, const std::vector<uint8_t>& payload)>;
+    explicit Device(Handler handler) : m_handler(std::move(handler)) {}
+    [[nodiscard]] static constexpr bool available() { return false; }
+    [[nodiscard]] const std::string& port() const { return m_port; }
+    [[nodiscard]] int cancelCount() const { return 0; }
+    [[nodiscard]] std::vector<Request> requests() const { return {}; }
+    void send(const std::string&) {}
+    void send(const std::vector<uint8_t>&) {}
+    void disappear() {}
+    void recordRequest(const Request&) {}
+
+private:
+    Handler m_handler;
+    std::string m_port;
+};
+
+#endif
+
+// Skips a test that needs the pseudo-terminal emulator where there is none (Windows).
+#define LT_REQUIRE_PTY(dev)                                                                  \
+    do {                                                                                     \
+        if (!(dev).available())                                                              \
+            QSKIP("needs the pseudo-terminal device emulator (not available on this platform)"); \
+    } while (0)
 
 // `version` is an upstream "V6_5" or a LogicTracer SemVer such as "0.2.0".
 inline std::string idReply(const std::string& version, bool extended,

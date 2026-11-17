@@ -357,6 +357,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
@@ -396,6 +397,7 @@ private Q_SLOTS:
             if (payload[0] == 0)
                 d.send(fake::idReply("V6_5", true));
         });
+        LT_REQUIRE_PTY(dev);
         MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
@@ -479,6 +481,7 @@ private Q_SLOTS:
             if (payload[0] == 0)
                 d.send(fake::idReply("V6_5", true));  // never answers the capture: it stays armed
         });
+        LT_REQUIRE_PTY(dev);
         MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
@@ -596,6 +599,7 @@ private Q_SLOTS:
                 }
             }
         });
+        LT_REQUIRE_PTY(dev);
         MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
@@ -1009,6 +1013,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
@@ -1105,6 +1110,7 @@ private Q_SLOTS:
                     d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);

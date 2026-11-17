@@ -71,6 +71,7 @@ private Q_SLOTS:
     void handshakeV65UsesWideRequest()
     {
         Device dev(device("V6_5", true, answerWith(0x01)));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         QVERIFY(conn.info().generation == lt::ProtocolGeneration::V6);
@@ -92,6 +93,7 @@ private Q_SLOTS:
     void handshakeV60UsesLegacyRequest()
     {
         Device dev(device("V6_0", true, answerWith(0x02)));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         QVERIFY(conn.info().generation == lt::ProtocolGeneration::V5);
@@ -115,6 +117,7 @@ private Q_SLOTS:
             if (payload[0] == 0)
                 d.send(fake::idReply("0.3.0", true, "FREQ:200000000\nBLASTFREQ:400000000\nBUFFER:393216\nCHANNELS:28\n"));
         });
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         QCOMPARE(conn.info().maxFrequency, 200'000'000u);
@@ -133,6 +136,7 @@ private Q_SLOTS:
         const bool denied = !conn.open("/dev/ttyACM9");  // refused before the path is even touched
         const std::string message = conn.lastError();
         Device dev(device("V6_5", true, answerWith(0x01)));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection emulated;
         const bool ptyAllowed = emulated.open(dev.port());  // pseudo-terminals are not hardware
         if (hadGuard)
@@ -159,6 +163,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         QVERIFY(conn.info().supportsEdgeTrigger());
@@ -213,6 +218,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         auto cfg = config(10, 100);
@@ -248,6 +254,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         QVERIFY(conn.info().supportsEdgeBurstTimestamps());
@@ -268,6 +275,7 @@ private Q_SLOTS:
     void handshakeV5UsesDefaults()
     {
         Device dev(device("V5_2", false));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
         QVERIFY(conn.info().generation == lt::ProtocolGeneration::V5);
@@ -279,6 +287,7 @@ private Q_SLOTS:
     void immediateCaptureStartsWithLowTrigger()
     {
         Device dev(device("V6_5", true, answerWith(0)));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
         const auto r = conn.capture(config(2, 50));
@@ -297,6 +306,7 @@ private Q_SLOTS:
             if (!r.inverted)
                 d.send(fake::captureData(r, 0x03));
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         conn.setPollLatency(50ms);
         QVERIFY(conn.open(dev.port()));
@@ -311,6 +321,7 @@ private Q_SLOTS:
     void triggerTimeoutCancelsAndReports()
     {
         Device dev(device("V6_5", true, [](Device& d, const fake::Request&) { d.send("CAPTURE_STARTED\n"); }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         conn.setPollLatency(50ms);
         QVERIFY(conn.open(dev.port()));
@@ -337,6 +348,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             });
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         conn.setPollLatency(50ms);
         QVERIFY(conn.open(dev.port()));
@@ -361,6 +373,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             });
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         conn.setPollLatency(50ms);
         QVERIFY(conn.open(dev.port()));
@@ -377,6 +390,7 @@ private Q_SLOTS:
     void deviceRejectsRequest()
     {
         Device dev(device("V6_5", true, [](Device& d, const fake::Request&) { d.send("CAPTURE_ERROR\n"); }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
         const auto r = conn.capture(config(2, 50));
@@ -390,6 +404,7 @@ private Q_SLOTS:
             d.send("CAPTURE_STARTED\n");
             d.send(fake::captureData(r, 0, true, r.totalSamples() + 1));
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
         const auto r = conn.capture(config(2, 50));
@@ -403,6 +418,7 @@ private Q_SLOTS:
             d.send("CAPTURE_STARTED\n");
             d.send(fake::captureData(r, 0, false));
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
         const auto r = conn.capture(config(2, 50));
@@ -419,6 +435,7 @@ private Q_SLOTS:
             data.insert(data.end(), {3, 0x01, 0x02});  // announces 3 timestamps (12 bytes), sends 2 bytes
             d.send(data);
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
         const auto r = conn.capture(config(2, 50));
@@ -435,6 +452,7 @@ private Q_SLOTS:
             d.send(data);
             d.disappear();
         }));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
         const auto t0 = std::chrono::steady_clock::now();
@@ -448,6 +466,7 @@ private Q_SLOTS:
     void validationUsesDeviceLimits()
     {
         Device dev(device("V6_5", true));
+        LT_REQUIRE_PTY(dev);
         lt::PicoConnection conn;
         QVERIFY(conn.open(dev.port()));
 
@@ -504,6 +523,7 @@ private Q_SLOTS:
     void captureRunsOffTheCallerThread()
     {
         Device dev(device("V6_5", true, answerWith(0x01)));
+        LT_REQUIRE_PTY(dev);
         lt::AsyncDevice ad;
         QVERIFY(connect(ad, dev));
         QVERIFY(ad.isConnected());
@@ -537,6 +557,7 @@ private Q_SLOTS:
     void cancelStopsAWaitingCapture()
     {
         Device dev(device("V6_5", true, [](Device& d, const fake::Request&) { d.send("CAPTURE_STARTED\n"); }));
+        LT_REQUIRE_PTY(dev);
         lt::AsyncDevice ad;
         QVERIFY(connect(ad, dev));
 
@@ -564,6 +585,7 @@ private Q_SLOTS:
     void closeDuringHandshakeLeavesTheDeviceDisconnected()
     {
         Device dev(device("V6_5", true, answerWith(0x00)));
+        LT_REQUIRE_PTY(dev);
         lt::AsyncDevice ad;
         QSignalSpy opened(&ad, &lt::AsyncDevice::opened);
         QSignalSpy closed(&ad, &lt::AsyncDevice::closed);
@@ -578,6 +600,7 @@ private Q_SLOTS:
     void probeWorksAndCancelWhenIdleIsHarmless()
     {
         Device dev(device("V6_5", true, answerWith(0x00)));
+        LT_REQUIRE_PTY(dev);
         lt::AsyncDevice ad;
         QVERIFY(connect(ad, dev));
         ad.requestCancel();  // idle: must not poison the next operation
@@ -735,6 +758,7 @@ private Q_SLOTS:
     void destroyingWhileWaitingDoesNotHang()
     {
         Device dev(device("V6_5", true, [](Device& d, const fake::Request&) { d.send("CAPTURE_STARTED\n"); }));
+        LT_REQUIRE_PTY(dev);
         QElapsedTimer t;
         t.start();
         {
@@ -845,6 +869,7 @@ private Q_SLOTS:
     void probeAgainstEmulatedDevice()
     {
         Device dev(device("V6_5", true, answerWith(0x01)));  // channel 1 high, channel 2 low
+        LT_REQUIRE_PTY(dev);
         nlohmann::json j;
         QString raw;
         const int rc = run({"probe", "--port", QString::fromStdString(dev.port()), "--channels", "1,2", "--json"}, &j, &raw);
@@ -859,6 +884,7 @@ private Q_SLOTS:
     void captureRejectsOversizedImmediateRequest()
     {
         Device dev(device("V6_5", true, answerWith(0)));
+        LT_REQUIRE_PTY(dev);
         nlohmann::json j;
         const int rc = run({"capture", "--port", QString::fromStdString(dev.port()), "--channels", "1,16",
                             "--samples", "65536", "--json", "--no-session"}, &j);
@@ -902,6 +928,7 @@ private Q_SLOTS:
             std::this_thread::sleep_for(30ms);
             d.send(out);
         }));
+        LT_REQUIRE_PTY(dev);
 
         QTemporaryDir dir;
         const QString ready = dir.filePath("armed.flag");

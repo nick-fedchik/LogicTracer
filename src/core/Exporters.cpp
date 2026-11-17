@@ -23,11 +23,23 @@
 #include <streambuf>
 
 #include <cerrno>
-#include <fcntl.h>
 #include <random>
 #include <stdlib.h>
+#if defined(_WIN32)
+#include <cstdio>
+#include <io.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
 
 namespace lt {
 
@@ -140,6 +152,7 @@ std::string vcdId(std::size_t index)
 }
 
 
+#if !defined(_WIN32)
 // Unbuffered-on-error stream buffer over a file descriptor we already own (from mkstemp), so the data is
 // written through the very descriptor that was created exclusively instead of reopening a pathname.
 class FdStreamBuf : public std::streambuf {
@@ -312,6 +325,133 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
     }
     return true;
 }
+
+#else
+// Windows: the same contract with Win32 primitives. The temporary sibling is created exclusively ("x"),
+// written in binary (LF line ends on every platform), flushed to disk and moved over the target with
+// MoveFileExW(MOVEFILE_REPLACE_EXISTING). In confined mode no component of the directory and not the target
+// itself may be a symlink or junction (checked just before writing; Windows has no openat/O_NOFOLLOW walk).
+class FileStreamBuf : public std::streambuf {
+public:
+    explicit FileStreamBuf(std::FILE* f) : m_file(f) { setp(m_buf, m_buf + sizeof m_buf); }
+    [[nodiscard]] bool failed() const { return m_failed; }
+
+protected:
+    int_type overflow(int_type ch) override
+    {
+        if (!flushBuffer())
+            return traits_type::eof();
+        if (!traits_type::eq_int_type(ch, traits_type::eof())) {
+            *pptr() = traits_type::to_char_type(ch);
+            pbump(1);
+        }
+        return traits_type::not_eof(ch);
+    }
+    int sync() override { return flushBuffer() ? 0 : -1; }
+
+private:
+    bool flushBuffer()
+    {
+        const auto n = static_cast<std::size_t>(pptr() - pbase());
+        if (n > 0 && !m_failed && std::fwrite(pbase(), 1, n, m_file) != n)
+            m_failed = true;
+        setp(m_buf, m_buf + sizeof m_buf);
+        return !m_failed;
+    }
+
+    std::FILE* m_file;
+    bool m_failed = false;
+    char m_buf[1 << 16];
+};
+
+bool isPlainDirectoryChain(const std::filesystem::path& dir)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (fs::path p = dir; !p.empty(); p = p.parent_path()) {
+        const auto st = fs::symlink_status(p, ec);
+        if (ec || st.type() != fs::file_type::directory)
+            return false;
+        if (p == p.root_path() || p == p.parent_path())
+            break;
+    }
+    return true;
+}
+
+template <typename Fn>
+bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::string* error, Fn&& write,
+                      bool confined = false)
+{
+    (void)mode;  // always binary: identical bytes on every platform
+    namespace fs = std::filesystem;
+    auto failWith = [&](const std::string& msg) {
+        if (error)
+            *error = msg + " " + path;
+        return false;
+    };
+    const fs::path target(path);
+    const std::string leaf = target.filename().string();
+    if (leaf.empty() || leaf == "." || leaf == "..")
+        return failWith("not a file name:");
+    const fs::path dir = target.parent_path().empty() ? fs::path(".") : target.parent_path();
+    std::error_code ec;
+    if (confined && (!dir.is_absolute() || !isPlainDirectoryChain(dir)))
+        return failWith("output directory changed or is not reachable without symlinks:");
+    const auto existing = fs::symlink_status(target, ec);
+    const bool exists = !ec && existing.type() != fs::file_type::not_found;
+    if (exists && confined && existing.type() != fs::file_type::regular)
+        return failWith("refusing to write to a special file or link:");
+    if (exists && existing.type() != fs::file_type::regular && existing.type() != fs::file_type::symlink) {
+        std::FILE* f = _wfopen(target.c_str(), L"wb");  // a device such as NUL: write in place
+        if (!f)
+            return failWith("cannot write");
+        FileStreamBuf buf(f);
+        std::ostream out(&buf);
+        write(out);
+        out.flush();
+        const bool ok = out.good() && !buf.failed();
+        return std::fclose(f) == 0 && ok ? true : failWith("failed while writing");
+    }
+
+    std::random_device rd;
+    fs::path tmp;
+    std::FILE* f = nullptr;
+    for (int attempt = 0; attempt < 16 && !f; ++attempt) {
+        char name[32];
+        std::snprintf(name, sizeof name, ".lt-%08x%08x", rd(), rd());
+        tmp = dir / name;
+        f = _wfopen(tmp.c_str(), L"wbx");
+        if (!f && errno != EEXIST)
+            break;
+    }
+    if (!f)
+        return failWith("cannot write");
+
+    bool ok = false;
+    try {
+        FileStreamBuf buf(f);
+        std::ostream out(&buf);
+        write(out);
+        out.flush();
+        ok = out.good() && !buf.failed() && std::fflush(f) == 0 && _commit(_fileno(f)) == 0;
+    } catch (...) {
+        std::fclose(f);
+        fs::remove(tmp, ec);
+        throw;
+    }
+    const bool closed = std::fclose(f) == 0;
+    if (!ok || !closed) {
+        fs::remove(tmp, ec);
+        return failWith("failed while writing");
+    }
+    if (!MoveFileExW(tmp.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        fs::remove(tmp, ec);
+        return failWith("cannot replace");
+    }
+    return true;
+}
+
+#endif
 
 }  // namespace
 

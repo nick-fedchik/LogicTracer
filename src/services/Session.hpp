@@ -37,7 +37,8 @@ inline constexpr int Failed = -32003;
 inline constexpr int StaleCapture = -32004;  // the request named a capture that is no longer on screen
 }  // namespace error
 
-// $LOGICTRACER_SOCKET, else $XDG_RUNTIME_DIR/logictracer.sock, else /tmp/logictracer-<uid>.sock
+// $LOGICTRACER_SOCKET, else $XDG_RUNTIME_DIR/logictracer.sock, else /tmp/logictracer-<uid>.sock;
+// on Windows the named pipe logictracer-<user> (access limited to the current user).
 [[nodiscard]] QString defaultSocketPath();
 
 // Completes one request; may be copied and invoked later. Safe if the client has gone away.

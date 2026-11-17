@@ -654,7 +654,12 @@ std::vector<DetectedPort> PicoConnection::enumerate(bool includeAllAcm)
     for (const auto& info : QSerialPortInfo::availablePorts()) {
         const bool match = info.hasVendorIdentifier() && info.hasProductIdentifier() &&
                            info.vendorIdentifier() == kVendorId && info.productIdentifier() == kProductId;
-        if (!match && !(includeAllAcm && info.portName().startsWith("ttyACM")))
+#if defined(_WIN32)
+        const bool acm = true;  // every COM port (USB CDC devices appear as COMn)
+#else
+        const bool acm = info.portName().startsWith("ttyACM");
+#endif
+        if (!match && !(includeAllAcm && acm))
             continue;
         DetectedPort d;
         d.port = info.systemLocation().toStdString();

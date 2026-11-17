@@ -349,6 +349,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         lt::gui::MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
@@ -387,6 +388,7 @@ private Q_SLOTS:
                 d.send(fake::captureData(r, 0x01));
             }
         });
+        LT_REQUIRE_PTY(dev);
         lt::gui::MainWindow win;
         win.show();
         win.device().setPollLatency(50ms);
