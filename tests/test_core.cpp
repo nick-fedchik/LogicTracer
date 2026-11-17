@@ -1032,8 +1032,10 @@ private Q_SLOTS:
         QFile::setPermissions(dir.path(), QFile::ReadOwner | QFile::ExeOwner);  // no new files can be created
         const bool wrote = lt::writeCsvFile(out.toStdString(), lt::CaptureBuffer({{0, "Z"}}, 1000, 0, {0u, 1u}), &err);
         QFile::setPermissions(dir.path(), QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+#if !defined(_WIN32)  // Windows ignores the read-only attribute on directories
         if (::geteuid() != 0)  // root ignores directory permissions
             QVERIFY(!wrote);
+#endif
         QFile after(out);
         QVERIFY(after.open(QIODevice::ReadOnly));
         if (!wrote)

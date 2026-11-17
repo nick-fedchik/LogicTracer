@@ -229,7 +229,7 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
             const auto win = extract(config.channels, starts[k], post, 0);
             all.insert(all.end(), win.samples().begin(), win.samples().end());
         }
-        buffer = CaptureBuffer(buffer.channels(), buffer.frequency(), pre, std::move(all));
+        buffer = CaptureBuffer(buffer.channels(), buffer.frequency(), static_cast<uint32_t>(pre), std::move(all));
         // The recording knows exactly when every window started.
         std::vector<double> times;
         for (const auto s : starts)

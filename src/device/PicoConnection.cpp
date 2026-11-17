@@ -501,12 +501,12 @@ PicoConnection::Attempt PicoConnection::runCapture(const CaptureRequestPacket& r
     }
     const auto stampCount = static_cast<uint8_t>(stamps[0]);
     if (stampCount > 1) {
-        QByteArray raw;
-        if (!readExact(stampCount * 4, raw, 1000ms)) {
+        QByteArray stampBytes;
+        if (!readExact(stampCount * 4, stampBytes, 1000ms)) {
             a.error = "capture trailer truncated (burst timestamps)";
             return a;
         }
-        const auto* s = reinterpret_cast<const uint8_t*>(raw.constData());
+        const auto* s = reinterpret_cast<const uint8_t*>(stampBytes.constData());
         for (int k = 0; k < stampCount; ++k, s += 4)
             a.timestamps.push_back(s[0] | (s[1] << 8) | (s[2] << 16) | (static_cast<uint32_t>(s[3]) << 24));
     }
