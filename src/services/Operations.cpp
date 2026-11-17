@@ -209,6 +209,17 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
         error = "a segmented capture needs a trigger (every window starts on a trigger edge)";
         return std::nullopt;
     }
+    if (info.dutClock) {  // in-design capture (PYNQ lt_capture): one clock, no segments
+        if (spec.frequency != info.maxFrequency) {
+            error = "the in-design capture core samples at the DUT clock: use a rate of " +
+                    std::to_string(info.maxFrequency) + " Hz";
+            return std::nullopt;
+        }
+        if (spec.segments > 1) {
+            error = "segmented captures are not supported by the in-design capture core";
+            return std::nullopt;
+        }
+    }
     if (!spec.trigger) {
         if (spec.preSamples)
             warnings.push_back("--pre-samples ignored for an immediate (untriggered) capture");

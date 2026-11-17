@@ -42,13 +42,28 @@ jobs:
         run: |
           $version = (Get-Content VERSION -TotalCount 1).Trim()
           $root = "LogicTracer-$version-windows-x64"
+          $bin = "dist/$root/bin"
           cmake --install build-release --prefix "dist/$root"
+          if ($LASTEXITCODE -ne 0) { throw "cmake --install failed" }
           foreach ($exe in @("logictracer-gui", "logictracer-cli", "logictracer-mcp")) {
-            windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "dist/$root/bin/$exe.exe"
+            windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw "$bin/$exe.exe"
+            if ($LASTEXITCODE -ne 0) { throw "windeployqt failed for $exe" }
           }
+          # App-local MSVC runtime, so no Visual C++ Redistributable has to be installed.
+          $crt = Get-ChildItem "$env:VCToolsRedistDir/x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+          if (-not $crt) { throw "MSVC runtime not found under $env:VCToolsRedistDir" }
+          Copy-Item "$($crt.FullName)/*.dll" $bin
           Copy-Item LICENSE, NOTICE.md, README.md, CHANGELOG.md "dist/$root/"
-          & "dist/$root/bin/logictracer-cli.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw "the packaged CLI does not start" }
+          # Smoke test with only the package and Windows on PATH (Qt's own bin must not mask missing DLLs).
+          $savedPath = $env:PATH
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          foreach ($exe in @("logictracer-cli", "logictracer-mcp")) {
+            & "$bin/$exe.exe" --version
+            if ($LASTEXITCODE -ne 0) { throw "the packaged $exe does not start" }
+          }
+          & "$bin/logictracer-gui.exe" --version | Out-Null  # loads the deployed qwindows platform plugin
+          if ($LASTEXITCODE -ne 0) { throw "the packaged GUI does not start" }
+          $env:PATH = $savedPath
           Compress-Archive -Path "dist/$root" -DestinationPath "$root.zip"
           "ASSET=$root.zip" >> $env:GITHUB_ENV
       - name: Upload

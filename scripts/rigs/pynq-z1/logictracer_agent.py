@@ -25,6 +25,8 @@ import hashlib
 import json
 import mmap
 import os
+import select
+import socket
 import socketserver
 import struct
 import sys
@@ -124,7 +126,7 @@ class SimCore:
             do_write = changed or fire or elapsed
             post_full = self.triggered and do_write and self.post_count == self.depth - 1
             if fire:
-                self.trig_ptr, self.trig_ts = self.wr_ptr, c
+                self.trig_ptr, self.trig_ts = self.wr_ptr, c & ((1 << self.tsw) - 1)
             if do_write:
                 self.mem[self.wr_ptr] = (c & ((1 << self.tsw) - 1), p)
                 if self.wr_ptr == self.depth - 1:
@@ -137,7 +139,7 @@ class SimCore:
             if elapsed or post_full:
                 self.done, self.armed = True, False
                 self.overflow = post_full and not elapsed
-                self.end_ts = c
+                self.end_ts = c & ((1 << self.tsw) - 1)
             self.ts = c
             if force_at is not None and c >= force_at:
                 force_at = None
@@ -145,6 +147,11 @@ class SimCore:
     def _force(self):
         if self.armed and not self.done and not self.triggered:
             self._run([], force_at=max([self.ts, *self.changes]) + 1)
+
+    def _resume(self):
+        """Re-evaluates from the next cycle after a register change while armed (as the RTL does every clock)."""
+        if self.armed and not self.done:
+            self._run(sorted({self.ts + 1, *[c for c in self.changes if c > self.ts]}))
 
     def _abort(self):
         if self.armed and not self.done:
@@ -176,6 +183,7 @@ class SimCore:
 
     def write(self, off: int, value: int) -> None:
         value &= 0xFFFFFFFF
+        tsmask = (1 << self.tsw) - 1
         if off == CTRL:  # precedence per clock: arm > abort > force
             self.ext_mode = bool(value & CTRL_EXT)
             if value & CTRL_ARM:
@@ -184,12 +192,18 @@ class SimCore:
                 self._abort()
             elif value & CTRL_FORCE:
                 self._force()
-        elif off in (TRIG_MASK, TRIG_VALUE, TRIG_RISE, TRIG_FALL):
-            setattr(self, {TRIG_MASK: "mask", TRIG_VALUE: "value", TRIG_RISE: "rise", TRIG_FALL: "fall"}[off], value)
+            else:
+                self._resume()  # e.g. leaving external-trigger mode lets the pattern fire
+        elif off in (TRIG_MASK, TRIG_VALUE, TRIG_RISE, TRIG_FALL):  # registers are PROBE_WIDTH bits wide
+            name = {TRIG_MASK: "mask", TRIG_VALUE: "value", TRIG_RISE: "rise", TRIG_FALL: "fall"}[off]
+            setattr(self, name, value & ((1 << self.pw) - 1))
+            self._resume()
         elif off == POST_LO:
-            self.post = (self.post & ~0xFFFFFFFF) | value
+            self.post = ((self.post & ~0xFFFFFFFF) | value) & tsmask
+            self._resume()
         elif off == POST_HI:
-            self.post = (self.post & 0xFFFFFFFF) | (value << 32)
+            self.post = ((self.post & 0xFFFFFFFF) | (value << 32)) & tsmask
+            self._resume()
         elif off == READ_INDEX:
             self.read_index = value % self.depth
 
@@ -242,7 +256,7 @@ class Core:
         return self.regs.read(lo) | (self.regs.read(hi) << 32)
 
     def capture(self, mask=0, value=0, rise=0, fall=0, post_cycles=1000, external=False, timeout_ms=5000,
-                on_armed=None):
+                on_armed=None, client_gone=None):
         r = self.regs
         self.cancel.clear()
         ext = CTRL_EXT if external else 0
@@ -254,33 +268,42 @@ class Core:
             on_armed()
         deadline = time.monotonic() + timeout_ms / 1000.0
         while not r.read(STATUS) & ST_DONE:
-            if self.cancel.is_set() or time.monotonic() > deadline:
+            gone = client_gone is not None and client_gone()
+            if self.cancel.is_set() or gone or time.monotonic() > deadline:
                 r.write(CTRL, CTRL_ABORT | ext)
-                return {"ok": True, "status": "CANCELLED" if self.cancel.is_set() else "TIMEOUT"}
-            time.sleep(0.001)
+                return {"ok": True, "status": "CANCELLED" if self.cancel.is_set() or gone else "TIMEOUT"}
+            time.sleep(0.002)
         return self.read_records()
 
     def read_records(self):
         """Software sequence of hdl/README.md: oldest record first, times relative to the trigger."""
         r = self.regs
         status = r.read(STATUS)
-        count, oldest = r.read(RECORDS), r.read(OLDEST)
+        count, oldest, trig_ptr = r.read(RECORDS), r.read(OLDEST), r.read(TRIGGER_PTR)
         trig_ts = self._read64(TRIG_TS_LO, TRIG_TS_HI)
         end_ts = self._read64(END_TS_LO, END_TS_HI)
-        wrap, half = 1 << self.ts_width, 1 << (self.ts_width - 1)
-
-        def rel(ts):  # modulo 2^TS_WIDTH, as a signed difference
-            d = (ts - trig_ts) % wrap
-            return d - wrap if d >= half else d
+        depth, wrap = 1 << self.addr_width, 1 << self.ts_width
+        trig_idx = (trig_ptr - oldest) % depth  # position of the trigger record in reading order
 
         r.write(READ_INDEX, oldest)
-        records = []
+        raw = []
         for _ in range(count):
             ts = self._read64(READ_TS_LO, READ_TS_HI)
-            records.append([rel(ts), r.read(READ_PROBE)])  # reading READ_PROBE advances READ_INDEX
-        return {"ok": True, "status": "OK", "trigger_ts": trig_ts, "end_rel": rel(end_ts),
+            raw.append((ts, r.read(READ_PROBE)))  # reading READ_PROBE advances READ_INDEX
+        # The record position, not the timestamp, says which side of the trigger a record is on, so a long wait
+        # cannot make history look like the future. Ages are taken modulo 2^TS_WIDTH; walking back from the
+        # trigger they must grow, and the first one that does not lies more than a full counter period back.
+        pre, last_age = [], 0
+        for ts, probe in reversed(raw[:trig_idx]):
+            age = (trig_ts - ts) % wrap
+            if age < last_age:
+                break
+            pre.append([-age, probe])
+            last_age = age
+        records = list(reversed(pre)) + [[(ts - trig_ts) % wrap, probe] for ts, probe in raw[trig_idx:]]
+        return {"ok": True, "status": "OK", "trigger_ts": trig_ts, "end_rel": (end_ts - trig_ts) % wrap,
                 "overflow": bool(status & ST_OVERFLOW), "wrapped": bool(status & ST_WRAPPED),
-                "records": records}
+                "dropped_history": trig_idx - len(pre), "records": records}
 
 
 # --------------------------------------------------------------------------------------------------
@@ -306,7 +329,8 @@ class Handler(socketserver.StreamRequestHandler):
                             if any(v < 0 for v in args.values()):
                                 raise ValueError("negative capture parameter")
                             reply = core.capture(external=bool(req.get("external", False)),
-                                                 on_armed=lambda: self._send({"ok": True, "event": "armed"}), **args)
+                                                 on_armed=lambda: self._send({"ok": True, "event": "armed"}),
+                                                 client_gone=self._client_gone, **args)
                         finally:
                             core.lock.release()
                 elif cmd == "cancel":
@@ -316,11 +340,24 @@ class Handler(socketserver.StreamRequestHandler):
                     reply = {"ok": False, "error": f"unknown command {cmd!r}"}
             except Exception as exc:  # report and keep serving
                 reply = {"ok": False, "error": str(exc)}
-            self._send(reply)
+            if not self._send(reply):
+                return
 
     def _send(self, msg):
-        self.wfile.write((json.dumps(msg, separators=(",", ":")) + "\n").encode())
-        self.wfile.flush()
+        try:
+            self.wfile.write((json.dumps(msg, separators=(",", ":")) + "\n").encode())
+            self.wfile.flush()
+            return True
+        except OSError:  # the client went away
+            return False
+
+    def _client_gone(self):
+        """True when the client closed its connection (a capture it started is then aborted)."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -341,7 +378,7 @@ def main(argv=None):
     ap.add_argument("--port", type=int, default=7878, help="TCP port (0 = any free port)")
     args = ap.parse_args(argv)
 
-    names = [n for n in args.probes.split(",") if n]
+    names = args.probes.split(",") if args.probes else []  # an empty entry keeps its bit unnamed
     if args.sim:
         stim, changes = burst_stimulus(delay=args.sim_delay)
         regs = SimCore(stim, changes, probe_width=2)

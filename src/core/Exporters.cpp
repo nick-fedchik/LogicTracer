@@ -626,10 +626,13 @@ nlohmann::json toJson(const LatencyStats& lat, bool includeEvents)
              lat.constantDelayConsistent()
                  ? nlohmann::json::array({lat.constantDelayLowerNs(), lat.constantDelayUpperNs()})
                  : nlohmann::json(nullptr)},
-            {"note", lat.constantDelayConsistent()
-                         ? "all pairs are explained by one fixed delay in this open interval; histogram spread is "
-                           "sampling phase, not jitter"
-                         : "spread exceeds 1 sample: the true delay varies (real jitter)"}};
+            {"note", lat.exact ? (lat.constantDelayConsistent()
+                                      ? "exact timing: every pair has this same delay"
+                                      : "exact timing: the delay differs between pairs (real variation)")
+                               : (lat.constantDelayConsistent()
+                                      ? "all pairs are explained by one fixed delay in this open interval; histogram "
+                                        "spread is sampling phase, not jitter"
+                                      : "spread exceeds 1 sample: the true delay varies (real jitter)")}};
         for (const auto& ev : lat.outliers) {
             nlohmann::json o = {{"event_id", ev.eventId}, {"stim_sample", ev.stimSample},
                                 {"react_sample", ev.reactSample}, {"delta_samples", ev.deltaSamples},

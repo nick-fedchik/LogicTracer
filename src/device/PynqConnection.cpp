@@ -4,12 +4,12 @@
 #include "device/PynqConnection.hpp"
 
 #include <QTcpSocket>
+#include <QUrl>
 #include <QtGlobal>
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <charconv>
 
 namespace lt {
 
@@ -98,25 +98,15 @@ bool PynqConnection::open(const std::string& port, milliseconds handshakeTimeout
         m_error = "PYNQ port must look like pynq://host[:port]";
         return false;
     }
-    std::string rest = port.substr(kScheme.size());
-    m_port = kDefaultPort;
-    if (const auto colon = rest.rfind(':'); colon != std::string::npos) {
-        unsigned value = 0;
-        const auto* b = rest.data() + colon + 1;
-        const auto* e = rest.data() + rest.size();
-        const auto [ptr, ec] = std::from_chars(b, e, value);
-        if (ec != std::errc{} || ptr != e || value == 0 || value > 65535) {
-            m_error = "invalid port number in '" + port + "'";
-            return false;
-        }
-        m_port = static_cast<uint16_t>(value);
-        rest.resize(colon);
-    }
-    m_host = rest;
-    if (m_host.empty()) {
-        m_error = "missing host in '" + port + "'";
+    m_cancelRequested = false;
+    const QUrl url(QString::fromStdString(port), QUrl::StrictMode);  // also [IPv6]:port
+    const int urlPort = url.port(kDefaultPort);
+    if (!url.isValid() || url.host().isEmpty() || !url.path().isEmpty() || urlPort <= 0) {
+        m_error = "PYNQ port must look like pynq://host[:port] (got '" + port + "')";
         return false;
     }
+    m_host = url.host().toStdString();
+    m_port = static_cast<uint16_t>(urlPort);
     // The hardware guard of audits and harnesses also covers boards; a local (simulated) agent stays allowed.
     if (qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE") && !isLoopback(m_host)) {
         m_error = "board access is denied by LOGICTRACER_DENY_HARDWARE";
@@ -163,7 +153,7 @@ bool PynqConnection::open(const std::string& port, milliseconds handshakeTimeout
     m_info.generation = ProtocolGeneration::V6;
     m_info.maxFrequency = clock;
     m_info.channels = static_cast<uint8_t>(width);
-    m_info.bufferSize = kMaxSamples;  // 1 byte per sample in 8-channel mode: the dense expansion limit
+    m_info.bufferSize = kMaxSamples * 4u;  // limits() divides by the bytes per sample of the widest mode
     m_info.features = DeviceInfo::kFeatureEdgeTrigger;
     m_info.dutClock = true;
     m_info.syncStages = static_cast<uint8_t>(id.value("sync_stages", 0));
@@ -178,22 +168,28 @@ std::optional<std::string> PynqConnection::call(const std::string& requestJson, 
     }
     m_socket->write(QByteArray::fromStdString(requestJson) + '\n');
     m_socket->flush();
-    const auto deadline = steady_clock::now() + timeout;
+    auto deadline = steady_clock::now() + timeout;
+    bool armed = false;
     bool cancelSent = false;
     while (true) {
         while (m_socket->canReadLine()) {
             const std::string line = m_socket->readLine().trimmed().toStdString();
             const auto msg = json::parse(line, nullptr, false);
             if (msg.is_object() && msg.contains("event")) {  // progress, e.g. {"event":"armed"}
-                if (msg["event"] == "armed")
+                if (msg["event"] == "armed") {
+                    armed = true;
                     report(CaptureStage::WaitingForTrigger);
+                }
                 continue;
             }
             return line;
         }
-        if (cancellable && m_cancelRequested && !cancelSent) {
+        // The agent clears its cancel flag when a capture starts: cancel only once it has armed. An agent
+        // that does not answer the cancel promptly is given up on (the board may be gone).
+        if (cancellable && m_cancelRequested && armed && !cancelSent) {
             sendCancel();
             cancelSent = true;
+            deadline = std::min(deadline, steady_clock::now() + 3s);
         }
         if (steady_clock::now() > deadline) {
             m_error = "the PYNQ agent did not answer in time";
@@ -239,7 +235,7 @@ std::optional<std::string> PynqConnection::validate(const CaptureConfig& c) cons
                " (requested " + std::to_string(c.frequency) + " Hz)";
     if (c.segments != 1)
         return std::string("segmented captures are not supported by the PL core (record a longer window instead)");
-    if (static_cast<uint64_t>(c.preSamples) + c.postSamples > kMaxSamples)
+    if ((c.trigger ? static_cast<uint64_t>(c.preSamples) : 0ull) + c.postSamples > kMaxSamples)
         return "at most " + std::to_string(kMaxSamples) + " samples per capture";
     return std::nullopt;
 }
@@ -257,6 +253,11 @@ CaptureResult PynqConnection::capture(const CaptureConfig& config)
         r.status = status;
         r.error = std::move(error);
         r.elapsed = duration_cast<milliseconds>(steady_clock::now() - start);
+        r.portLost = !isOpen();  // lets AsyncDevice and the GUI drop a dead connection
+        if (r.portLost && status != CaptureStatus::Ok && m_cancelRequested) {
+            r.status = CaptureStatus::Cancelled;
+            r.error = "capture cancelled (the agent did not confirm)";
+        }
         m_cancelRequested = false;
         report(CaptureStage::Done);
         return r;
@@ -290,9 +291,15 @@ CaptureResult PynqConnection::capture(const CaptureConfig& config)
     const auto status = doc.value("status", std::string{});
     if (status == "CANCELLED")
         return finish(CaptureStatus::Cancelled, "capture cancelled");
-    if (status == "TIMEOUT")
+    if (status == "TIMEOUT") {
+        if (config.probeOnTimeout) {  // the current line levels explain a missing trigger
+            auto p = probe(config.channels, 10ms, 0);
+            if (p.buffer)
+                r.lineDump = std::move(p.buffer);
+        }
         return finish(CaptureStatus::Timeout,
                       "trigger did not occur within " + std::to_string(config.timeout.count()) + " ms");
+    }
     if (status != "OK" || !doc.contains("records") || !doc["records"].is_array() || doc["records"].empty())
         return finish(CaptureStatus::Error, "the agent returned no records");
 
@@ -327,6 +334,7 @@ ProbeResult PynqConnection::probe(const std::vector<ChannelInfo>& channels, mill
     p.error = r.error;
     p.attempts = r.attempts;
     p.elapsed = r.elapsed;
+    p.portLost = r.portLost;
     p.buffer = std::move(r.buffer);
     return p;
 }

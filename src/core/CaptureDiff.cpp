@@ -165,15 +165,27 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
                                   std::to_string(lb.spuriousReactCount) + ")");
         // Both captures may be explained by one fixed delay: then the histograms differ by sampling phase only.
         if (la.constantDelayConsistent() && lb.constantDelayConsistent()) {
-            const double lo = std::max(la.constantDelayLowerNs(), lb.constantDelayLowerNs());
-            const double hi = std::min(la.constantDelayUpperNs(), lb.constantDelayUpperNs());
+            // Asynchronous captures bound the delay by an open interval, exact (in-design) ones by a point [d, d]:
+            // the intersection is non-empty if lo < hi, or lo == hi with both ends closed.
+            constexpr double kEps = 1e-6;  // ns
+            const double aLo = la.constantDelayLowerNs(), bLo = lb.constantDelayLowerNs();
+            const double aHi = la.constantDelayUpperNs(), bHi = lb.constantDelayUpperNs();
+            const double lo = std::max(aLo, bLo), hi = std::min(aHi, bHi);
+            const bool loClosed = (std::abs(aLo - lo) > kEps || la.exact) && (std::abs(bLo - lo) > kEps || lb.exact);
+            const bool hiClosed = (std::abs(aHi - hi) > kEps || la.exact) && (std::abs(bHi - hi) > kEps || lb.exact);
+            const bool overlap = hi - lo > kEps || (std::abs(hi - lo) <= kEps && loClosed && hiClosed);
+            const auto range = (loClosed ? "[" : "(") + formatTime(lo * 1e-9) + ", " + formatTime(hi * 1e-9) +
+                               (hiClosed ? "]" : ")");
             lat["sampling_phase_verdict"] =
-                lo < hi ? "same fixed delay: both captures fit one delay in (" + formatTime(lo * 1e-9) + ", " +
-                              formatTime(hi * 1e-9) + "); the histogram difference is sampling phase"
-                        : "different fixed delays: the constant-delay intervals do not overlap";
-            lat["same_fixed_delay_possible"] = lo < hi;
+                overlap ? (la.exact && lb.exact ? "same fixed delay: " + formatTime(lo * 1e-9) + " exactly in both captures"
+                                                : "same fixed delay: both captures fit one delay in " + range +
+                                                      "; the histogram difference is sampling phase")
+                        : std::string("different fixed delays: the constant-delay intervals do not overlap");
+            lat["same_fixed_delay_possible"] = overlap;
         } else {
-            lat["sampling_phase_verdict"] = "at least one capture shows real jitter (spread > 1 sample)";
+            lat["sampling_phase_verdict"] =
+                la.exact || lb.exact ? "at least one capture shows a varying delay (beyond its timing resolution)"
+                                     : "at least one capture shows real jitter (spread > 1 sample)";
             lat["same_fixed_delay_possible"] = false;
         }
         for (const auto* l : {&la, &lb})

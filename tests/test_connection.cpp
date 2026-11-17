@@ -703,13 +703,51 @@ private Q_SLOTS:
         c.timeout = 100ms;
         QVERIFY(dev->capture(c).status == lt::CaptureStatus::Timeout);
 
+        c.probeOnTimeout = true;
+        r = dev->capture(c);
+        QVERIFY(r.status == lt::CaptureStatus::Timeout);
+        QVERIFY(r.lineDump && r.lineDump->size() > 0);  // current levels explain the missing trigger
+        c.probeOnTimeout = false;
+
         const auto probe = dev->probe(c.channels, 1ms, 0);
         QVERIFY2(probe.status == lt::CaptureStatus::Ok, probe.error.c_str());
         QCOMPARE(probe.buffer->size(), std::size_t{100'000});
 
+        lt::CaptureConfig immediate = c;  // the 2 reserved pre-trigger samples of immediate captures do not count
+        immediate.trigger.reset();
+        immediate.preSamples = 2;
+        immediate.postSamples = lt::PynqConnection::kMaxSamples;
+        QVERIFY(!dev->validate(immediate));
+        lt::CaptureRequestSpec spec;  // the services layer rejects a rate other than the DUT clock up front
+        spec.channels = c.channels;
+        spec.frequency = 1'000'000;
+        std::vector<std::string> warnings;
+        std::string err;
+        QVERIFY(!lt::buildCaptureConfig(dev->info(), spec, warnings, err));
+        QVERIFY(err.find("DUT clock") != std::string::npos);
+
+        agentProc.kill();  // the board goes away: the capture reports a lost connection
+        agentProc.waitForFinished(2000);
+        r = dev->capture(c);
+        QVERIFY(r.status != lt::CaptureStatus::Ok);
+        QVERIFY(r.portLost);
+
         lt::PynqConnection bad;
         QVERIFY(!bad.open("pynq://127.0.0.1:1", 500ms));  // nothing listens there
         QVERIFY(!bad.open("pynq://", 500ms));
+        const QByteArray previous = qgetenv("LOGICTRACER_DENY_HARDWARE");
+        const bool hadGuard = qEnvironmentVariableIsSet("LOGICTRACER_DENY_HARDWARE");
+        qputenv("LOGICTRACER_DENY_HARDWARE", "1");
+        QVERIFY(!bad.open("pynq://[::1]:1", 500ms));
+        const std::string ipv6Error = bad.lastError();
+        QVERIFY(!bad.open("pynq://192.0.2.1:7878", 500ms));
+        const std::string remoteError = bad.lastError();
+        if (hadGuard)
+            qputenv("LOGICTRACER_DENY_HARDWARE", previous);
+        else
+            qunsetenv("LOGICTRACER_DENY_HARDWARE");
+        QVERIFY2(ipv6Error.find("cannot reach") != std::string::npos, ipv6Error.c_str());  // loopback is allowed
+        QVERIFY(remoteError.find("LOGICTRACER_DENY_HARDWARE") != std::string::npos);
 #endif
     }
 

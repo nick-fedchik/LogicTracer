@@ -66,10 +66,10 @@ bool runClipboardTool(const Candidate& c, std::string_view text)
 
 bool copyTextToClipboard(std::string_view text, std::string* backendUsed, std::string* error)
 {
-    const QByteArray testFile = qgetenv("LOGICTRACER_CLIPBOARD_FILE");
+    const QString testFile = qEnvironmentVariable("LOGICTRACER_CLIPBOARD_FILE");  // UTF-16 on Windows
     if (!testFile.isEmpty()) {
 #if defined(_WIN32)
-        const std::filesystem::path testPath(QString::fromLocal8Bit(testFile).toStdWString());
+        const std::filesystem::path testPath(testFile.toStdWString());
 #else
         const std::filesystem::path testPath(testFile.toStdString());
 #endif

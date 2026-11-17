@@ -612,7 +612,9 @@ void MainWindow::updatePreflight()
     if (m_windows->value() > 1)
         text += tr(" | %1 windows (time between them %2)")
                     .arg(m_windows->value())
-                    .arg(m_device.isConnected() && m_device.info().supportsEdgeBurstTimestamps() && m_windows->value() <= 254
+                    .arg(m_device.isConnected() &&
+                                 (m_device.info().version.family == lt::FirmwareFamily::Replay ||
+                                  (m_device.info().supportsEdgeBurstTimestamps() && m_windows->value() <= 254))
                              ? tr("timestamped")
                              : tr("not recorded"));
     if (m_device.isConnected()) {

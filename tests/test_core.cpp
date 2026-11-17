@@ -1257,6 +1257,12 @@ private Q_SLOTS:
         o.latency = lt::DiffOptions::Latency{0, false, 1, false};
         QCOMPARE(lt::diffCaptures(make(5, false), make(6, false), o)["verdict"].get<std::string>(), std::string("equivalent"));
         QCOMPARE(lt::diffCaptures(make(5, true), make(6, true), o)["verdict"].get<std::string>(), std::string("regression"));
+        // The exact delay (a point) lies inside the asynchronous capture's open interval (40, 60) ns: same delay.
+        auto d = lt::diffCaptures(make(5, true), make(5, false), o);
+        QVERIFY(d["latency"]["same_fixed_delay_possible"].get<bool>());
+        d = lt::diffCaptures(make(5, true), make(5, true), o);
+        QVERIFY(d["latency"]["same_fixed_delay_possible"].get<bool>());
+        QVERIFY(!lt::diffCaptures(make(5, true), make(4, false), o)["latency"]["same_fixed_delay_possible"].get<bool>());
 
         lt::SignalAnalyzer::Options opts;
         opts.collectEdges = true;
