@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.24)
 
 # Single source of truth for the product version (SemVer 2.0), shared with the firmware.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" LOGICTRACER_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 
 project(LogicTracer
     VERSION ${LOGICTRACER_VERSION}

@@ -100,6 +100,7 @@ pico_generate_pio_header(${PROJECT_NAME}
 
 # LogicTracer product version (SemVer 2.0), shared with the host software.
 file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../../VERSION" LOGICTRACER_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/../../VERSION")
 pico_set_program_name(LogicAnalyzer "LogicTracer")
 pico_set_program_version(LogicAnalyzer "${LOGICTRACER_VERSION}")
 add_compile_definitions(FIRMWARE_VERSION="${LOGICTRACER_VERSION}")

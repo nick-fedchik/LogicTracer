@@ -5,6 +5,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-17
+
 ### Added
 - Windows 10/11 (x64, MSVC 2022, Qt 6.8) builds with warnings as errors and passes the test suites in CI
   (emulator-based tests are skipped); macOS (Homebrew Qt) builds and passes every suite. The GUI session
@@ -38,8 +40,29 @@ All notable changes are documented here. The format follows
 - Latency direction check: when every reaction lags by about one stimulus period and the opposite pairing is
   short, the report, the latency JSON (`direction_warning`) and the CLI say the channels are probably swapped.
 - `LOGICTRACER_DENY_HARDWARE=1` refuses all serial device access (for audits and harnesses).
+- GUI capture lifecycle: Armed (dimmed old waveform + banner) and Stale-on-timeout states, with a
+  line-state diagnosis instead of a copy of the old report; history of the last 8 captures
+  (`Alt+Left` / `Alt+Right`); setup metadata persists between captures; pinnable AI note.
+- `capture_id` in reports, state, CLI and MCP; `annotate --capture-id` / `lt_add_annotation`
+  `capture_id` reject stale targets with `StaleCapture`.
+- Pre-flight `Window | Step | Pre` line, capture warnings and inline field validation.
+- `F3` / `Shift+F3` anomaly navigation; RP2040 input-physics notes in probe and timeout reports.
+- Waveform: overview strip, `CHx (GPx) Name` gutter with activity dot, `H` hides inactive channels,
+  draggable cursors, right-click context menu (Set Cursor A/B, annotations).
+- Guided onboarding: empty-state card, `File -> Load Demo Capture` (`Ctrl+D`), and non-blocking visual
+  builders for the Channels, Trigger and Latency fields (the fields stay editable by hand).
+- `Setup Metadata...` editor (`Edit` menu and `Setup (N)` button); vertical channel scroll
+  (`Shift+wheel`) with pinned ruler, row height (`Ctrl+Shift+wheel`, `View` actions); `Repeat` capture
+  toggle that stops on Cancel, timeout, error or disconnect.
+- Two-way AI steering: session `set_view` / `get_anomalies`, MCP `lt_set_view` / `lt_get_anomalies`,
+  CLI `view --fit/--start/--end/--center/--span/--cursor-a/--cursor-b/--clear-cursors/--hide-inactive`
+  and `view --anomalies` (all accept `capture_id` and refuse stale targets with `StaleCapture`).
+- `View -> Show Anomaly Markers`: automatic markers on the ruler, separate from annotations.
 
-### Fixed (independent audit, tags `audit-base` -> `audit-fixes` and follow-ups)
+### Changed
+- Right click no longer places Cursor B; it opens the context menu. Shift+click sets Cursor B.
+
+### Fixed
 - Firmware: the Pico W WiFi variants compile again (an LED macro that expands to a block broke the fast
   completion poll); CI now builds the Pico 2, Pico W and WiFi variants as well.
 - Handshake: LogicTracer 0.x firmware now reports its real frequency, blast rate, buffer and channels.
@@ -59,32 +82,6 @@ All notable changes are documented here. The format follows
 - Waveform: cursors, anomaly markers, annotations, ruler and trigger share one sample-to-x convention.
 - Session/MCP output files are written through one directory descriptor and refuse symlinked directories.
 - FPGA `lt_capture`: abort/re-arm no longer overwrite the oldest record; read index/auto-increment races fixed.
-
-### Added
-- GUI capture lifecycle: Armed (dimmed old waveform + banner) and Stale-on-timeout states, with a
-  line-state diagnosis instead of a copy of the old report; history of the last 8 captures
-  (`Alt+Left` / `Alt+Right`); setup metadata persists between captures; pinnable AI note.
-- `capture_id` in reports, state, CLI and MCP; `annotate --capture-id` / `lt_add_annotation`
-  `capture_id` reject stale targets with `StaleCapture`.
-- Pre-flight `Window | Step | Pre` line, capture warnings and inline field validation.
-- `F3` / `Shift+F3` anomaly navigation; RP2040 input-physics notes in probe and timeout reports.
-- Waveform: overview strip, `CHx (GPx) Name` gutter with activity dot, `H` hides inactive channels,
-  draggable cursors, right-click context menu (Set Cursor A/B, annotations).
-
-- Guided onboarding: empty-state card, `File -> Load Demo Capture` (`Ctrl+D`), and non-blocking visual
-  builders for the Channels, Trigger and Latency fields (the fields stay editable by hand).
-- `Setup Metadata...` editor (`Edit` menu and `Setup (N)` button); vertical channel scroll
-  (`Shift+wheel`) with pinned ruler, row height (`Ctrl+Shift+wheel`, `View` actions); `Repeat` capture
-  toggle that stops on Cancel, timeout, error or disconnect.
-- Two-way AI steering: session `set_view` / `get_anomalies`, MCP `lt_set_view` / `lt_get_anomalies`,
-  CLI `view --fit/--start/--end/--center/--span/--cursor-a/--cursor-b/--clear-cursors/--hide-inactive`
-  and `view --anomalies` (all accept `capture_id` and refuse stale targets with `StaleCapture`).
-- `View -> Show Anomaly Markers`: automatic markers on the ruler, separate from annotations.
-
-### Changed
-- Right click no longer places Cursor B; it opens the context menu. Shift+click sets Cursor B.
-
-### Fixed
 - Locale-dependent decimal commas in warnings (`1,31 ms`).
 
 ## [0.3.0] - 2026-11-15
@@ -137,6 +134,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.4.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.4.0
 [0.3.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.3.0
 [0.2.0]: https://github.com/nick-fedchik/LogicTracer/tree/v0.2.0
 [0.1.0]: https://github.com/nick-fedchik/LogicTracer/tree/f423041
