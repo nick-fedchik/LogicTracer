@@ -1,11 +1,11 @@
 # LogicTracer
 
-**Evidence-grade logic analysis for humans and AI agents.**
-
-LogicTracer is a native C++20 / Qt 6 host for low-cost RP2040/RP2350 logic analyzers (Raspberry Pi
-Pico and compatible boards running the LogicAnalyzer firmware). It is built for
-hardware-in-the-loop (HIL) verification: the engineer and an AI agent look at *the same* data, and
-every timing claim comes with its measurement uncertainty and a pass/fail verdict.
+LogicTracer is a native C++20 / Qt 6 host and RP2040 firmware for low-cost logic analyzers
+(Raspberry Pi Pico and compatible boards). Where the upstream
+[LogicAnalyzer](https://github.com/gusmanb/logicanalyzer) project is designed as an interactive
+desktop GUI, LogicTracer focuses on automated hardware-in-the-loop (HIL) verification, deterministic
+CLI/CI workflows, and shared human–AI debugging: the engineer and an AI agent inspect the same
+capture, and timing measurements are reported with their sampling uncertainty and pass/fail bounds.
 
 > LogicTracer is an independent project based on, and compatible with, the
 > [LogicAnalyzer](https://github.com/gusmanb/logicanalyzer) firmware by Agustín Gimenez Bernad
@@ -13,14 +13,19 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 
 ## Why
 
-| | |
+| Area | What LogicTracer provides |
 |---|---|
-| **Human–AI grounding** | `Copy for AI`, an MCP server and an IPC session: an agent sees the engineer's view (range, cursors, pins) and can place annotations on the live waveform. |
-| **Honest metrology** | Stimulus→reaction latency with a Δs histogram, nearest-rank percentiles, ±1-sample bounds, a constant-delay consistency test, burst-aware frequency, censored/spurious/dropped event accounting. |
-| **Automated verdicts** | `--expect "p99_ub_ns<=60,drops==0"` with guaranteed bounds; exit codes for CI and HIL scripts. |
-| **Anomaly spotlight** | Repeating edge motifs are compressed to one line; deviations are reported as incidents with a ±4-transition window. |
-| **Fast turnaround** | LogicTracer firmware: ~40–80 ms probe/capture round trip instead of ~2–8 s. |
-| **Open formats** | Lossless compact JSON (`logictracer-capture-v1`), VCD, CSV, event CSV; imports legacy `.lac`. |
+| **Human–AI shared session** | `logictracer-gui`, `logictracer-cli` and `logictracer-mcp` share one IPC session: an AI agent reads the active capture (`capture_id` prevents stale-read races), steers the view or cursors, and places annotations directly on the engineer's waveform. |
+| **Sampling uncertainty & bounds** | Cross-channel stimulus→reaction latency with a Δs histogram, nearest-rank percentiles, asynchronous `((d−1)T, (d+1)T)` bounds, constant-delay consistency check, burst-aware frequency, and separation of censored window-edge events from real drops. |
+| **Automated verdicts & contracts** | `--expect`, temporal rules (`--invariant`), segmented captures (`--segments` with hardware burst timestamps), and `diff --strict` for regression checks. All `--json` outputs follow versioned JSON schemas ([docs/CONTRACTS.md](docs/CONTRACTS.md)) with deterministic exit codes. |
+| **Capture integrity (firmware)** | Real edge-sensitive trigger (waiting for the opposite level before arming), exact `t = 0` edge alignment, DMA wrap tracking so unwritten pre-trigger buffer zero-fill is omitted instead of shown as `LOW`, and ~15 ms polling/cancel turnaround (vs ~2.2 s on upstream firmware). |
+| **Closed-loop self-test** | Onboard PIO1 + DMA test-signal generator (`GP0`/`GP1`) looped back with two jumpers: `selftest` (CLI, GUI, MCP) verifies triggers, pre-trigger trimming, pulse widths, latency bounds, segments and timeouts against known clock-cycle ground truth. |
+| **Open formats** | Lossless capture JSON (`logictracer-capture-v1`), VCD, CSV, paired latency-events CSV, and `.lac` import; any saved file can be replayed as a virtual device (`--port replay:<file>`). |
+
+**Scope:** LogicTracer is built for timing, causal signal verification and HIL automation on $4 RP2040
+boards (up to 100 MS/s, 128 KiB buffer). It does not aim to replace multi-gigabit hardware analyzers
+or broad protocol-decoder suites such as sigrok/PulseView (waveforms can be exported to `.vcd` for
+protocol decoding there).
 
 ## Components
 
@@ -228,10 +233,18 @@ trusts a measurement.
 
 ## Firmware
 
-`firmware/rp2040` holds the LogicTracer firmware, derived from the LogicAnalyzer V2 firmware (fast
-completion polling). It identifies itself as `LOGICTRACER_<BOARD>_<version>`. Build and flash with
-`scripts/build_firmware.sh` (needs the Pico SDK 2.x and `arm-none-eabi-gcc`). The host also works
-with unmodified upstream firmware (V5_x, V6_0–V6_5); it then waits ~2 s longer per capture.
+`firmware/rp2040` holds the LogicTracer firmware (`LOGICTRACER_<BOARD>_<version>`), derived from the
+upstream LogicAnalyzer V6_5 firmware. Build and flash with `scripts/build_firmware.sh` (needs the
+Pico SDK 2.x and `arm-none-eabi-gcc`). Relative to upstream V6_5, it adds opt-in extensions
+advertised via `FEATURES`:
+- **Edge-sensitive trigger (type 4)** and **hardware burst timestamps** across segmented captures;
+- **Recorded-sample count** in the capture trailer so the host omits unwritten pre-trigger RAM when a
+  trigger fires before the pre-buffer fills;
+- **10 ms completion/cancel polling** and `CAPTURE_CANCELLED` acknowledgement (~15 ms turnaround);
+- **PIO1 + DMA test-signal generator** on `GP0`/`GP1` for closed-loop self-testing.
+
+The host remains compatible with unmodified upstream firmware (V5_x, V6_0–V6_5), falling back to
+level-sensitive triggers and the ~2.2 s poll interval.
 
 After flashing, check the analyzer against its own test-signal generator (two jumpers: `GP0` → `GP4`,
 `GP1` → `GP5`; Pico, Pico 2 untested): `logictracer-cli selftest --port /dev/ttyACM0` (exit `0` = every check
