@@ -85,7 +85,7 @@ private:
     };
 
     bool handshake(std::chrono::milliseconds timeout);
-    static void alignTriggerToEdge(CaptureBuffer& buffer, const EdgeTrigger& trigger);
+    static void alignTriggerToEdge(CaptureBuffer& buffer, const EdgeTrigger& trigger);  // see capture()
     Attempt runCapture(const CaptureRequestPacket& req, const std::vector<ChannelInfo>& channels,
                        std::chrono::milliseconds triggerWait, bool waitPreFill);
     void reportProgress(CaptureStage stage) const

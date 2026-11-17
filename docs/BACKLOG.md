@@ -25,7 +25,7 @@ open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not p
 - Verified on a Pico at 1, 3, 10, 24, 50 and 100 MHz; 50 consecutive runs at 100 MHz passed. It found and
   fixed the t = 0 off-by-one, the phantom pre-trigger samples, the generator being cut off by captures and
   the slow TIMEOUT.
-- Open: segmented captures keep the one-sample t = 0 ambiguity in window 1; not run on a Pico 2 yet.
+- Open: not run on a Pico 2 yet.
 
 ## Done recently
 - Independent audit by four models plus a re-audit (`docs/audit/`): all confirmed P0/P1 findings fixed

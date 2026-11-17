@@ -404,8 +404,9 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
                                   " pre-trigger samples were recorded, the older ones are left out");
     }
     // The edge programs store a sample ("in pins") and then test the trigger pin ("jmp pin"): an edge between the
-    // two is already in the last pre-trigger sample. Put t = 0 on the first sample showing the new level.
-    if (edgeSensitive && config.segments == 1 && result.buffer && result.status == CaptureStatus::Ok)
+    // two is already in the last pre-trigger sample. Put t = 0 on the first sample showing the new level (for a
+    // segmented capture: of window 1; later windows start sampling on the detected edge).
+    if (edgeSensitive && result.buffer && result.status == CaptureStatus::Ok)
         alignTriggerToEdge(*result.buffer, *config.trigger);
     if (config.segments > 1 && config.trigger)
     {

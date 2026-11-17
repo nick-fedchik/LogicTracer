@@ -428,6 +428,20 @@ private Q_SLOTS:
             r = conn.capture(cfg);
             QCOMPARE(r.buffer->triggerIndex(), int64_t{10});
         }
+
+        // Segmented: window 1 gets the aligned t = 0, the storage layout is unchanged.
+        falling = false;
+        cfg.trigger = lt::EdgeTrigger{0, false};
+        cfg.segments = 2;
+        edgeAt = 9;
+        const auto seg = conn.capture(cfg);
+        QVERIFY2(seg.status == lt::CaptureStatus::Ok, seg.error.c_str());
+        QVERIFY(seg.segments && seg.segments->preSamples == 10);
+        const auto windows = lt::splitSegments(*seg.buffer, *seg.segments);
+        QCOMPARE(windows.size(), std::size_t{2});
+        QCOMPARE(windows[0].triggerIndex(), int64_t{9});
+        QVERIFY(windows[0].bit(9, 0) && !windows[0].bit(8, 0));
+        QCOMPARE(windows[1].triggerIndex(), int64_t{1});
     }
 
     // Firmware with FEATURES bit 3 acknowledges a cancel: a TIMEOUT returns without waiting out the cancel window.

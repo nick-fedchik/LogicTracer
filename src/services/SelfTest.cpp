@@ -517,6 +517,19 @@ private:
             add("segments", "FAIL", failure(r));
             return;
         }
+        // Window 1: the trigger edge must be at t = 0 like in a single-window capture.
+        const auto windows = splitSegments(*r.buffer, *r.segments);
+        if (windows.empty()) {
+            add("segments", "FAIL", "the capture does not match its segment layout");
+            return;
+        }
+        const auto& w1 = windows.front();
+        const auto t1 = w1.triggerIndex();
+        if (t1 < 1 || static_cast<std::size_t>(t1) >= w1.size() || !w1.bit(t1, 0) || w1.bit(t1 - 1, 0)) {
+            add("segments", "FAIL", "window 1: the rising edge is not at the trigger sample",
+                {{"window1_trigger_index", t1}});
+            return;
+        }
         const auto& times = r.segments->triggerTimesSeconds;
         if (times.size() != kWindows) {
             add("segments", "FAIL", "the capture has " + std::to_string(times.size()) + " trigger times, expected " +
@@ -559,7 +572,8 @@ private:
                 std::to_string(acrossBursts) + " burst boundaries in " + std::to_string(kWindows) + " windows", data);
         } else {
             add("segments", "PASS",
-                "every trigger spacing is a period or a burst gap within " + fmtNs(tol * 1e9) + " (worst " +
+                "window 1 edge at t = 0; every trigger spacing is a period or a burst gap within " + fmtNs(tol * 1e9) +
+                    " (worst " +
                     fmtNs(worst * 1e9) + ")",
                 data);
         }

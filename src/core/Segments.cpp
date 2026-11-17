@@ -119,6 +119,9 @@ std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const Segm
     out.reserve(layout.count);
     out.emplace_back(buffer.channels(), buffer.frequency(), layout.preSamples,
                      std::vector<uint32_t>(s.begin(), s.begin() + layout.preSamples + layout.postSamples));
+    // The device may have moved t = 0 of window 1 back onto its trigger edge (one sample); keep that.
+    if (buffer.triggerIndex() + 1 == static_cast<int64_t>(layout.preSamples))
+        out.back().setTriggerIndex(buffer.triggerIndex());
     out.back().setExactTiming(buffer.exactTiming());
     for (uint32_t k = 1; k < layout.count; ++k) {
         const auto first = s.begin() + layout.preSamples + static_cast<std::ptrdiff_t>(k) * layout.postSamples;

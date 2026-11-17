@@ -42,7 +42,7 @@ truth. A measured width or delay of `d` samples admits a true value in `((d − 
 | `pretrigger` | with a pre-trigger window longer than the time to the trigger, only recorded samples are shown (no pulse shorter than the generated one) and the shortened pre-trigger part comes with a warning |
 | `waveform` | high width and period of A and B admit the generated ones, no glitches, a burst has the generated pulse count |
 | `latency_<n>ns` | for delays of 0, 20, 50, 100 and 1000 ns, rising and falling: no drops, no spurious edges, every pair admits the true delay |
-| `segments` | 20 trigger windows: every trigger-to-trigger spacing is one period or period + gap, within one sample plus the timestamp resolution |
+| `segments` | 20 trigger windows: the window 1 edge is at t = 0, every trigger-to-trigger spacing is one period or period + gap, within one sample plus the timestamp resolution |
 | `idle` | after the generator stops, both lines stay LOW (pull-downs) |
 | `timeout` | a trigger that never comes ends as TIMEOUT within `timeout` .. `timeout + 400 ms`, with the line state |
 
@@ -69,5 +69,5 @@ The first runs on a Pico found four analyzer defects, all fixed in the same chan
 - It tests the analyzer, not a device under test: the stimulus comes from the same chip.
 - Both lines are sampled through the same input synchronizers; skew between different pins and external
   signal integrity are outside its reach.
-- The t = 0 correction needs the trigger channel in the capture, and applies to single-window captures; in a
-  segmented capture window 1 may still start one sample after its edge.
+- The t = 0 correction needs the trigger channel in the capture (in a segmented capture it applies to window 1;
+  later windows start sampling on the detected edge).

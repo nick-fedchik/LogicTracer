@@ -49,10 +49,10 @@
           200
         ],
         "partial_warning": true,
-        "pre_samples": 389,
+        "pre_samples": 102,
         "requested_pre_samples": 1501
       },
-      "message": "389 of 1501 pre-trigger samples recorded, the rest left out with a warning",
+      "message": "102 of 1501 pre-trigger samples recorded, the rest left out with a warning",
       "name": "pretrigger",
       "status": "PASS"
     },
@@ -250,9 +250,9 @@
         "in_burst": 17,
         "tolerance_ns": 15.000000000000002,
         "windows": 20,
-        "worst_error_ns": 4.999999999998258
+        "worst_error_ns": 5.000000000005034
       },
-      "message": "every trigger spacing is a period or a burst gap within 15 ns (worst 5 ns)",
+      "message": "window 1 edge at t = 0; every trigger spacing is a period or a burst gap within 15 ns (worst 5 ns)",
       "name": "segments",
       "status": "PASS"
     },
@@ -334,7 +334,7 @@
     "serial_number": "E66118604B78A622",
     "version": "LOGICTRACER_PICO_0.5.0"
   },
-  "elapsed_ms": 1027,
+  "elapsed_ms": 1033,
   "schema_version": 1,
   "setup": {
     "a": {

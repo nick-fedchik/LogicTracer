@@ -112,7 +112,8 @@ are then used (100 MHz, 131072 bytes, 24 channels).
   host then uses type 4 for every user trigger and type 0 for immediate captures and probes. The program stores
   a sample (`in pins`) and then tests the trigger pin (`jmp pin`), one instruction apart: an edge that lands
   between the two is already in the last pre-trigger sample. When the trigger channel is captured, the host
-  moves t = 0 back onto the first sample with the new level (single-window captures), so the trigger edge is
+  moves t = 0 back onto the first sample with the new level (of window 1 in a segmented capture; the storage
+  layout keeps `pre_samples`), so the trigger edge is
   always at t = 0; found by the self-test (§2.7).
 * Segmented capture (`capture --segments N`): the host sends `loopCount = N - 1`; the firmware stores
   `pre + post × N` samples, the pre-trigger part before the first window only. With `FEATURES` bit 1 and

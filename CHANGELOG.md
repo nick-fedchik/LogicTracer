@@ -18,7 +18,7 @@ All notable changes are documented here. The format follows
 ### Fixed
 - Found by the self-test: the edge-sensitive trigger put t = 0 one sample after the edge when the edge fell
   between the program's sample and its pin test; the host now aligns t = 0 to the edge when the trigger
-  channel is captured.
+  channel is captured (also window 1 of a segmented capture).
 - Found by the self-test: when the trigger fired before the pre-trigger window filled, the oldest pre-trigger
   samples were the firmware's zero fill, shown as LOW levels (phantom edges). The firmware now reports the
   recorded-sample count (`FEATURES` bit 3); the host leaves the unrecorded samples out and warns.
