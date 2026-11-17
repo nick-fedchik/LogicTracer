@@ -187,10 +187,17 @@ CallResult call(const QString& socketPath, const std::string& method, const json
     }
     // The path check above is racy: also verify that the process we reached runs as the current user.
     {
+        const int fd = static_cast<int>(socket.socketDescriptor());
+#if defined(__linux__)
         ucred cred{};
         socklen_t len = sizeof cred;
-        if (::getsockopt(static_cast<int>(socket.socketDescriptor()), SOL_SOCKET, SO_PEERCRED, &cred, &len) != 0 ||
-            cred.uid != ::getuid()) {
+        const bool sameUser = ::getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &len) == 0 && cred.uid == ::getuid();
+#else  // macOS / BSD
+        uid_t uid = 0;
+        gid_t gid = 0;
+        const bool sameUser = ::getpeereid(fd, &uid, &gid) == 0 && uid == ::getuid();
+#endif
+        if (!sameUser) {
             out.error = "refusing the session socket " + socketPath.toStdString() + ": peer is not the current user";
             socket.abort();
             return out;

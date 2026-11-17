@@ -17,6 +17,7 @@
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <streambuf>
@@ -184,15 +185,23 @@ private:
     char m_buf[1 << 16];
 };
 
-// The process umask without the racy umask(0) round trip (Linux exposes it in /proc/self/status).
+// The process umask without the racy umask(0) round trip where the OS exposes it (Linux: /proc/self/status).
 mode_t currentUmask()
 {
+#if defined(__linux__)
     std::ifstream status("/proc/self/status");
     for (std::string line; std::getline(status, line);) {
         if (line.rfind("Umask:", 0) == 0)
             return static_cast<mode_t>(std::strtoul(line.c_str() + 6, nullptr, 8));
     }
     return 022;
+#else
+    static std::mutex lock;  // only guards against our own threads; there is no read-only query
+    const std::lock_guard guard(lock);
+    const mode_t mask = ::umask(022);
+    ::umask(mask);
+    return mask;
+#endif
 }
 
 // Opens the directory that will receive the output. In confined mode (paths validated by

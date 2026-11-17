@@ -22,6 +22,23 @@ jobs:
       - name: Test
         run: ctest --preset debug
 
+  macos:
+    # Not yet a required check: turns "expected to build" into "tested" on macOS (Homebrew Qt 6).
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: brew install ninja qt nlohmann-json
+      - name: Configure (warnings as errors)
+        run: cmake --preset debug -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
+      - name: Build
+        run: cmake --build --preset debug
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: ctest --preset debug
+
   firmware:
     # Compile-only check of the RP2040 firmware (nothing is flashed). Not yet a required check.
     runs-on: ubuntu-24.04
