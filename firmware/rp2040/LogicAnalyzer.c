@@ -324,7 +324,8 @@ void processData(uint8_t* data, uint length, bool fromWiFi)
                             sendResponse(msg, fromWiFi);
                             //Feature bits (sent before CHANNELS so older hosts consume and ignore the line):
                             //bit 0 = edge-sensitive simple trigger (trigger type 4)
-                            sprintf(msg, "FEATURES:%d\n", 1);
+                            //bit 1 = burst timestamps (measure) with the edge-sensitive trigger
+                            sprintf(msg, "FEATURES:%d\n", 3);
                             sendResponse(msg, fromWiFi);
                             sprintf(msg, "CHANNELS:%d\n", MAX_CHANNELS);
                             sendResponse(msg, fromWiFi);

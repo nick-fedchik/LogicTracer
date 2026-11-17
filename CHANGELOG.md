@@ -14,6 +14,10 @@ All notable changes are documented here. The format follows
   the time between windows is not recorded. Replay devices support it. The GUI session and MCP accept
   `segments`; the GUI marks every window start with a dashed seam and analyses (report, anomaly markers)
   window by window.
+- Trigger times of segmented windows: firmware with `FEATURES` bit 1 records burst timestamps with the
+  edge-sensitive trigger (up to 254 windows); the host converts them to `trigger_times_us` (one system clock
+  cycle resolution, rollover-safe) and reports the trigger-to-trigger spacing. Replay windows carry exact
+  times. The firmware no longer misdates a stamp taken right at a SysTick rollover.
 - `--invariant` protocol rules for `capture` and `analyze` (and the `invariant` session/MCP parameter):
   `never(EXPR)`, `always(EXPR)` with `! & | ( )` over channels, `onehot`/`onehot0`, `within(A[:edge], B[:edge], T)`,
   `stable(D..., CLK[:edge], setup=T, hold=T)` and `bus(D..., settle=T[, gap=G])`, with an optional `settle=`

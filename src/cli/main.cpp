@@ -213,7 +213,12 @@ void printSegments(const lt::SegmentAnalysis& a)
             first += (first.empty() ? "" : ", ") + std::to_string(w.value("window", 0));
     }
     std::cout << "Segments: " << a.layout.count << " windows x " << a.layout.postSamples << " samples ("
-              << a.layout.preSamples << " pre-trigger before window 1); time between windows not recorded\n";
+              << a.layout.preSamples << " pre-trigger before window 1); ";
+    if (const auto s = lt::triggerSpacing(a.layout))
+        std::cout << "trigger spacing min " << lt::formatTime(s->min) << ", median " << lt::formatTime(s->median)
+                  << ", max " << lt::formatTime(s->max) << '\n';
+    else
+        std::cout << "time between windows not recorded\n";
     std::cout << "Windows needing attention: " << flagged;
     if (flagged)
         std::cout << " (" << first << (flagged > 8 ? ", ..." : "") << ")";

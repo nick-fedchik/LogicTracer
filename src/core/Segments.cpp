@@ -13,10 +13,19 @@ namespace lt {
 
 nlohmann::json toJson(const SegmentLayout& layout)
 {
+    const bool timed = layout.triggerTimesSeconds.size() == layout.count;
     nlohmann::json j = {{"count", layout.count},
                         {"pre_samples", layout.preSamples},
                         {"post_samples", layout.postSamples},
-                        {"note", "windows are stored back to back; the time between them is not recorded"}};
+                        {"note", timed ? "windows are stored back to back; trigger_times_us says when each one started"
+                                       : "windows are stored back to back; the time between them is not recorded"}};
+    if (timed) {
+        auto times = nlohmann::json::array();
+        for (const double t : layout.triggerTimesSeconds)
+            times.push_back(t * 1e6);
+        j["trigger_times_us"] = std::move(times);
+        j["trigger_time_resolution_ns"] = layout.triggerTimeResolutionSeconds * 1e9;
+    }
     if (layout.triggerChannel) {
         j["trigger_channel"] = *layout.triggerChannel + 1;
         j["trigger_edge"] = layout.triggerFalling ? "falling" : "rising";
@@ -57,7 +66,43 @@ std::optional<SegmentLayout> segmentLayoutFromJson(const nlohmann::json& j, std:
         l.triggerChannel = static_cast<uint8_t>(*ch - 1);
         l.triggerFalling = j.value("trigger_edge", std::string("rising")) == "falling";
     }
+    if (j.contains("trigger_times_us")) {
+        const auto& t = j["trigger_times_us"];
+        if (!t.is_array() || t.size() != l.count)
+            return fail("segment layout trigger_times_us must list one time per window");
+        for (const auto& v : t) {
+            if (!v.is_number() || v.get<double>() < 0 ||
+                (!l.triggerTimesSeconds.empty() && v.get<double>() * 1e-6 <= l.triggerTimesSeconds.back()))
+                return fail("segment layout trigger_times_us must be increasing non-negative numbers");
+            l.triggerTimesSeconds.push_back(v.get<double>() * 1e-6);
+        }
+        if (j.contains("trigger_time_resolution_ns") && j["trigger_time_resolution_ns"].is_number())
+            l.triggerTimeResolutionSeconds = std::max(0.0, j["trigger_time_resolution_ns"].get<double>() * 1e-9);
+    }
     return l;
+}
+
+std::optional<std::vector<double>> triggerTimesFromTimestamps(const std::vector<uint32_t>& stamps, uint32_t windows,
+                                                             uint32_t clockHz, std::string* error)
+{
+    if (clockHz == 0 || windows < 2 || stamps.size() != static_cast<std::size_t>(windows) + 1) {
+        if (error)
+            *error = std::to_string(stamps.size()) + " timestamps for " + std::to_string(windows) +
+                     " windows (expected one per window plus the arm stamp)";
+        return std::nullopt;
+    }
+    auto ticks = [](uint32_t s) { return (s & 0xFF000000u) + (0x00FFFFFFu - (s & 0x00FFFFFFu)); };
+    std::vector<double> out;
+    const uint32_t first = ticks(stamps[1]);
+    for (std::size_t k = 1; k < stamps.size(); ++k)
+        out.push_back(static_cast<double>(static_cast<uint32_t>(ticks(stamps[k]) - first)) / clockHz);
+    for (std::size_t k = 1; k < out.size(); ++k)
+        if (out[k] <= out[k - 1]) {
+            if (error)
+                *error = "timestamps are not increasing (window " + std::to_string(k + 1) + ")";
+            return std::nullopt;
+        }
+    return out;
 }
 
 std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const SegmentLayout& layout)
@@ -101,6 +146,18 @@ bool hasSyntheticSample(const CaptureBuffer& buffer, const SegmentLayout& layout
 }
 
 }  // namespace
+
+std::optional<TriggerSpacing> triggerSpacing(const SegmentLayout& layout)
+{
+    const auto& t = layout.triggerTimesSeconds;
+    if (layout.count < 2 || t.size() != layout.count)
+        return std::nullopt;
+    std::vector<double> d;
+    for (std::size_t k = 1; k < t.size(); ++k)
+        d.push_back(t[k] - t[k - 1]);
+    std::sort(d.begin(), d.end());
+    return TriggerSpacing{d.front(), d[(d.size() - 1) / 2], d.back()};
+}
 
 std::vector<std::size_t> segmentStarts(const SegmentLayout& layout)
 {
@@ -260,6 +317,8 @@ SegmentAnalysis analyzeSegments(const CaptureBuffer& buffer, const SegmentLayout
         for (const auto& st : stats.back())
             edges += st.transitions;
         nlohmann::json row = {{"window", k + 1}, {"samples", w.size()}, {"edges", edges}};
+        if (layout.triggerTimesSeconds.size() == layout.count)
+            row["trigger_time_us"] = layout.triggerTimesSeconds[k] * 1e6;
         if (latency) {
             lat.push_back(SignalAnalyzer::analyzeLatency(w, *latency, true));
             const auto& l = lat.back();
@@ -309,7 +368,14 @@ std::string segmentsForAi(const SegmentAnalysis& a, const ReportOptions& options
     ss << "; " << L.preSamples << " pre-trigger samples before window 1 only\n";
     if (!options.triggerDescription.empty())
         ss << "- Every window starts on: " << options.triggerDescription << "\n";
-    ss << "- The time between windows is NOT recorded: do not infer periods or gaps across windows\n";
+    if (const auto spacing = triggerSpacing(L)) {
+        ss << "- Trigger-to-trigger spacing (" << L.count - 1 << " intervals, ±"
+           << formatTime(2 * L.triggerTimeResolutionSeconds) << "): min " << formatTime(spacing->min) << ", median "
+           << formatTime(spacing->median) << ", max " << formatTime(spacing->max) << "; window 1 .. " << L.count
+           << " span " << formatTime(L.triggerTimesSeconds.back()) << "\n";
+    } else {
+        ss << "- The time between windows is NOT recorded: do not infer periods or gaps across windows\n";
+    }
     if (!options.deviceVersion.empty())
         ss << "- Device: " << options.deviceVersion << "\n";
     for (const auto& [k, v] : options.setup)

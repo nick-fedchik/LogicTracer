@@ -24,10 +24,24 @@ namespace lt {
 [[nodiscard]] nlohmann::json toJson(const SegmentLayout& layout);
 [[nodiscard]] std::optional<SegmentLayout> segmentLayoutFromJson(const nlohmann::json& j, std::string* error = nullptr);
 
+// Firmware burst timestamps -> trigger time of every window relative to window 1. The firmware records one
+// stamp when armed and one after every window ((loops << 24) | SysTick down-counter at `clockHz`); windows have
+// equal length, so the spacing of their end stamps is the spacing of their triggers. Intervals up to 2^32
+// cycles (21 s at 200 MHz) are unambiguous. nullopt with `error` when the stamps do not match the windows.
+[[nodiscard]] std::optional<std::vector<double>> triggerTimesFromTimestamps(const std::vector<uint32_t>& stamps,
+                                                                            uint32_t windows, uint32_t clockHz,
+                                                                            std::string* error = nullptr);
+
 // Window k as its own buffer with t = 0 at its trigger. Windows after the first have no pre-trigger samples;
 // when the trigger channel was captured, one sample with that channel at its pre-trigger level is prepended
 // so the trigger edge stays visible (trigger_sample 1). Empty when the buffer does not match the layout.
 [[nodiscard]] std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const SegmentLayout& layout);
+
+// Trigger-to-trigger intervals when the layout carries trigger times.
+struct TriggerSpacing {
+    double min = 0, median = 0, max = 0;  // seconds
+};
+[[nodiscard]] std::optional<TriggerSpacing> triggerSpacing(const SegmentLayout& layout);
 
 // First stored sample of every window.
 [[nodiscard]] std::vector<std::size_t> segmentStarts(const SegmentLayout& layout);

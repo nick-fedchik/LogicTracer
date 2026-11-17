@@ -230,8 +230,14 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
             all.insert(all.end(), win.samples().begin(), win.samples().end());
         }
         buffer = CaptureBuffer(buffer.channels(), buffer.frequency(), pre, std::move(all));
-        r.segments = SegmentLayout{config.segments, static_cast<uint32_t>(pre), static_cast<uint32_t>(post),
-                                   config.trigger->channel, config.trigger->inverted};
+        // The recording knows exactly when every window started.
+        std::vector<double> times;
+        for (const auto s : starts)
+            times.push_back(static_cast<double>(s - starts.front()) / m_recording.frequency());
+        r.segments = SegmentLayout{config.segments,          static_cast<uint32_t>(pre),
+                                   static_cast<uint32_t>(post), config.trigger->channel,
+                                   config.trigger->inverted, std::move(times),
+                                   1.0 / m_recording.frequency()};
     }
     r.buffer = std::move(buffer);
     m_cursor = starts.back() + post * step;

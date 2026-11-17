@@ -138,6 +138,12 @@ struct DeviceInfo {
 
     static constexpr uint32_t kFeatureEdgeTrigger = 1u << 0;
     [[nodiscard]] bool supportsEdgeTrigger() const noexcept { return (features & kFeatureEdgeTrigger) != 0; }
+    // Burst timestamps (`measure`) with the edge-sensitive trigger; they tick at the system clock (= blastFrequency).
+    static constexpr uint32_t kFeatureEdgeBurstTimestamps = 1u << 1;
+    [[nodiscard]] bool supportsEdgeBurstTimestamps() const noexcept
+    {
+        return (features & kFeatureEdgeBurstTimestamps) != 0 && blastFrequency > 0;
+    }
     [[nodiscard]] uint32_t minFrequency() const noexcept { return (maxFrequency * 2ull) / 65535u; }
     [[nodiscard]] CaptureLimits limits(CaptureMode mode) const noexcept;
 };

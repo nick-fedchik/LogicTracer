@@ -53,6 +53,10 @@ struct SegmentLayout {
     uint32_t postSamples = 0;
     std::optional<uint8_t> triggerChannel;  // hardware channel (0-based) whose edge starts every window
     bool triggerFalling = false;
+    // Trigger time of every window relative to window 1 (empty when the device did not record it), and the
+    // resolution of those times (firmware burst timestamps: one system clock cycle).
+    std::vector<double> triggerTimesSeconds;
+    double triggerTimeResolutionSeconds = 0.0;
 
     [[nodiscard]] uint64_t totalSamples() const noexcept
     {

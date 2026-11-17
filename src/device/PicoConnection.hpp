@@ -77,6 +77,7 @@ private:
         CaptureStatus status = CaptureStatus::Error;
         std::string error;
         std::optional<CaptureBuffer> buffer;
+        std::vector<uint32_t> timestamps;  // raw burst timestamps (measure)
     };
 
     bool handshake(std::chrono::milliseconds timeout);

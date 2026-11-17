@@ -1193,7 +1193,7 @@ private Q_SLOTS:
         for (int k = 0; k < 2; ++k)
             s.insert(s.end(), {1, 1, 3, 3, 3, 3});
         const lt::CaptureBuffer buf({{0, "A"}, {1, "B"}}, 1'000'000, 2, s);
-        const lt::SegmentLayout layout{3, 2, 6, uint8_t{0}, false};
+        const lt::SegmentLayout layout{3, 2, 6, uint8_t{0}, false, {}, 0.0};
         QCOMPARE(lt::SignalAnalyzer::analyzeLatency(buf, {0, false, 1, false, std::nullopt}).count, 1u);  // seams
 
         const auto windows = lt::splitSegments(buf, layout);
@@ -1218,6 +1218,22 @@ private Q_SLOTS:
         QCOMPARE((*a.invariants)[1].examples[2].segment.value_or(0), 3u);
         QCOMPARE(a.perWindow.size(), std::size_t{3});
         QVERIFY(lt::segmentsForAi(a, {}).find("**3 trigger windows**") != std::string::npos);
+
+        // Firmware stamps: arm + window ends, across a 2^24-cycle rollover of the SysTick down-counter.
+        auto stamp = [](uint32_t ticks) { return (ticks & 0xFF000000u) | (0x00FFFFFFu - (ticks & 0x00FFFFFFu)); };
+        const auto times = lt::triggerTimesFromTimestamps(
+            {stamp(0x00FFFF00u), stamp(0x00FFFFF0u), stamp(0x01000010u), stamp(0x010000F0u)}, 3, 200'000'000);
+        QVERIFY(times);
+        QCOMPARE(*times, (std::vector<double>{0.0, 32 * 5e-9, 256 * 5e-9}));
+        QVERIFY(!lt::triggerTimesFromTimestamps({1, 2, 3}, 3, 200'000'000));  // one stamp short
+        lt::SegmentLayout timed = layout;
+        timed.triggerTimesSeconds = *times;
+        timed.triggerTimeResolutionSeconds = 5e-9;
+        const auto timedBack = lt::segmentLayoutFromJson(lt::toJson(timed));
+        QVERIFY(timedBack && timedBack->triggerTimesSeconds.size() == 3);
+        QVERIFY(std::abs(timedBack->triggerTimesSeconds[2] - 1280e-9) < 1e-15);
+        QVERIFY(lt::segmentsForAi(lt::analyzeSegments(buf, timed, std::nullopt, false, nullptr), {})
+                    .find("Trigger-to-trigger spacing") != std::string::npos);
 
         const auto back = lt::segmentLayoutFromJson(lt::toJson(layout));
         QVERIFY(back && back->count == 3 && back->postSamples == 6 && back->triggerChannel == uint8_t{0});

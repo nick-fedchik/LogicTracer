@@ -29,6 +29,7 @@ struct Request {
     uint32_t pre = 0;
     uint32_t post = 0;
     uint32_t loop = 0;
+    uint8_t measure = 0;
     uint8_t mode = 0;
 
     [[nodiscard]] uint32_t totalSamples() const { return pre + post * (loop + 1); }
@@ -53,6 +54,7 @@ inline Request parseRequest(const std::vector<uint8_t>& payload)
     r.pre = u32(st, v6 ? 44 : 36);
     r.post = u32(st, v6 ? 48 : 40);
     r.loop = v6 ? (st[52] | (st[53] << 8)) : st[44];
+    r.measure = st[v6 ? 54 : 45];
     r.mode = st[v6 ? 55 : 46];
     return r;
 }
@@ -211,8 +213,20 @@ inline std::vector<uint8_t> captureData(const Request& r, uint8_t value, bool wi
         for (std::size_t b = 1; b < r.bytesPerSample(); ++b)
             out.push_back(0);
     }
-    if (withTrailer)
+    if (withTrailer && r.measure && r.loop > 0) {
+        // Burst timestamps like the firmware: arm + one per window, (loops << 24) | SysTick down-counter at 200 MHz.
+        // Windows trigger 1 ms apart, starting just before a 2^24-cycle rollover.
+        const uint32_t count = r.loop + 2;
+        out.push_back(static_cast<uint8_t>(count));
+        for (uint32_t k = 0; k < count; ++k) {
+            const uint32_t ticks = 0x00FF0000u + (k == 0 ? 0u : 1000u + (k - 1) * 200'000u);
+            const uint32_t stamp = (ticks & 0xFF000000u) | (0x00FFFFFFu - (ticks & 0x00FFFFFFu));
+            for (int b = 0; b < 4; ++b)
+                out.push_back(static_cast<uint8_t>(stamp >> (8 * b)));
+        }
+    } else if (withTrailer) {
         out.push_back(0);
+    }
     return out;
 }
 

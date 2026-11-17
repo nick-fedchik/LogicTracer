@@ -337,3 +337,108 @@ WAIT_LOW:
 
     jmp pin WAIT_LOW
     jmp POST_CAPTURE
+
+
+;--------------------------------------------------------------------------------------------
+; Edge-sensitive variants with burst timestamps (loopCount > 0 and measure): the same sampling loops, plus
+; "irq 1" (an NMI that records the SysTick time) at the start and after every window. The extra
+; instructions run only between windows, never inside a sampling loop.
+.program POSITIVE_EDGE_CAPTURE_MEASUREBURSTS
+
+    pull
+    out y 32    		        ;read loop count
+    pull
+    mov x, osr                  ;read capture length
+    irq wait 1                  ;trigger NMI to sync the first timestamp
+
+ARM_HIGH:
+
+    in pins 32			        ;read sample
+    jmp pin ARM_HIGH		    ;a rising edge needs the line LOW first
+
+.wrap_target
+
+    in pins 32			        ;read sample
+    jmp pin POST_CAPTURE		;rising edge
+
+.wrap
+
+POST_CAPTURE:
+
+    in pins 32			        ;read sample
+    jmp x-- POST_CAPTURE		;loop if more samples needed
+
+    jmp y-- LOOP                ;jump to loop control
+
+    irq 1                       ;timestamp of the last window end
+    irq 0                       ;notify to the main program that we have finished capturing
+
+LOCK:
+
+    jmp LOCK                    ;block the program
+
+LOOP:
+
+    irq 1                       ;timestamp of this window end
+    mov x, osr                  ;read capture length
+
+WAIT_LOW:
+
+    jmp pin WAIT_LOW            ;re-arm: the same pulse must not trigger again
+
+WAIT_HIGH:
+
+    jmp pin POST_CAPTURE        ;wait for the next rising edge
+    jmp WAIT_HIGH
+
+;--------------------------------------------------------------------------------------------
+.program NEGATIVE_EDGE_CAPTURE_MEASUREBURSTS
+
+    pull
+    out y 32    		        ;read loop count
+    pull
+    mov x, osr                  ;read capture length
+    irq wait 1                  ;trigger NMI to sync the first timestamp
+
+.wrap_target
+
+ARM_LOW:
+
+    in pins 32			        ;read sample
+    jmp pin PRE_HIGH		    ;a falling edge needs the line HIGH first
+
+.wrap
+
+PRE_HIGH:
+
+    in pins 32			        ;read sample
+    jmp pin PRE_HIGH		    ;LOW after HIGH = falling edge
+
+POST_CAPTURE:
+
+    in pins 32			        ;read sample
+    jmp x-- POST_CAPTURE		;loop if more samples needed
+
+    jmp y-- LOOP                ;jump to loop control
+
+    irq 1                       ;timestamp of the last window end
+    irq 0                       ;notify to the main program that we have finished capturing
+
+LOCK:
+
+    jmp LOCK                    ;block the program
+
+LOOP:
+
+    irq 1                       ;timestamp of this window end
+    mov x, osr                  ;read capture length
+
+WAIT_HIGH:
+
+    jmp pin WAIT_LOW            ;re-arm: wait for HIGH, then for the next falling edge
+    jmp WAIT_HIGH
+
+WAIT_LOW:
+
+    jmp pin WAIT_LOW
+    jmp POST_CAPTURE

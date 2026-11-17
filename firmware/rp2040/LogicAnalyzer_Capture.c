@@ -9,6 +9,7 @@
 #include "hardware/exception.h"
 #include "hardware/structs/syscfg.h"
 #include "hardware/structs/systick.h"
+#include "hardware/structs/scb.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "LogicAnalyzer.pio.h"
 
@@ -77,9 +78,6 @@ bool IsCaptureRequestValid(const CAPTURE_REQUEST* r)
 {
     //0 = level-sensitive edge, 1 = complex, 2 = fast, 3 = blast, 4 = edge-sensitive edge (LogicTracer)
     if(r->triggerType > 4)
-        return false;
-
-    if(r->triggerType == 4 && r->measure)
         return false;
 
     if(r->captureMode > MODE_24_CHANNEL)
@@ -946,8 +944,13 @@ void __not_in_flash_func(sysTickRoll)()
 
 void __not_in_flash_func(loopEndHandler)()
 {
-    //Save timestamp
-    loopTimestamp[timestampIndex++] = systick_hw->cvr | systickLoops << 24; //timestamp;
+    //Save timestamp. The NMI preempts the SysTick handler: when the counter has just wrapped and its
+    //exception is still pending, systickLoops is one behind (an error of 2^24 cycles).
+    uint32_t cvr = systick_hw->cvr;
+    uint32_t loops = systickLoops;
+    if((scb_hw->icsr & (1u << 26)) && cvr > 0x800000) //ICSR.PENDSTSET
+        loops++;
+    loopTimestamp[timestampIndex++] = cvr | loops << 24;
     //Clear PIO interrupt
     capturePIO->irq = (1u << 1);
 }
@@ -1110,12 +1113,9 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
     if(freq > MAX_FREQ)
         return false;
 
-    //Too many loops to be measured?
-    if(measureBursts && loopCount > 253)
-        return false;
-
-    //Burst timestamps exist only for the level-sensitive programs
-    if(measureBursts && edgeSensitive)
+    //Too many loops to be measured? (A measured capture needs at least one loop: the timestamp NMI is only
+    //set up for loops, and the measuring programs wait for it at start.)
+    if(measureBursts && (loopCount > 253 || loopCount == 0))
         return false;
 
     //Incorrect pin count?
@@ -1159,7 +1159,9 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
     pio_sm_restart(capturePIO, sm_Capture);
 
     //Load correct program, depending on the trigger edge
-    if(edgeSensitive)
+    if(edgeSensitive && measureBursts)
+        captureOffset = pio_add_program(capturePIO, invertTrigger ? &NEGATIVE_EDGE_CAPTURE_MEASUREBURSTS_program : &POSITIVE_EDGE_CAPTURE_MEASUREBURSTS_program);
+    else if(edgeSensitive)
         captureOffset = pio_add_program(capturePIO, invertTrigger ? &NEGATIVE_EDGE_CAPTURE_program : &POSITIVE_EDGE_CAPTURE_program);
     else if(invertTrigger)
     {
@@ -1190,9 +1192,13 @@ bool StartCaptureSimple(uint32_t freq, uint32_t preLength, uint32_t postLength, 
 
     //Configure state machines
     pio_sm_config smConfig = edgeSensitive ?
-                                (invertTrigger ?
-                                NEGATIVE_EDGE_CAPTURE_program_get_default_config(captureOffset) :
-                                POSITIVE_EDGE_CAPTURE_program_get_default_config(captureOffset)) :
+                                (measureBursts ?
+                                    (invertTrigger ?
+                                    NEGATIVE_EDGE_CAPTURE_MEASUREBURSTS_program_get_default_config(captureOffset) :
+                                    POSITIVE_EDGE_CAPTURE_MEASUREBURSTS_program_get_default_config(captureOffset)) :
+                                    (invertTrigger ?
+                                    NEGATIVE_EDGE_CAPTURE_program_get_default_config(captureOffset) :
+                                    POSITIVE_EDGE_CAPTURE_program_get_default_config(captureOffset))) :
                              measureBursts?
                                 (invertTrigger?
                                 NEGATIVE_CAPTURE_MEASUREBURSTS_program_get_default_config(captureOffset):

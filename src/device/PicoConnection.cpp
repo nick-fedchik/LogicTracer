@@ -3,6 +3,8 @@
 
 #include "device/PicoConnection.hpp"
 
+#include "core/Segments.hpp"
+
 #include <QSerialPort>
 #include <QSerialPortInfo>
 
@@ -261,6 +263,9 @@ CaptureRequestPacket PicoConnection::buildRequest(const CaptureConfig& c, const 
     req.preSamples = c.preSamples;
     req.postSamples = c.postSamples;
     req.loopCount = static_cast<uint16_t>(c.segments - 1);
+    // Burst timestamps give the time between windows; the firmware keeps at most 255 of them.
+    if (edgeSensitive && m_info.supportsEdgeBurstTimestamps() && c.segments >= 2 && c.segments <= 254)
+        req.measure = 1;
     req.captureMode = captureModeFor(numbers);
     return req;
 }
@@ -308,6 +313,7 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
     // immediate plan relies on the level-sensitive one (one of the two polarities fires at once).
     const bool edgeSensitive = config.trigger.has_value() && m_info.supportsEdgeTrigger();
     result.edgeSensitive = edgeSensitive;
+    std::vector<uint32_t> timestamps;
     for (const auto& trig : plan) {
         ++result.attempts;
         result.triggerUsed = trig;
@@ -316,6 +322,7 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
         result.status = attempt.status;
         result.error = attempt.error;
         result.buffer = std::move(attempt.buffer);
+        timestamps = std::move(attempt.timestamps);
         if (attempt.status != CaptureStatus::Timeout)
             break;
         if (m_cancelRequested) {
@@ -332,8 +339,19 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
     if (!config.trigger && result.buffer)
         result.buffer = result.buffer->dropFront(config.preSamples);
     if (config.segments > 1 && config.trigger)
+    {
         result.segments = SegmentLayout{config.segments, config.preSamples, config.postSamples, config.trigger->channel,
-                                        config.trigger->inverted};
+                                        config.trigger->inverted, {}, 0.0};
+        if (!timestamps.empty()) {
+            std::string why;
+            if (auto times = triggerTimesFromTimestamps(timestamps, config.segments, m_info.blastFrequency, &why)) {
+                result.segments->triggerTimesSeconds = std::move(*times);
+                result.segments->triggerTimeResolutionSeconds = 1.0 / m_info.blastFrequency;
+            } else {
+                result.warnings.push_back("burst timestamps ignored: " + why);
+            }
+        }
+    }
 
     if (result.status == CaptureStatus::Timeout) {
         if (result.error.empty())
@@ -477,11 +495,14 @@ PicoConnection::Attempt PicoConnection::runCapture(const CaptureRequestPacket& r
     }
     const auto stampCount = static_cast<uint8_t>(stamps[0]);
     if (stampCount > 1) {
-        QByteArray ignored;
-        if (!readExact(stampCount * 4, ignored, 1000ms)) {
+        QByteArray raw;
+        if (!readExact(stampCount * 4, raw, 1000ms)) {
             a.error = "capture trailer truncated (burst timestamps)";
             return a;
         }
+        const auto* s = reinterpret_cast<const uint8_t*>(raw.constData());
+        for (int k = 0; k < stampCount; ++k, s += 4)
+            a.timestamps.push_back(s[0] | (s[1] << 8) | (s[2] << 16) | (static_cast<uint32_t>(s[3]) << 24));
     }
 
     const std::span<const uint8_t> rawSpan(reinterpret_cast<const uint8_t*>(raw.constData()),

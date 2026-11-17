@@ -677,7 +677,7 @@ private Q_SLOTS:
         lt::SignalAnalyzer::Options opts;
         opts.collectEdges = true;
         auto doc = lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true);
-        doc["segments"] = {{"layout", lt::toJson(lt::SegmentLayout{3, 2, 6, uint8_t{0}, false})}};
+        doc["segments"] = {{"layout", lt::toJson(lt::SegmentLayout{3, 2, 6, uint8_t{0}, false, {}, 0.0})}};
         QVERIFY(lt::writeJsonFile(jsonFile.toStdString(), doc));
 
         MainWindow win;

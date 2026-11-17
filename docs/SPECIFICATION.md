@@ -104,8 +104,12 @@ are then used (100 MHz, 131072 bytes, 24 channels).
   firmware advertises it with `FEATURES:<bits>` (bit 0) in the identify reply, before `CHANNELS`; the
   host then uses type 4 for every user trigger and type 0 for immediate captures and probes.
 * Segmented capture (`capture --segments N`): the host sends `loopCount = N - 1`; the firmware stores
-  `pre + post × N` samples, the pre-trigger part before the first window only, and does not record the time
-  between windows. The host analyses every window on its own (t = 0 at its trigger) and combines the results
+  `pre + post × N` samples, the pre-trigger part before the first window only. With `FEATURES` bit 1 and
+  2..254 windows the host also sets `measure`: the edge-sensitive programs then raise an NMI when armed and
+  after every window, and the trailer carries `N + 1` stamps `(loops << 24) | SysTick` counting down at the
+  system clock (= `BLASTFREQ`). Windows have equal length, so the spacing of the end stamps is the spacing of
+  the triggers (`trigger_times_us` in the layout, resolution one clock cycle); without them the time between
+  windows is unknown. The host analyses every window on its own (t = 0 at its trigger) and combines the results
   (`segments` in the JSON, window-local `segment` on latency events and invariant examples); windows after the
   first get one synthetic pre-trigger sample so their trigger edge stays visible. The session/MCP `capture`
   takes the same `segments` parameter. In those windows sampling

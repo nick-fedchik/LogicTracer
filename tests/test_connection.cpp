@@ -224,11 +224,45 @@ private Q_SLOTS:
         QCOMPARE(r.buffer->size(), std::size_t{410});
         QVERIFY(r.segments && r.segments->count == 4 && r.segments->postSamples == 100);
 
+        QCOMPARE(int(dev.requests().back().measure), 0);  // FEATURES:1 has no edge burst timestamps
+        QVERIFY(r.segments->triggerTimesSeconds.empty());
+
         cfg.segments = 2000;  // 10 + 100 x 2000 samples do not fit
         QVERIFY(conn.capture(cfg).error.find("exceed device buffer") != std::string::npos);
         cfg.segments = 2;
         cfg.trigger.reset();
         QVERIFY(conn.capture(cfg).error.find("needs a trigger") != std::string::npos);
+    }
+
+    // FEATURES bit 1: the host asks for burst timestamps and turns them into trigger times (rollover-safe).
+    void segmentedCaptureReadsBurstTimestamps()
+    {
+        Device dev([](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.3.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:3\nCHANNELS:24\n"));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.recordRequest(r);
+                d.send("CAPTURE_STARTED\n");
+                d.send(fake::captureData(r, 0x01));
+            }
+        });
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        QVERIFY(conn.info().supportsEdgeBurstTimestamps());
+        auto cfg = config(10, 100);
+        cfg.trigger = lt::EdgeTrigger{0, false};
+        cfg.segments = 4;
+        const auto r = conn.capture(cfg);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QCOMPARE(int(dev.requests().back().measure), 1);
+        const auto& t = r.segments->triggerTimesSeconds;
+        QCOMPARE(t.size(), std::size_t{4});
+        for (std::size_t k = 0; k < t.size(); ++k)
+            QVERIFY(std::abs(t[k] - 1e-3 * static_cast<double>(k)) < 1e-12);
+        QCOMPARE(r.segments->triggerTimeResolutionSeconds, 5e-9);
+        QVERIFY(lt::triggerSpacing(*r.segments)->median > 0.999e-3);
     }
 
     void handshakeV5UsesDefaults()
@@ -597,6 +631,7 @@ private Q_SLOTS:
         QCOMPARE(windows.size(), std::size_t{3});
         QVERIFY(!windows[2].bit(0, 0) && windows[2].bit(1, 0));  // synthetic pre-trigger sample, then the edge
         QVERIFY(!windows[2].bit(2, 1) && windows[2].bit(3, 1));  // REACT 2 samples after the trigger
+        QCOMPARE(r.segments->triggerTimesSeconds, (std::vector<double>{0.0, 200e-6, 400e-6}));  // exact from the file
 
         auto again = lt::createDevice(port);
         QVERIFY(again->open(port, 100ms));
