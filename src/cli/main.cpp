@@ -7,6 +7,7 @@
 // Exit codes:
 //   0 = OK, 1 = error / nothing found, 2 = TIMEOUT, 3 = --expect assertion / --invariant / selftest check failed, 64 = usage error.
 
+#include "core/About.hpp"
 #include "core/AiReport.hpp"
 #include "core/CaptureDiff.hpp"
 #include "core/Invariants.hpp"
@@ -1267,6 +1268,40 @@ int cmdSelftest(const QStringList& args, Output o)
     return outcome.passed ? ExitOk : ExitExpectFailed;
 }
 
+int cmdAbout(const QStringList& args, Output o)
+{
+    o.command = "about";  // also for --about
+    QCommandLineParser p;
+    p.setApplicationDescription("Show the version, author, licence and project links.");
+    p.addOptions({{"json", "Machine-readable JSON output."}});
+    if (auto rc = parse(p, args, o))
+        return *rc;
+    namespace a = lt::about;
+    if (o.json) {
+        std::cout << json{{"schema_version", lt::kCaptureSchemaVersion},
+                          {"command", "about"},
+                          {"status", "OK"},
+                          {"product", a::kProduct},
+                          {"version", LT_VERSION},
+                          {"author", a::kAuthor},
+                          {"repository", a::kRepository},
+                          {"issues", a::kIssues},
+                          {"license", a::kLicense},
+                          {"upstream", a::kUpstream},
+                          {"warnings", json::array()}}
+                         .dump(2)
+                  << std::endl;
+    } else {
+        std::cout << a::kProduct << ' ' << LT_VERSION << " - " << a::kSummary << "\n\n"
+                  << "Author:     " << a::kAuthor << '\n'
+                  << "Repository: " << a::kRepository << '\n'
+                  << "Issues:     " << a::kIssues << '\n'
+                  << "Licence:    " << a::kLicense << '\n'
+                  << a::kUpstream << '\n';
+    }
+    return ExitOk;
+}
+
 // ---------------------------------------------------------------------------------------------
 // Commands talking to a running GUI session.
 
@@ -1540,7 +1575,8 @@ void printUsage()
                  "  annotate    Place a marker on the timeline of the running GUI (--list / --clear)\n"
                  "  view        Read what the GUI currently shows (visible range, cursors, annotations)\n"
                  "  selftest    Check the device against its own test-signal generator (GP0/GP1 jumpers)\n"
-                 "  bootloader  Reboot the RP2040 into USB UF2 bootloader mode (requires --yes)\n\n"
+                 "  bootloader  Reboot the RP2040 into USB UF2 bootloader mode (requires --yes)\n"
+                 "  about       Version, author, licence and project links\n\n"
                  "Run 'logictracer-cli <command> --help' for command options.\n"
                  "Exit codes: 0 OK, 1 error, 2 timeout, 3 --expect / --invariant / selftest check failed, 64 usage error.\n";
 }
@@ -1580,6 +1616,8 @@ int main(int argc, char* argv[])
         return cmdBootloader(args, o);
     if (command == "selftest")
         return cmdSelftest(args, o);
+    if (command == "about" || command == "--about")
+        return cmdAbout(args, o);
     if (command == "-h" || command == "--help" || command == "help") {
         printUsage();
         return ExitOk;
@@ -1591,7 +1629,7 @@ int main(int argc, char* argv[])
     if (o.json) {
         return report(o, ExitUsage,
                       "missing or unknown command '" + str(command) +
-                          "' (expected detect|probe|capture|analyze|diff|annotate|view|selftest|bootloader)");
+                          "' (expected detect|probe|capture|analyze|diff|annotate|view|selftest|bootloader|about)");
     }
     std::cerr << "logictracer-cli: unknown command '" << str(command) << "'\n\n";
     printUsage();

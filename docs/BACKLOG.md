@@ -25,7 +25,8 @@ open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not p
 - Verified on a Pico at 1, 3, 10, 24, 50 and 100 MHz; 50 consecutive runs at 100 MHz passed. It found and
   fixed the t = 0 off-by-one, the phantom pre-trigger samples, the generator being cut off by captures and
   the slow TIMEOUT.
-- Open: not run on a Pico 2 yet.
+- Pico 2: the generator builds for it but has never run on one (no board; not planned). The Turbo image
+  has not been run through the self-test either (see B-02).
 
 ## Done recently
 - Independent audit by four models plus a re-audit (`docs/audit/`): all confirmed P0/P1 findings fixed
@@ -56,13 +57,10 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       - the upstream owner or pid.codes objects to the shared PID.
       When adopted, keep `3020` as a discovery fallback for upstream-firmware boards.
 
-## B-02. Turbo 200 MS/s (5 ns step) — low priority (can use the B-11 self-test instead of the PYNQ burst)
-- [ ] `scripts/build_firmware.sh` → `logictracer-cli bootloader --yes` → copy the Turbo image from
-      `build/firmware/` → `detect`.
-- [ ] Repeat the burst measurement with `--freq 200M` for both edges, several runs (different phase).
-- Expected: the constant-delay interval narrows from 10 ns to 5 ns; explain the rising (10..20 ns)
-  vs falling (0..20 ns) asymmetry.
-- Risk: Turbo overclocks the RP2040 (400 MHz @ 1.30 V); restore the 100 MHz image afterwards.
+## B-02. Turbo 200 MS/s (5 ns step)
+- [-] Not planned (2026-11-17): no use case needs the 5 ns step, and it runs the RP2040 outside its
+      specification. The Turbo image stays in the releases marked untested; `selftest --freq 200M` is how
+      anyone who needs it can check it.
 
 ## B-03. Fail-closed path (third channel)
 - [-] Not planned (2026-11-17): it verifies a property of the design under test, not of the analyzer.
@@ -140,8 +138,8 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
       confined mode), session named pipe `logictracer-<user>` with a token-SID check of the server,
       `cmd.exe` for `--on-armed`, every COM port for `detect --all`, portable bit operations and `gmtime_s`.
       The pty emulator is a stub there: 37 emulator tests and 3 POSIX file-mode/symlink tests are skipped.
-- [ ] Windows on hardware: `detect`, `probe`, a triggered capture and the GUI against the Pico
-      (low priority until there is a Windows user).
+- [-] Windows on hardware: not planned (2026-11-17). The packages are built and tested in CI only; the
+      release notes and README say so. A Windows user can verify with `logictracer-cli selftest`.
 - [x] Packaged builds for Windows/macOS/Linux attached to releases (`release.yml`); UTF-8 paths converted
       explicitly (`core/Paths.hpp`, non-ASCII round-trip test).
 - [x] macOS: `macos-latest` CI job (Homebrew Qt, warnings as errors, all tests green): `getpeereid` for

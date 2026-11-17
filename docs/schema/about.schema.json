@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/about.schema.json",
+  "title": "logictracer-cli about --json",
+  "description": "Product identity: version, author, licence and project links.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "author",
+    "command",
+    "issues",
+    "license",
+    "product",
+    "repository",
+    "schema_version",
+    "status",
+    "upstream",
+    "version",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "about"
+    },
+    "status": {
+      "enum": [
+        "OK"
+      ]
+    },
+    "product": {
+      "type": "string"
+    },
+    "version": {
+      "description": "SemVer of the host programs (the firmware reports its own in detect).",
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "issues": {
+      "type": "string"
+    },
+    "license": {
+      "type": "string"
+    },
+    "upstream": {
+      "type": "string"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

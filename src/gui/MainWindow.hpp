@@ -172,6 +172,7 @@ private:
     [[nodiscard]] nlohmann::json stateJson() const;
     void buildUi();
     void buildMenus();
+    void showAbout();
     void updateControls();
     void updateSetupButton();
     void stopRepeat(const QString& why = {});

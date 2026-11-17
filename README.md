@@ -29,7 +29,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | `src/core` | Pure C++20 (no Qt): wire protocol, capture model, `SignalAnalyzer`, AI reports, file formats |
 | `src/device` | Qt SerialPort driver (`PicoConnection`) and its worker-thread wrapper (`AsyncDevice`) |
 | `src/services` | Operations shared by all front-ends, IPC session, clipboard |
-| `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `diff`, `annotate`, `view`, `selftest`, `bootloader` |
+| `src/cli` | `logictracer-cli`: `detect`, `probe`, `capture`, `analyze`, `diff`, `annotate`, `view`, `selftest`, `bootloader`, `about` |
 | `src/gui` | `logictracer-gui`: waveform viewer with cursors, snap-to-edge and the AI grounding bar |
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
 | `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
@@ -44,7 +44,7 @@ every timing claim comes with its measurement uncertainty and a pass/fail verdic
 | **Ubuntu 26.04 LTS** (x86_64) | ✅ Supported, tested on hardware | Qt 6.10, GCC 15 |
 | Other Linux (Debian 12+, Fedora 39+, aarch64 / NVIDIA Jetson) | ⚠️ Expected to work, not tested | needs Qt ≥ 6.4 and a C++20 compiler |
 | **macOS** (Apple silicon, `macos-latest`) | ✅ Built and tested in CI (no hardware run yet) | Homebrew Qt 6; device appears as `/dev/cu.usbmodem*` |
-| **Windows** 10/11 (x64) | ✅ Built and tested in CI (no hardware run yet) | MSVC 2022, Qt 6.8; device appears as `COMn`; emulator-based tests are skipped (no pseudo-terminals) |
+| **Windows** 10/11 (x64) | ✅ Built and tested in CI (not tested with a device; `selftest` checks one) | MSVC 2022, Qt 6.8; device appears as `COMn`; emulator-based tests are skipped (no pseudo-terminals) |
 
 Requirements: CMake ≥ 3.24, Ninja, a C++20 compiler (GCC ≥ 12, Clang ≥ 15, Apple Clang ≥ 15),
 Qt ≥ 6.4 (Core, Network, SerialPort, Widgets, Test) and nlohmann_json ≥ 3.10.
@@ -232,7 +232,7 @@ completion polling). It identifies itself as `LOGICTRACER_<BOARD>_<version>`. Bu
 with unmodified upstream firmware (V5_x, V6_0–V6_5); it then waits ~2 s longer per capture.
 
 After flashing, check the analyzer against its own test-signal generator (two jumpers: `GP0` → `GP4`,
-`GP1` → `GP5`; Pico and Pico 2): `logictracer-cli selftest --port /dev/ttyACM0` (exit `0` = every check
+`GP1` → `GP5`; Pico, Pico 2 untested): `logictracer-cli selftest --port /dev/ttyACM0` (exit `0` = every check
 passed). See [docs/SELFTEST.md](docs/SELFTEST.md).
 
 ## Versioning

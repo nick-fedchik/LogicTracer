@@ -3,6 +3,7 @@
 
 # Pure C++20 (no Qt): usable from any front-end, a Python binding or embedded tooling.
 add_library(logictracer_core STATIC
+    About.hpp
     AiReport.cpp AiReport.hpp
     ArgParsing.cpp ArgParsing.hpp
     CaptureBuffer.cpp CaptureBuffer.hpp

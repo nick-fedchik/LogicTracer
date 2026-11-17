@@ -39,6 +39,7 @@ The schemas ([JSON Schema 2020-12](https://json-schema.org/)) are in [`docs/sche
 | `probe --json` | [`probe.schema.json`](schema/probe.schema.json) |
 | `detect --json` | [`detect.schema.json`](schema/detect.schema.json) |
 | `bootloader --json` | [`bootloader.schema.json`](schema/bootloader.schema.json) |
+| `about --json` | [`about.schema.json`](schema/about.schema.json) |
 | `selftest --json` | [`selftest.schema.json`](schema/selftest.schema.json) (check names and `data` in [SELFTEST.md](SELFTEST.md)) |
 | an error before the command could run (usage, missing file, ...) | [`error.schema.json`](schema/error.schema.json) |
 | the lossless capture file (`--out-json`) | [`capturefile.schema.json`](schema/capturefile.schema.json) |

@@ -3,6 +3,8 @@
 
 #include "gui/MainWindow.hpp"
 
+#include "core/About.hpp"
+
 #include "core/ArgParsing.hpp"
 #include "core/Exporters.hpp"
 #include "gui/Builders.hpp"
@@ -25,6 +27,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
@@ -351,6 +354,22 @@ void MainWindow::buildMenus()
     connect(m_snapAction, &QAction::toggled, m_waveform, &WaveformWidget::setSnapToEdges);
     view->addAction(tr("&Clear cursors"), m_waveform, &WaveformWidget::clearCursors);
     view->addAction(tr("Clear &annotations"), m_waveform, &WaveformWidget::clearAnnotations);
+
+    auto* help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(tr("&About LogicTracer"), this, &MainWindow::showAbout)->setMenuRole(QAction::AboutRole);
+    help->addAction(tr("About &Qt"), qApp, &QApplication::aboutQt)->setMenuRole(QAction::AboutQtRole);
+}
+
+void MainWindow::showAbout()
+{
+    namespace a = lt::about;
+    const auto link = [](const char* url) { return QStringLiteral("<a href=\"%1\">%1</a>").arg(url); };
+    QMessageBox::about(
+        this, tr("About LogicTracer"),
+        QStringLiteral("<h3>%1 %2</h3><p>%3</p><p>%4: %5<br>%6: %7<br>%8: %9<br>%10: %11</p><p><small>%12</small></p>")
+            .arg(a::kProduct, LT_VERSION, QString::fromUtf8(a::kSummary), tr("Author"), a::kAuthor, tr("Repository"),
+                 link(a::kRepository), tr("Issues"), link(a::kIssues), tr("Licence"), a::kLicense)
+            .arg(QString::fromUtf8(a::kUpstream).toHtmlEscaped()));
 }
 
 void MainWindow::showStatus(const QString& text, bool error)

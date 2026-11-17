@@ -5,6 +5,14 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `logictracer-cli about` (and `--about`, `--json`) and a GUI `Help` menu with `About LogicTracer` and
+  `About Qt`: version, author, licence and project links.
+
+### Changed
+- Documentation states what is not tested: the Pico 2, the 200 MHz Turbo image and Windows with a device;
+  `selftest` is the way to check them.
+
 ## [0.6.0] - 2026-11-17
 
 ### Added

@@ -261,7 +261,7 @@ front-ends.
 
 ### 4.2. CLI (`logictracer-cli`)
 For scripts, CI and HIL rigs, and for AI agents calling it directly. Commands: `detect`, `probe`,
-`capture`, `analyze`, `diff`, `annotate`, `view`, `selftest`, `bootloader`.
+`capture`, `analyze`, `diff`, `annotate`, `view`, `selftest`, `bootloader`, `about`.
 
 ```bash
 logictracer-cli capture \

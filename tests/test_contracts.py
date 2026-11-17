@@ -239,6 +239,10 @@ class Contracts(unittest.TestCase):
             self.assertEqual(doc["summary"], {"passed": counts["PASS"], "failed": counts["FAIL"],
                                               "skipped": counts["SKIP"]}, name)
 
+    def test_about_document(self):
+        doc = self.json_cli("about.schema.json", 0, "about")
+        self.assertIn("github.com", doc["repository"])
+
     def test_identical_runs_give_identical_output(self):
         volatile = self.v.volatile_keys()
         self.assertIn("elapsed_ms", volatile)

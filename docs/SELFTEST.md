@@ -66,6 +66,8 @@ The first runs on a Pico found four analyzer defects, all fixed in the same chan
 
 ## Limits
 
+- Verified only on a Raspberry Pi Pico with the 100 MHz image. Pico 2 and the 200 MHz Turbo image have not
+  been run; `--freq 200M` on a Turbo image is the way to check one.
 - It tests the analyzer, not a device under test: the stimulus comes from the same chip.
 - Both lines are sampled through the same input synchronizers; skew between different pins and external
   signal integrity are outside its reach.

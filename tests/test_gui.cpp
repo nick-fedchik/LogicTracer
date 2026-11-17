@@ -24,6 +24,8 @@
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QMessageBox>
+#include <QTimer>
 #include <QTest>
 
 #include "core/Exporters.hpp"
@@ -230,6 +232,27 @@ private Q_SLOTS:
         QCOMPARE(w->visibleFirst(), first);
         QVERIFY2(*w->cursorA() > before, "the cursor follows the drag");
         QVERIFY(!w->cursorB());
+    }
+
+    void aboutNamesTheAuthorAndRepository()
+    {
+        MainWindow win;
+        QAction* about = nullptr;
+        for (auto* act : win.findChildren<QAction*>())
+            if (act->text() == "&About LogicTracer")
+                about = act;
+        QVERIFY(about);
+        QString text;
+        QTimer::singleShot(0, [&] {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                text = box->text();
+                box->accept();
+            }
+        });
+        about->trigger();
+        QVERIFY(text.contains("Mykola Fedchyk"));
+        QVERIFY(text.contains("https://github.com/nick-fedchik/LogicTracer"));
+        QVERIFY(text.contains(LT_VERSION));
     }
 
     void hideInactiveChannelsKeepsBufferIndices()

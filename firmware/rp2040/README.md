@@ -28,4 +28,5 @@ scripts/build_firmware.sh --flash    # also reboots the device into BOOTSEL and 
 Manual build: `cmake -S firmware/rp2040 -B build/firmware/pico -DBOARD_TYPE=BOARD_PICO -DTURBO_MODE=0`.
 
 `TURBO_MODE=1` overclocks the RP2040 to 400 MHz at 1.30 V (200 MS/s capture). Use it only when
-needed; it is outside the RP2040 specification.
+needed; it is outside the RP2040 specification. The Turbo image is **not tested**: check it on your board
+with `logictracer-cli selftest --freq 200M`. Pico 2 builds are **not tested** either (no board).
