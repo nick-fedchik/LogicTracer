@@ -8,6 +8,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 
+#include <filesystem>
 #include <fstream>
 #include <vector>
 
@@ -67,7 +68,12 @@ bool copyTextToClipboard(std::string_view text, std::string* backendUsed, std::s
 {
     const QByteArray testFile = qgetenv("LOGICTRACER_CLIPBOARD_FILE");
     if (!testFile.isEmpty()) {
-        std::ofstream out(testFile.toStdString(), std::ios::binary | std::ios::trunc);
+#if defined(_WIN32)
+        const std::filesystem::path testPath(QString::fromLocal8Bit(testFile).toStdWString());
+#else
+        const std::filesystem::path testPath(testFile.toStdString());
+#endif
+        std::ofstream out(testPath, std::ios::binary | std::ios::trunc);
         if (!out) {
             if (error)
                 *error = "cannot write LOGICTRACER_CLIPBOARD_FILE '" + testFile.toStdString() + "'";

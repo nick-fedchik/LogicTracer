@@ -5,6 +5,7 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Format.hpp"
+#include "core/Paths.hpp"
 #include "core/Segments.hpp"
 
 #include <algorithm>
@@ -260,8 +261,8 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
             *error = msg + " " + path;
         return false;
     };
-    const fs::path target(path);
-    const std::string leaf = target.filename().string();
+    const fs::path target = pathFromUtf8(path);
+    const std::string leaf = utf8FromPath(target.filename());
     if (leaf.empty() || leaf == "." || leaf == "..")
         return failWith("not a file name:");
     const int dirFd = openOutputDirectory(target.parent_path(), confined);
@@ -393,8 +394,8 @@ bool writeFileChecked(const std::string& path, std::ios::openmode mode, std::str
             *error = msg + " " + path;
         return false;
     };
-    const fs::path target(path);
-    const std::string leaf = target.filename().string();
+    const fs::path target = pathFromUtf8(path);
+    const std::string leaf = utf8FromPath(target.filename());
     if (leaf.empty() || leaf == "." || leaf == "..")
         return failWith("not a file name:");
     const fs::path dir = target.parent_path().empty() ? fs::path(".") : target.parent_path();
@@ -1264,7 +1265,7 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
 
 bool loadCaptureFile(const std::string& path, LoadedCapture& out, std::string* error)
 {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(pathFromUtf8(path), std::ios::binary);
     if (!f) {
         if (error)
             *error = "cannot open " + path;
@@ -1303,16 +1304,16 @@ std::optional<std::string> resolveSafeOutputPath(const std::string& rawPath,
     if (rawPath.empty())
         return std::string{};
 
-    const fs::path input(rawPath);
+    const fs::path input = pathFromUtf8(rawPath);
     for (const auto& part : input) {
-        const std::string p = part.string();
+        const std::string p = utf8FromPath(part);
         if (p == "..")
             return fail("output path must not contain '..': " + rawPath);
         if (p.size() > 1 && p.front() == '.')
             return fail("output path must not target hidden files or dot-directories: " + rawPath);
     }
 
-    std::string ext = input.extension().string();
+    std::string ext = utf8FromPath(input.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
     bool extOk = allowedExtensions.empty();
     for (std::string_view allowed : allowedExtensions) {
@@ -1328,7 +1329,7 @@ std::optional<std::string> resolveSafeOutputPath(const std::string& rawPath,
     const fs::path cwd = fs::weakly_canonical(fs::current_path(ec), ec);
     std::vector<fs::path> roots;
     if (!sandboxDir.empty()) {
-        roots.push_back(fs::weakly_canonical(fs::path(sandboxDir), ec));
+        roots.push_back(fs::weakly_canonical(pathFromUtf8(sandboxDir), ec));
     } else {
         roots.push_back(cwd);
         roots.push_back(fs::weakly_canonical(fs::temp_directory_path(ec), ec));
@@ -1362,7 +1363,7 @@ std::optional<std::string> resolveSafeOutputPath(const std::string& rawPath,
     if (!fs::exists(resolved.parent_path(), ec))
         return fail("parent directory does not exist for '" + rawPath + "'");
 
-    return resolved.string();
+    return utf8FromPath(resolved);
 }
 
 }  // namespace lt

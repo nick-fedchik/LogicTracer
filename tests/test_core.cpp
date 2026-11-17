@@ -956,6 +956,32 @@ private Q_SLOTS:
         QVERIFY(QDir(dir.filePath("real")).entryList(QDir::Hidden | QDir::Files).size() == 1);  // no temp left
     }
 
+    // Paths are UTF-8 everywhere (Windows would otherwise read them in the ANSI code page).
+    void nonAsciiPathsRoundTrip()
+    {
+        QTemporaryDir dir;
+        const QString sub = dir.filePath(QString::fromUtf8("вимір µs ✓"));
+        QVERIFY(QDir().mkpath(sub));
+        const std::string file = (sub + QString::fromUtf8("/захоплення.json")).toStdString();
+        const lt::CaptureBuffer buf({{0, "A"}}, 1'000'000, 0, {0u, 1u, 1u, 0u});
+        std::string err;
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        QVERIFY2(lt::writeJsonFile(file, lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true), &err,
+                                   false),
+                 err.c_str());
+        QVERIFY(QFile::exists(QString::fromStdString(file)));
+        lt::LoadedCapture loaded;
+        QVERIFY2(lt::loadCaptureFile(file, loaded, &err), err.c_str());
+        QCOMPARE(loaded.buffer.samples(), buf.samples());
+        static constexpr std::string_view kJson[]{".json"};
+        const auto safe = lt::resolveSafeOutputPath(file, kJson, sub.toStdString(), &err);
+        QVERIFY2(safe, err.c_str());
+        QVERIFY2(lt::writeJsonFile(*safe, {{"x", 1}}, &err, true), err.c_str());
+        QCOMPARE(QFileInfo(QString::fromStdString(*safe)).canonicalFilePath(),
+                 QFileInfo(QString::fromStdString(file)).canonicalFilePath());
+    }
+
     void vcdTimeBaseIsValidated()
     {
         std::string err;

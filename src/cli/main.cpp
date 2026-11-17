@@ -14,6 +14,7 @@
 #include "services/Clipboard.hpp"
 #include "core/Exporters.hpp"
 #include "core/Format.hpp"
+#include "core/Paths.hpp"
 #include "services/Operations.hpp"
 #include "device/PicoConnection.hpp"
 #include "services/Session.hpp"
@@ -686,7 +687,7 @@ int cmdCapture(const QStringList& args, Output o)
         if (!setup->empty()) params["meta"] = lt::toJson(*setup);
         // The GUI resolves relative paths against its own working directory: send the caller's.
         const auto absolutePath = [](const QString& path) {
-            return std::filesystem::absolute(std::filesystem::path(str(path))).lexically_normal().string();
+            return lt::utf8FromPath(std::filesystem::absolute(lt::pathFromUtf8(str(path))).lexically_normal());
         };
         if (p.isSet("out-vcd")) params["out_vcd"] = absolutePath(p.value("out-vcd"));
         if (p.isSet("out-json")) params["out_json"] = absolutePath(p.value("out-json"));
@@ -762,15 +763,16 @@ int cmdCapture(const QStringList& args, Output o)
                 return;
             armedHookFired = true;
             if (!readyFile.empty()) {
-                const std::string tmp = readyFile + ".tmp";
+                const auto target = lt::pathFromUtf8(readyFile);
+                const auto tmp = lt::pathFromUtf8(readyFile + ".tmp");
                 {
                     std::ofstream rf(tmp, std::ios::trunc);
                     rf << "ARMED\n";
                 }
                 std::error_code ec;
-                std::filesystem::rename(tmp, readyFile, ec);
+                std::filesystem::rename(tmp, target, ec);
                 if (ec) {
-                    std::ofstream rf(readyFile, std::ios::trunc);
+                    std::ofstream rf(target, std::ios::trunc);
                     rf << "ARMED\n";
                 }
             }

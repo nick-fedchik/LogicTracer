@@ -13,6 +13,7 @@ add_library(logictracer_core STATIC
     DeviceProtocol.cpp DeviceProtocol.hpp
     Exporters.cpp Exporters.hpp
     Format.hpp
+    Paths.hpp
     SignalAnalyzer.cpp SignalAnalyzer.hpp
 )
 add_library(LogicTracer::Core ALIAS logictracer_core)
