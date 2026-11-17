@@ -199,6 +199,38 @@ private Q_SLOTS:
         QVERIFY(err.find("invariant") != std::string::npos);
     }
 
+    // --segments: loopCount = windows - 1 in the request, the buffer holds pre + post x windows samples.
+    void segmentedCaptureRequestsLoopCount()
+    {
+        Device dev([](Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0) {
+                d.send(fake::idReply("0.3.0", true,
+                                     "FREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nFEATURES:1\nCHANNELS:24\n"));
+            } else if (payload[0] == 1) {
+                const auto r = fake::parseRequest(payload);
+                d.recordRequest(r);
+                d.send("CAPTURE_STARTED\n");
+                d.send(fake::captureData(r, 0x01));
+            }
+        });
+        lt::PicoConnection conn;
+        QVERIFY2(conn.open(dev.port()), conn.lastError().c_str());
+        auto cfg = config(10, 100);
+        cfg.trigger = lt::EdgeTrigger{0, false};
+        cfg.segments = 4;
+        const auto r = conn.capture(cfg);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QCOMPARE(dev.requests().back().loop, 3u);
+        QCOMPARE(r.buffer->size(), std::size_t{410});
+        QVERIFY(r.segments && r.segments->count == 4 && r.segments->postSamples == 100);
+
+        cfg.segments = 2000;  // 10 + 100 x 2000 samples do not fit
+        QVERIFY(conn.capture(cfg).error.find("exceed device buffer") != std::string::npos);
+        cfg.segments = 2;
+        cfg.trigger.reset();
+        QVERIFY(conn.capture(cfg).error.find("needs a trigger") != std::string::npos);
+    }
+
     void handshakeV5UsesDefaults()
     {
         Device dev(device("V5_2", false));
@@ -544,6 +576,36 @@ private Q_SLOTS:
         QVERIFY(r.warnings.front().find("x/z") != std::string::npos);
     }
 
+    void replayDeviceRecordsSegments()
+    {
+        QTemporaryDir dir;
+        const std::string port = "replay:" + writeRecording(dir).toStdString();
+        auto dev = lt::createDevice(port);
+        QVERIFY2(dev->open(port, 100ms), dev->lastError().c_str());
+        lt::CaptureConfig c;
+        c.channels = {{0, {}}, {2, {}}};
+        c.frequency = 1'000'000;
+        c.preSamples = 10;
+        c.postSamples = 40;
+        c.trigger = lt::EdgeTrigger{0, false};
+        c.segments = 3;  // pulses at 100, 300, 500
+        c.probeOnTimeout = false;
+        const auto r = dev->capture(c);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QCOMPARE(r.buffer->size(), std::size_t{130});
+        const auto windows = lt::splitSegments(*r.buffer, *r.segments);
+        QCOMPARE(windows.size(), std::size_t{3});
+        QVERIFY(!windows[2].bit(0, 0) && windows[2].bit(1, 0));  // synthetic pre-trigger sample, then the edge
+        QVERIFY(!windows[2].bit(2, 1) && windows[2].bit(3, 1));  // REACT 2 samples after the trigger
+
+        auto again = lt::createDevice(port);
+        QVERIFY(again->open(port, 100ms));
+        c.segments = 4;
+        const auto partial = again->capture(c);
+        QVERIFY(partial.status == lt::CaptureStatus::Timeout);
+        QVERIFY(partial.error.find("3 of 4 windows") != std::string::npos);
+    }
+
     void replayDeviceReplaysConsecutiveEvents()
     {
         QTemporaryDir dir;
@@ -695,6 +757,27 @@ private Q_SLOTS:
         QCOMPARE(run({"analyze", rec, "--invariant", "within(STIM, CH3, 1us)", "--json"}, &j), 3);
         QCOMPARE(j["invariants"]["rules"][0]["violations"].get<int>(), 3);
         QCOMPARE(run({"analyze", rec, "--invariant", "within(STIM, REACT)", "--json"}, &j), 64);
+    }
+
+    void captureSegmentsThroughReplay()
+    {
+        QTemporaryDir dir;
+        const auto rec = writeRecording(dir);
+        const QString port = "replay:" + rec;
+        const QString out = dir.filePath("seg.json");
+        nlohmann::json j;
+        QCOMPARE(run({"capture", "--port", port, "--no-session", "--channels", "1:STIM,3:REACT", "--samples", "50",
+                      "--pre-samples", "10", "--segments", "3", "--trigger", "1:rising", "--measure-latency", "1..3",
+                      "--expect", "events==3,drops==0", "--out-json", out, "--json"}, &j), 0);
+        QCOMPARE(j["segments"]["windows"].size(), std::size_t{3});
+        QCOMPARE(j["latency"]["count"].get<int>(), 3);
+        QCOMPARE(run({"analyze", out, "--measure-latency", "1..3", "--json"}, &j), 0);
+        QCOMPARE(j["segments"]["layout"]["count"].get<int>(), 3);
+        QCOMPARE(j["latency"]["count"].get<int>(), 3);
+        QCOMPARE(run({"capture", "--port", port, "--no-session", "--segments", "3", "--json"}, &j), 64);
+        QCOMPARE(run({"capture", "--port", port, "--no-session", "--segments", "3", "--trigger", "1:rising",
+                      "--out-vcd", dir.filePath("x.vcd"), "--json"}, &j), 64);
+        QCOMPARE(run({"analyze", out, "--out-vcd", dir.filePath("x.vcd"), "--json"}, &j), 64);
     }
 
     void unknownCommandYieldsJson()

@@ -101,6 +101,7 @@ struct LatencyEvent {
     double reactTimeNs = 0.0;
     uint32_t deltaSamples = 0;
     double deltaNs = 0.0;
+    std::optional<uint32_t> segment;  // 1-based trigger window of a segmented capture (samples are window-local)
 };
 
 struct LatencyStats {
@@ -197,6 +198,10 @@ public:
     // channel list yields metadata only (no levels, edges or timing).
     [[nodiscard]] ChannelStats analyzeChannel(const CaptureBuffer& buffer, std::size_t channelIndex) const;
     [[nodiscard]] std::vector<ChannelStats> analyze(const CaptureBuffer& buffer) const;
+    // Combines the latency of independent windows (each analysed with collectEvents = true): counts add up,
+    // percentiles, histogram and outliers are recomputed over all pairs, drop/spurious sample lists are
+    // dropped (they are window-local), events carry their 1-based window.
+    [[nodiscard]] static LatencyStats mergeLatency(const std::vector<LatencyStats>& windows, bool keepEvents);
 
     // Cross-channel stimulus -> reaction latency distribution (min/max/mean/stdev/p50/p90/p95/p99).
     [[nodiscard]] static LatencyStats analyzeLatency(const CaptureBuffer& buffer, const LatencyPairSpec& spec,

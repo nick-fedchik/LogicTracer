@@ -103,6 +103,13 @@ are then used (100 MHz, 131072 bytes, 24 channels).
   has the opposite level and fires only on the transition (re-armed the same way for `loopCount`). The
   firmware advertises it with `FEATURES:<bits>` (bit 0) in the identify reply, before `CHANNELS`; the
   host then uses type 4 for every user trigger and type 0 for immediate captures and probes.
+* Segmented capture (`capture --segments N`): the host sends `loopCount = N - 1`; the firmware stores
+  `pre + post × N` samples, the pre-trigger part before the first window only, and does not record the time
+  between windows. The host analyses every window on its own (t = 0 at its trigger) and combines the results
+  (`segments` in the JSON, window-local `segment` on latency events and invariant examples); windows after the
+  first get one synthetic pre-trigger sample so their trigger edge stays visible. In those windows sampling
+  starts on the detected edge, so the trigger channel has a fixed sampling phase there; the ±1-sample bounds
+  still hold.
   With level-sensitive firmware, if the trigger line is already at the target level when arming, the host adds a
   `trigger_already_active` warning and, before signalling readiness (`WaitingForTrigger`,
   `--ready-file`, `--on-armed`), waits for the circular pre-trigger buffer to fill.

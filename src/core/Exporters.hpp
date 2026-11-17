@@ -60,6 +60,8 @@ struct LoadedCapture {
     std::string board;
     // Non-fatal import problems the user must see (e.g. unknown x/z levels, coarsened time base).
     std::vector<std::string> warnings;
+    // Segmented capture ("segments.layout" in a CLI/MCP envelope): analyse window by window.
+    std::optional<SegmentLayout> segments;
 };
 
 // SetupInfo <-> JSON object {"key": "value", ...}. Invalid entries are skipped when reading.

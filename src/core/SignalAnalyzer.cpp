@@ -178,6 +178,120 @@ std::vector<ChannelStats> SignalAnalyzer::analyze(const CaptureBuffer& buffer) c
     return out;
 }
 
+namespace {
+
+// Delay statistics over paired events (out.count and quantizationStepNs are set by the caller).
+void computeDelayStats(LatencyStats& out, std::vector<LatencyEvent> events, bool keepEvents)
+{
+    const double dtNs = out.quantizationStepNs;
+    std::vector<uint32_t> sorted(events.size());
+    double sum = 0.0;
+    out.coincidentCount = 0;
+    for (std::size_t k = 0; k < events.size(); ++k) {
+        sorted[k] = events[k].deltaSamples;
+        sum += static_cast<double>(sorted[k]);
+        out.coincidentCount += sorted[k] == 0;
+    }
+    std::sort(sorted.begin(), sorted.end());
+
+    // Nearest-rank percentile: the smallest measured value with at least q of the events at or below it.
+    auto pct = [&](double q) {
+        const auto rank = static_cast<std::size_t>(std::ceil(q * static_cast<double>(out.count)));
+        return sorted[std::clamp<std::size_t>(rank, 1, static_cast<std::size_t>(out.count)) - 1];
+    };
+    out.minSamples = sorted.front();
+    out.maxSamples = sorted.back();
+    out.p50Samples = pct(0.50);
+    out.p90Samples = pct(0.90);
+    out.p95Samples = pct(0.95);
+    out.p99Samples = pct(0.99);
+    out.minNs = out.minSamples * dtNs;
+    out.maxNs = out.maxSamples * dtNs;
+    out.p50Ns = out.p50Samples * dtNs;
+    out.p90Ns = out.p90Samples * dtNs;
+    out.p95Ns = out.p95Samples * dtNs;
+    out.p99Ns = out.p99Samples * dtNs;
+    out.meanNs = sum / static_cast<double>(out.count) * dtNs;
+    out.stdevNs = 0.0;
+    if (out.count > 1) {
+        double sq = 0.0;
+        for (uint32_t v : sorted) {
+            const double d = static_cast<double>(v) * dtNs - out.meanNs;
+            sq += d * d;
+        }
+        out.stdevNs = std::sqrt(sq / static_cast<double>(out.count - 1));
+    }
+
+    out.histogram.clear();
+    for (std::size_t k = 0; k < sorted.size();) {
+        std::size_t j = k;
+        while (j < sorted.size() && sorted[j] == sorted[k])
+            ++j;
+        out.histogram.emplace_back(sorted[k], j - k);
+        k = j;
+    }
+
+    // Robust outliers: |d - median| > max(2, 5 * MAD) samples (MAD is 0 on 1-2 bin histograms).
+    const uint32_t median = sorted[(sorted.size() - 1) / 2];
+    std::vector<uint32_t> dev(sorted.size());
+    for (std::size_t k = 0; k < sorted.size(); ++k)
+        dev[k] = sorted[k] > median ? sorted[k] - median : median - sorted[k];
+    std::nth_element(dev.begin(), dev.begin() + static_cast<std::ptrdiff_t>((dev.size() - 1) / 2), dev.end());
+    const uint32_t mad = dev[(dev.size() - 1) / 2];
+    const uint64_t limit = std::max<uint64_t>(2, 5ull * mad);
+    std::vector<std::pair<uint32_t, std::size_t>> flagged;  // (deviation, event index)
+    for (std::size_t k = 0; k < events.size(); ++k) {
+        const uint32_t d = events[k].deltaSamples;
+        const uint32_t deviation = d > median ? d - median : median - d;
+        if (deviation > limit)
+            flagged.emplace_back(deviation, k);
+    }
+    out.outlierCount = flagged.size();
+    out.outliers.clear();
+    std::stable_sort(flagged.begin(), flagged.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (std::size_t k = 0; k < flagged.size() && k < LatencyStats::kMaxListed; ++k)
+        out.outliers.push_back(events[flagged[k].second]);
+    if (keepEvents)
+        out.events = std::move(events);
+}
+
+}  // namespace
+
+LatencyStats SignalAnalyzer::mergeLatency(const std::vector<LatencyStats>& windows, bool keepEvents)
+{
+    LatencyStats out;
+    if (windows.empty())
+        return out;
+    const auto& first = windows.front();
+    out.stimChannel = first.stimChannel;
+    out.stimFalling = first.stimFalling;
+    out.reactChannel = first.reactChannel;
+    out.reactFalling = first.reactFalling;
+    out.sampleRateHz = first.sampleRateHz;
+    out.quantizationStepNs = first.quantizationStepNs;
+    std::vector<LatencyEvent> events;
+    for (std::size_t w = 0; w < windows.size(); ++w) {
+        const auto& l = windows[w];
+        out.count += l.count;
+        out.unmatchedStimCount += l.unmatchedStimCount;
+        out.censoredStimCount += l.censoredStimCount;
+        out.censoredReactCount += l.censoredReactCount;
+        out.spuriousReactCount += l.spuriousReactCount;
+        out.maxReactsPerStim = std::max(out.maxReactsPerStim, l.maxReactsPerStim);
+        out.censorWindowSamples = std::max(out.censorWindowSamples, l.censorWindowSamples);
+        for (auto ev : l.events) {
+            ev.segment = static_cast<uint32_t>(w + 1);
+            ev.eventId = static_cast<uint32_t>(events.size() + 1);
+            events.push_back(ev);
+        }
+    }
+    if (events.size() != out.count)  // a window was analysed without its events: no delay statistics
+        return out;
+    if (out.count > 0)
+        computeDelayStats(out, std::move(events), keepEvents);
+    return out;
+}
+
 LatencyStats SignalAnalyzer::analyzeLatency(const CaptureBuffer& buffer, const LatencyPairSpec& spec,
                                             bool collectEvents)
 {
@@ -303,7 +417,9 @@ LatencyStats SignalAnalyzer::analyzeLatencyImpl(const CaptureBuffer& buffer, con
     if (out.count == 0)
         return out;
 
-    auto makeEvent = [&](std::size_t k) {
+    std::vector<LatencyEvent> events;
+    events.reserve(pairs.size());
+    for (std::size_t k = 0; k < pairs.size(); ++k) {
         LatencyEvent ev;
         ev.eventId = static_cast<uint32_t>(k + 1);
         ev.stimSample = pairs[k].stim;
@@ -312,74 +428,9 @@ LatencyStats SignalAnalyzer::analyzeLatencyImpl(const CaptureBuffer& buffer, con
         ev.reactTimeNs = buffer.timeOfSample(pairs[k].react) * 1e9;
         ev.deltaSamples = pairs[k].react - pairs[k].stim;
         ev.deltaNs = static_cast<double>(ev.deltaSamples) * dtNs;
-        return ev;
-    };
-
-    std::vector<uint32_t> sorted(out.count);
-    double sum = 0.0;
-    for (std::size_t k = 0; k < pairs.size(); ++k) {
-        sorted[k] = pairs[k].react - pairs[k].stim;
-        sum += static_cast<double>(sorted[k]);
-        out.coincidentCount += sorted[k] == 0;
-        if (collectEvents)
-            out.events.push_back(makeEvent(k));
+        events.push_back(ev);
     }
-    std::sort(sorted.begin(), sorted.end());
-
-    // Nearest-rank percentile: the smallest measured value with at least q of the events at or below it.
-    auto pct = [&](double q) {
-        const auto rank = static_cast<std::size_t>(std::ceil(q * static_cast<double>(out.count)));
-        return sorted[std::clamp<std::size_t>(rank, 1, static_cast<std::size_t>(out.count)) - 1];
-    };
-    out.minSamples = sorted.front();
-    out.maxSamples = sorted.back();
-    out.p50Samples = pct(0.50);
-    out.p90Samples = pct(0.90);
-    out.p95Samples = pct(0.95);
-    out.p99Samples = pct(0.99);
-    out.minNs = out.minSamples * dtNs;
-    out.maxNs = out.maxSamples * dtNs;
-    out.p50Ns = out.p50Samples * dtNs;
-    out.p90Ns = out.p90Samples * dtNs;
-    out.p95Ns = out.p95Samples * dtNs;
-    out.p99Ns = out.p99Samples * dtNs;
-    out.meanNs = sum / static_cast<double>(out.count) * dtNs;
-    if (out.count > 1) {
-        double sq = 0.0;
-        for (uint32_t v : sorted) {
-            const double d = static_cast<double>(v) * dtNs - out.meanNs;
-            sq += d * d;
-        }
-        out.stdevNs = std::sqrt(sq / static_cast<double>(out.count - 1));
-    }
-
-    for (std::size_t k = 0; k < sorted.size();) {
-        std::size_t j = k;
-        while (j < sorted.size() && sorted[j] == sorted[k])
-            ++j;
-        out.histogram.emplace_back(sorted[k], j - k);
-        k = j;
-    }
-
-    // Robust outliers: |d - median| > max(2, 5 * MAD) samples (MAD is 0 on 1-2 bin histograms).
-    const uint32_t median = sorted[(sorted.size() - 1) / 2];
-    std::vector<uint32_t> dev(sorted.size());
-    for (std::size_t k = 0; k < sorted.size(); ++k)
-        dev[k] = sorted[k] > median ? sorted[k] - median : median - sorted[k];
-    std::nth_element(dev.begin(), dev.begin() + static_cast<std::ptrdiff_t>((dev.size() - 1) / 2), dev.end());
-    const uint32_t mad = dev[(dev.size() - 1) / 2];
-    const uint64_t limit = std::max<uint64_t>(2, 5ull * mad);
-    std::vector<std::pair<uint32_t, std::size_t>> flagged;  // (deviation, pair index)
-    for (std::size_t k = 0; k < pairs.size(); ++k) {
-        const uint32_t d = pairs[k].react - pairs[k].stim;
-        const uint32_t deviation = d > median ? d - median : median - d;
-        if (deviation > limit)
-            flagged.emplace_back(deviation, k);
-    }
-    out.outlierCount = flagged.size();
-    std::stable_sort(flagged.begin(), flagged.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-    for (std::size_t k = 0; k < flagged.size() && k < LatencyStats::kMaxListed; ++k)
-        out.outliers.push_back(makeEvent(flagged[k].second));
+    computeDelayStats(out, std::move(events), collectEvents);
 
     // Direction check (one level deep: the reverse analysis does not check its own direction).
     if (checkDirection && pairs.size() >= 3) {

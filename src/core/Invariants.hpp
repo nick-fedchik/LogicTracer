@@ -59,6 +59,8 @@ struct InvariantRule {
 struct InvariantViolation {
     std::size_t sample = 0;
     std::string detail;
+    std::optional<uint32_t> segment;     // 1-based window of a segmented capture (`sample` is window-local)
+    std::optional<double> timeSeconds;   // relative to the window's trigger; else derived from `sample`
 };
 
 struct InvariantResult {

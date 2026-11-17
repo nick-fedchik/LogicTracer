@@ -512,6 +512,48 @@ std::string cursorLine(const CaptureBuffer& b, const ReportOptions& o)
 
 }  // namespace
 
+std::string latencyMarkdown(const LatencyStats& l)
+{
+    std::ostringstream ss;
+    ss << "\n### Propagation latency: CH" << l.stimChannel.displayNumber() << " (" << l.stimChannel.label() << " "
+       << (l.stimFalling ? "falling" : "rising") << ") -> CH" << l.reactChannel.displayNumber() << " ("
+       << l.reactChannel.label() << " " << (l.reactFalling ? "falling" : "rising") << ")\n\n";
+    if (l.reversed)
+        ss << "- **Direction check:** " << SignalAnalyzer::reversedHint(l) << "\n";
+    ss << "- Paired events: **" << l.count << "**, drops: **" << l.unmatchedStimCount << "**, spurious reactions: **"
+       << l.spuriousReactCount << "**, censored at window edges: " << (l.censoredStimCount + l.censoredReactCount)
+       << ", coincident (Δs = 0): " << l.coincidentCount << ", max reactions per stimulus: " << l.maxReactsPerStim
+       << "\n";
+    if (l.count > 0) {
+        const double t = l.quantizationStepNs;
+        auto ns = [&](double v) {
+            std::ostringstream x;
+            x << std::fixed << std::setprecision(2) << v;
+            return x.str();
+        };
+        ss << "- Step T = " << ns(t) << " ns; a delay measured as d samples is truly in ((d-1)·T, (d+1)·T)\n";
+        std::string hist;
+        for (const auto& [d, c] : l.histogram)
+            hist += (hist.empty() ? "" : ", ") + std::to_string(d) + "×" + std::to_string(c);
+        ss << "- Δs histogram (samples×count): **" << hist << "**\n";
+        ss << "- Delay: min " << l.minSamples << " (" << ns(l.minNs) << " ns), p50 " << l.p50Samples << " ("
+           << ns(l.p50Ns) << " ns), p99 " << l.p99Samples << " (" << ns(l.p99Ns) << " ns, true ≤ "
+           << ns(l.upperBoundNs(l.p99Samples)) << " ns), **max " << l.maxSamples << " (" << ns(l.maxNs)
+           << " ns, true ≤ " << ns(l.upperBoundNs(l.maxSamples)) << " ns)**; mean " << ns(l.meanNs)
+           << " ns, stdev " << ns(l.stdevNs) << " ns (nearest-rank percentiles)\n";
+        if (l.constantDelayConsistent())
+            ss << "- **Verdict: constant-delay consistent.** All pairs fit ONE fixed delay in (" << ns(l.constantDelayLowerNs()) << ", "
+               << ns(l.constantDelayUpperNs())
+               << ") ns; the histogram spread is sampling phase, not proven jitter\n";
+        else
+            ss << "- Constant-delay check: spread " << (l.maxSamples - l.minSamples)
+               << " samples > 1, so the true delay varies (real jitter or outliers)\n";
+        if (l.outlierCount > 0)
+            ss << "- Outliers: " << l.outlierCount << " pair(s) beyond median ± max(2, 5·MAD) samples\n";
+    }
+    return ss.str();
+}
+
 std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
 {
     const Range r = normalize(b, o);
@@ -643,45 +685,8 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
     }
 
     const auto lat = computeLatency(b, r, o);
-    if (lat) {
-        const auto& l = *lat;
-        ss << "\n### Propagation latency: CH" << l.stimChannel.displayNumber() << " (" << l.stimChannel.label() << " "
-           << (l.stimFalling ? "falling" : "rising") << ") -> CH" << l.reactChannel.displayNumber() << " ("
-           << l.reactChannel.label() << " " << (l.reactFalling ? "falling" : "rising") << ")\n\n";
-        if (l.reversed)
-            ss << "- **Direction check:** " << SignalAnalyzer::reversedHint(l) << "\n";
-        ss << "- Paired events: **" << l.count << "**, drops: **" << l.unmatchedStimCount << "**, spurious reactions: **"
-           << l.spuriousReactCount << "**, censored at window edges: " << (l.censoredStimCount + l.censoredReactCount)
-           << ", coincident (Δs = 0): " << l.coincidentCount << ", max reactions per stimulus: " << l.maxReactsPerStim
-           << "\n";
-        if (l.count > 0) {
-            const double t = l.quantizationStepNs;
-            auto ns = [&](double v) {
-                std::ostringstream x;
-                x << std::fixed << std::setprecision(2) << v;
-                return x.str();
-            };
-            ss << "- Step T = " << ns(t) << " ns; a delay measured as d samples is truly in ((d-1)·T, (d+1)·T)\n";
-            std::string hist;
-            for (const auto& [d, c] : l.histogram)
-                hist += (hist.empty() ? "" : ", ") + std::to_string(d) + "×" + std::to_string(c);
-            ss << "- Δs histogram (samples×count): **" << hist << "**\n";
-            ss << "- Delay: min " << l.minSamples << " (" << ns(l.minNs) << " ns), p50 " << l.p50Samples << " ("
-               << ns(l.p50Ns) << " ns), p99 " << l.p99Samples << " (" << ns(l.p99Ns) << " ns, true ≤ "
-               << ns(l.upperBoundNs(l.p99Samples)) << " ns), **max " << l.maxSamples << " (" << ns(l.maxNs)
-               << " ns, true ≤ " << ns(l.upperBoundNs(l.maxSamples)) << " ns)**; mean " << ns(l.meanNs)
-               << " ns, stdev " << ns(l.stdevNs) << " ns (nearest-rank percentiles)\n";
-            if (l.constantDelayConsistent())
-                ss << "- **Verdict: constant-delay consistent.** All pairs fit ONE fixed delay in (" << ns(l.constantDelayLowerNs()) << ", "
-                   << ns(l.constantDelayUpperNs())
-                   << ") ns; the histogram spread is sampling phase, not proven jitter\n";
-            else
-                ss << "- Constant-delay check: spread " << (l.maxSamples - l.minSamples)
-                   << " samples > 1, so the true delay varies (real jitter or outliers)\n";
-            if (l.outlierCount > 0)
-                ss << "- Outliers: " << l.outlierCount << " pair(s) beyond median ± max(2, 5·MAD) samples\n";
-        }
-    }
+    if (lat)
+        ss << latencyMarkdown(*lat);
 
     if (o.cursorA && o.cursorB && r.size() && !r.clampedToCursors) {
         const auto lo = std::min(*o.cursorA, *o.cursorB), hi = std::max(*o.cursorA, *o.cursorB);

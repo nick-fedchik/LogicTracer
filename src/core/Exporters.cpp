@@ -5,6 +5,7 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Format.hpp"
+#include "core/Segments.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -471,10 +472,14 @@ nlohmann::json toJson(const LatencyStats& lat, bool includeEvents)
                          ? "all pairs are explained by one fixed delay in this open interval; histogram spread is "
                            "sampling phase, not jitter"
                          : "spread exceeds 1 sample: the true delay varies (real jitter)"}};
-        for (const auto& ev : lat.outliers)
-            outl.push_back({{"event_id", ev.eventId}, {"stim_sample", ev.stimSample},
-                            {"react_sample", ev.reactSample}, {"delta_samples", ev.deltaSamples},
-                            {"delta_ns", ev.deltaNs}});
+        for (const auto& ev : lat.outliers) {
+            nlohmann::json o = {{"event_id", ev.eventId}, {"stim_sample", ev.stimSample},
+                                {"react_sample", ev.reactSample}, {"delta_samples", ev.deltaSamples},
+                                {"delta_ns", ev.deltaNs}};
+            if (ev.segment)
+                o["segment"] = *ev.segment;
+            outl.push_back(std::move(o));
+        }
         j["outliers"] = std::move(outl);
     }
     if (lat.reversed)
@@ -495,6 +500,8 @@ nlohmann::json toJson(const LatencyStats& lat, bool includeEvents)
                            {"react_time_ns", ev.reactTimeNs},
                            {"delta_samples", ev.deltaSamples},
                            {"delta_ns", ev.deltaNs}});
+            if (ev.segment)
+                evs.back()["segment"] = *ev.segment;
         }
         j["events"] = std::move(evs);
     }
@@ -593,11 +600,17 @@ bool writeCsvFile(const std::string& path, const CaptureBuffer& buffer, std::str
 
 void writeEventsCsv(std::ostream& out, const std::vector<LatencyEvent>& events)
 {
-    out << "event_id,stim_sample,stim_time_ns,react_sample,react_time_ns,delta_samples,delta_ns\n";
+    // Segmented captures add the 1-based window; samples and times are then relative to that window.
+    const bool segmented = !events.empty() && events.front().segment.has_value();
+    out << "event_id,stim_sample,stim_time_ns,react_sample,react_time_ns,delta_samples,delta_ns"
+        << (segmented ? ",segment\n" : "\n");
     out << std::fixed << std::setprecision(3);
     for (const auto& ev : events) {
         out << ev.eventId << ',' << ev.stimSample << ',' << ev.stimTimeNs << ',' << ev.reactSample << ','
-            << ev.reactTimeNs << ',' << ev.deltaSamples << ',' << ev.deltaNs << '\n';
+            << ev.reactTimeNs << ',' << ev.deltaSamples << ',' << ev.deltaNs;
+        if (segmented)
+            out << ',' << ev.segment.value_or(0);
+        out << '\n';
     }
 }
 
@@ -795,6 +808,17 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
             out.board = dev["board"].get<std::string>();
     }
 
+    if (doc.contains("segments") && doc["segments"].is_object() && doc["segments"].contains("layout")) {
+        std::string err;
+        const auto layout = segmentLayoutFromJson(doc["segments"]["layout"], &err);
+        if (!layout)
+            out.warnings.push_back("segment layout ignored: " + err);
+        else if (layout->totalSamples() != out.buffer.size())
+            out.warnings.push_back("segment layout ignored: it describes " + std::to_string(layout->totalSamples()) +
+                                   " samples, the capture has " + std::to_string(out.buffer.size()));
+        else
+            out.segments = layout;
+    }
     if (doc.contains("setup"))
         out.setup = setupFromJson(doc["setup"]);
     else if (cap.contains("setup"))

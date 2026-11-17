@@ -8,6 +8,7 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Invariants.hpp"
+#include "core/Segments.hpp"
 #include "device/IDevice.hpp"
 #include "device/PicoConnection.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -42,6 +43,7 @@ struct CaptureRequestSpec {
     std::optional<EdgeTrigger> trigger;  // nullopt = immediate
     std::chrono::milliseconds timeout = 5000ms;
     bool probeOnTimeout = true;
+    uint32_t segments = 1;  // trigger windows (CaptureConfig::segments); `samples` is then one window
 };
 
 // Splits samples into pre/post and applies the device limits. On failure returns nullopt and a message
@@ -65,7 +67,14 @@ struct CaptureDocument {
     std::optional<std::vector<ChannelStats>> stats;  // analysis of result.buffer
     std::optional<LatencyStats> latency;
     bool expectationsPassed = true;  // --expect assertions and --invariant rules
+    std::optional<SegmentAnalysis> segments;  // window-by-window analysis of a segmented capture
 };
+
+// Fills the analysis part of a document: "capture" (summary), "latency", "assertions", "invariants" and, for a
+// segmented capture, "segments". `out.stats` always describes the stored samples (lossless export); for a
+// segmented capture the summary, latency, assertions and invariants come from the windows.
+void analyzeIntoDocument(CaptureDocument& out, const CaptureBuffer& buffer, const std::optional<SegmentLayout>& segments,
+                         const DocumentOptions& options, std::string_view board = {});
 
 // {"command":"capture","status":...,"config":...} without file outputs.
 CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec& spec, const CaptureConfig& config,

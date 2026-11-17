@@ -7,6 +7,7 @@
 #include "core/CaptureBuffer.hpp"
 #include "core/CaptureDiff.hpp"
 #include "core/Invariants.hpp"
+#include "core/Segments.hpp"
 #include "core/DeviceProtocol.hpp"
 #include "core/Exporters.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -1180,6 +1181,47 @@ private Q_SLOTS:
         for (const char* bad : {"never(A &)", "within(A, B)", "within(A, B, 5)", "onehot(A)", "bus(A, B)",
                                 "never((A)", "foo(A)", "bus(A, B, settle=2us, gap=1us)", "never(A, settle=1us, bogus=2)", "within(A:up, B, 1us)", ""})
             QVERIFY2(!lt::parseInvariants(bad, &err), bad);
+    }
+
+    // Segmented capture: windows are analysed one by one, so the seams create no edges or latency pairs, and
+    // windows after the first get the trigger edge back through one synthetic pre-trigger sample.
+    void segmentsAreAnalysedWindowByWindow()
+    {
+        // A (bit 0) triggers, B (bit 1) follows 2 samples later. Window 1: 2 pre + 6 post; windows 2-3: 6 post
+        // starting on the trigger sample (A already HIGH).
+        std::vector<uint32_t> s = {0, 0, 1, 1, 3, 3, 3, 3};
+        for (int k = 0; k < 2; ++k)
+            s.insert(s.end(), {1, 1, 3, 3, 3, 3});
+        const lt::CaptureBuffer buf({{0, "A"}, {1, "B"}}, 1'000'000, 2, s);
+        const lt::SegmentLayout layout{3, 2, 6, uint8_t{0}, false};
+        QCOMPARE(lt::SignalAnalyzer::analyzeLatency(buf, {0, false, 1, false, std::nullopt}).count, 1u);  // seams
+
+        const auto windows = lt::splitSegments(buf, layout);
+        QCOMPARE(windows.size(), std::size_t{3});
+        QCOMPARE(windows[1].size(), std::size_t{7});
+        QCOMPARE(windows[1].triggerIndex(), int64_t{1});
+        QCOMPARE(windows[1].samples().front(), 0u);  // A back at its pre-trigger level
+        QVERIFY(lt::splitSegments(lt::CaptureBuffer({{0, "A"}}, 1'000'000, 0, {0, 1, 0}), layout).empty());
+
+        const auto rules = lt::parseInvariants("within(A, B, 2us); within(A, B, 1us)", nullptr);
+        const auto a = lt::analyzeSegments(buf, layout, lt::LatencyPairSpec{0, false, 1, false, std::nullopt}, true,
+                                           &*rules);
+        QCOMPARE(a.latency->count, 3u);
+        QCOMPARE(a.latency->unmatchedStimCount, 0u);
+        QCOMPARE(a.latency->minSamples, 2u);
+        QCOMPARE(a.latency->maxSamples, 2u);
+        QCOMPARE(a.latency->events.back().segment.value_or(0), 3u);
+        QCOMPARE(a.stats[0].risingEdges, 3u);
+        QCOMPARE(a.stats[1].fallingEdges, 0u);
+        QVERIFY((*a.invariants)[0].passed);
+        QCOMPARE((*a.invariants)[1].violations, 3u);
+        QCOMPARE((*a.invariants)[1].examples[2].segment.value_or(0), 3u);
+        QCOMPARE(a.perWindow.size(), std::size_t{3});
+        QVERIFY(lt::segmentsForAi(a, {}).find("**3 trigger windows**") != std::string::npos);
+
+        const auto back = lt::segmentLayoutFromJson(lt::toJson(layout));
+        QVERIFY(back && back->count == 3 && back->postSamples == 6 && back->triggerChannel == uint8_t{0});
+        QVERIFY(!lt::segmentLayoutFromJson(nlohmann::json{{"count", 0}, {"pre_samples", 0u}, {"post_samples", 1u}}));
     }
 
     // Idle lines are merged so a 24-channel capture with two active signals stays short.

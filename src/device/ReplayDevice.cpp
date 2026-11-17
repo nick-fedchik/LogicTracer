@@ -41,6 +41,9 @@ bool ReplayDevice::open(const std::string& port, milliseconds /*handshakeTimeout
     }
     m_recording = std::move(loaded.buffer);
     m_warnings = std::move(loaded.warnings);
+    if (loaded.segments)
+        m_warnings.push_back("the recording is a segmented capture of " + std::to_string(loaded.segments->count) +
+                             " windows; replay plays them back to back as one continuous stream");
 
     uint8_t highest = 0;
     for (const auto& ch : m_recording.channels())
@@ -104,8 +107,13 @@ std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) c
                " Hz; replay supports that rate or an integer divisor of it";
     const uint64_t step = m_recording.frequency() / config.frequency;
     // An immediate capture returns only the post samples (the device drops the 2 reserved pre-trigger ones).
-    const uint64_t wanted = config.trigger ? static_cast<uint64_t>(config.preSamples) + config.postSamples
-                                           : static_cast<uint64_t>(config.postSamples);
+    if (config.segments == 0 || config.segments > 65536)
+        return "segments must be 1..65536";
+    if (config.segments > 1 && !config.trigger)
+        return "a segmented capture needs a trigger";
+    const uint64_t wanted =
+        config.trigger ? static_cast<uint64_t>(config.preSamples) + static_cast<uint64_t>(config.postSamples) * config.segments
+                       : static_cast<uint64_t>(config.postSamples);
     const uint64_t needed = wanted * step;
     if (needed > m_recording.size())
         return "requested " + std::to_string(wanted) + " samples, the recording has " +
@@ -176,28 +184,57 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
     const std::size_t trigIdx = *sourceIndex(config.trigger->channel);
     const bool rising = !config.trigger->inverted;
     const std::size_t lastStart = m_recording.size() - post * step;  // trigger sample + post must fit
-    std::size_t i = std::max<std::size_t>({m_cursor, pre * step, 1});
-    for (; i <= lastStart; ++i) {
-        if ((i & 0xFFFF) == 0 && m_cancelRequested)
-            return finish(CaptureStatus::Cancelled, "capture cancelled");
-        const bool before = m_recording.bit(i - 1, trigIdx), now = m_recording.bit(i, trigIdx);
-        if (before != now && now == rising)
+    // Like the firmware: window k > 0 starts on the next trigger edge after window k - 1 (the line must first
+    // return to the opposite level), and only complete series are delivered.
+    auto nextEdge = [&](std::size_t from) -> std::optional<std::size_t> {
+        for (std::size_t i = std::max<std::size_t>(from, 1); i <= lastStart; ++i) {
+            if ((i & 0xFFFF) == 0 && m_cancelRequested)
+                return std::nullopt;
+            const bool before = m_recording.bit(i - 1, trigIdx), now = m_recording.bit(i, trigIdx);
+            if (before != now && now == rising)
+                return i;
+        }
+        return std::nullopt;
+    };
+    std::vector<std::size_t> starts;
+    std::size_t from = std::max<std::size_t>({m_cursor, pre * step, 1});
+    while (starts.size() < config.segments) {
+        const auto edge = nextEdge(from);
+        if (!edge)
             break;
+        starts.push_back(*edge);
+        from = *edge + post * step;
     }
-    if (i > lastStart) {
+    if (m_cancelRequested)
+        return finish(CaptureStatus::Cancelled, "capture cancelled");
+    if (starts.size() < config.segments) {
         if (config.probeOnTimeout) {
             const std::size_t n = std::min<std::size_t>(m_recording.size() / step, 1000);
             r.lineDump = extract(config.channels, m_recording.size() - n * step, n, 0);
         }
         m_cursor = m_recording.size();
-        return finish(CaptureStatus::Timeout, std::string("no further ") + (rising ? "rising" : "falling") +
-                                                  " edge on CH" + std::to_string(config.trigger->channel + 1) +
-                                                  " in the recording");
+        std::string what = std::string("no further ") + (rising ? "rising" : "falling") + " edge on CH" +
+                           std::to_string(config.trigger->channel + 1) + " in the recording";
+        if (config.segments > 1)
+            what += " (" + std::to_string(starts.size()) + " of " + std::to_string(config.segments) + " windows found)";
+        return finish(CaptureStatus::Timeout, what);
     }
 
     report(CaptureStage::Downloading);
-    r.buffer = extract(config.channels, i - pre * step, pre + post, static_cast<int64_t>(pre));
-    m_cursor = i + post * step;
+    auto buffer = extract(config.channels, starts.front() - pre * step, pre + post, static_cast<int64_t>(pre));
+    if (config.segments > 1) {
+        std::vector<uint32_t> all = buffer.samples();
+        all.reserve(pre + static_cast<std::size_t>(post) * config.segments);
+        for (std::size_t k = 1; k < starts.size(); ++k) {
+            const auto win = extract(config.channels, starts[k], post, 0);
+            all.insert(all.end(), win.samples().begin(), win.samples().end());
+        }
+        buffer = CaptureBuffer(buffer.channels(), buffer.frequency(), pre, std::move(all));
+        r.segments = SegmentLayout{config.segments, static_cast<uint32_t>(pre), static_cast<uint32_t>(post),
+                                   config.trigger->channel, config.trigger->inverted};
+    }
+    r.buffer = std::move(buffer);
+    m_cursor = starts.back() + post * step;
     report(CaptureStage::Done);
     return finish(CaptureStatus::Ok);
 }

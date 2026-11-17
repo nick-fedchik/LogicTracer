@@ -78,6 +78,8 @@ struct AnomalyIncident {
 [[nodiscard]] std::vector<AnomalyIncident> findAnomalies(const CaptureBuffer& buffer, const ReportOptions& options);
 
 [[nodiscard]] std::string markdownSummary(const CaptureBuffer& buffer, const ReportOptions& options);
+// "### Propagation latency" section (also used for the combined windows of a segmented capture).
+[[nodiscard]] std::string latencyMarkdown(const LatencyStats& latency);
 [[nodiscard]] std::string asciiTimeline(const CaptureBuffer& buffer, const ReportOptions& options);
 [[nodiscard]] nlohmann::json jsonMetadata(const CaptureBuffer& buffer, const ReportOptions& options);
 // Formatted report according to options.mode (Brief omits JSON; CursorsOnly zooms to A..B).

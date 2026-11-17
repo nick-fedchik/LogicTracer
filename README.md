@@ -117,6 +117,9 @@ build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 
     --out-json run.json --out-vcd run.vcd --ai --copy
 
 build/src/cli/logictracer-cli analyze run.json --measure-latency 1:falling..2:falling --ai
+# One trigger window per pulse: 100 windows of 2 us in one run (time between windows not recorded)
+build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 220 --pre-samples 20 \
+    --segments 100 --channels 1:STIM,2:REACT --trigger 2:rising --measure-latency 2..1 --expect "drops==0"
 build/src/cli/logictracer-cli diff baseline.json run.json --measure-latency 1..2 --strict   # exit 3 on a regression
 build/src/gui/logictracer-gui --port /dev/ttyACM0
 ```

@@ -201,6 +201,14 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
     cfg.timeout = spec.timeout;
     cfg.probeOnTimeout = spec.probeOnTimeout;
 
+    if (spec.segments == 0 || spec.segments > 65536) {
+        error = "segments must be 1..65536";
+        return std::nullopt;
+    }
+    if (spec.segments > 1 && !spec.trigger) {
+        error = "a segmented capture needs a trigger (every window starts on a trigger edge)";
+        return std::nullopt;
+    }
     if (!spec.trigger) {
         if (spec.preSamples)
             warnings.push_back("--pre-samples ignored for an immediate (untriggered) capture");
@@ -227,7 +235,83 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
     }
     cfg.preSamples = static_cast<uint32_t>(pre);
     cfg.postSamples = static_cast<uint32_t>(spec.samples - pre);
+    cfg.segments = spec.segments;
+    if (spec.segments > 1) {
+        const uint64_t total = pre + (spec.samples - pre) * spec.segments;
+        if (total > limits.maxTotalSamples) {
+            const uint64_t fit = (limits.maxTotalSamples - pre) / std::max<uint64_t>(1, spec.samples - pre);
+            error = std::to_string(spec.segments) + " windows of " + std::to_string(spec.samples - pre) +
+                    " post-trigger samples (+" + std::to_string(pre) + " pre) need " + std::to_string(total) +
+                    " samples; the buffer holds " + std::to_string(limits.maxTotalSamples) + " in " +
+                    std::string(toString(mode)) + " mode (at most " + std::to_string(fit) +
+                    " windows of this size, or shorten --samples)";
+            return std::nullopt;
+        }
+    }
     return cfg;
+}
+
+void analyzeIntoDocument(CaptureDocument& out, const CaptureBuffer& buffer, const std::optional<SegmentLayout>& segments,
+                         const DocumentOptions& options, std::string_view board)
+{
+    SignalAnalyzer::Options opts;
+    opts.collectEdges = options.collectEdges || options.summaryEdges;
+    out.stats = SignalAnalyzer(opts).analyze(buffer);
+
+    std::optional<LatencyPairSpec> pair;
+    if (options.latency) {
+        std::optional<std::size_t> stimIdx, reactIdx;
+        for (std::size_t i = 0; i < buffer.channels().size(); ++i) {
+            if (buffer.channels()[i].number == options.latency->stimChannel)
+                stimIdx = i;
+            if (buffer.channels()[i].number == options.latency->reactChannel)
+                reactIdx = i;
+        }
+        if (stimIdx && reactIdx)
+            pair = LatencyPairSpec{*stimIdx, options.latency->stimFalling, *reactIdx, options.latency->reactFalling,
+                                   std::nullopt};
+    }
+
+    const std::vector<ChannelStats>* stats = &*out.stats;
+    std::optional<std::vector<InvariantResult>> invariantResults;
+    if (segments && segments->count > 1) {
+        out.segments = analyzeSegments(buffer, *segments, pair, options.collectLatencyEvents,
+                                       options.invariants ? &*options.invariants : nullptr);
+        stats = &out.segments->stats;
+        out.latency = out.segments->latency;
+        invariantResults = out.segments->invariants;
+        out.doc["segments"] = toJson(*out.segments);
+        if (options.summary || options.summaryEdges)
+            out.doc["capture"] = captureToJson(buffer, *stats, false, board);
+    } else {
+        if (options.summary || options.summaryEdges)
+            out.doc["capture"] = captureToJson(buffer, *out.stats, options.summaryEdges, board);
+        if (pair)
+            out.latency = SignalAnalyzer::analyzeLatency(buffer, *pair, options.collectLatencyEvents);
+        if (options.invariants)
+            invariantResults = evaluateInvariants(buffer, *options.invariants);
+    }
+    if (out.latency)
+        out.doc["latency"] = toJson(*out.latency, false);
+
+    if (options.expectations) {
+        const auto checks = cli::evaluateExpectations(*options.expectations, *stats, out.latency);
+        bool allOk = !checks.empty();
+        auto arr = json::array();
+        for (const auto& c : checks) {
+            allOk = allOk && c.passed;
+            arr.push_back({{"expression", c.expression},
+                           {"passed", c.passed},
+                           {"actual", c.actual ? json(*c.actual) : json(nullptr)},
+                           {"detail", c.detail}});
+        }
+        out.expectationsPassed = allOk;
+        out.doc["assertions"] = {{"passed", allOk}, {"checks", std::move(arr)}};
+    }
+    if (invariantResults) {
+        out.doc["invariants"] = toJson(buffer, *invariantResults);
+        out.expectationsPassed = out.expectationsPassed && allPassed(*invariantResults);
+    }
 }
 
 CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec& spec, const CaptureConfig& cfg,
@@ -278,6 +362,10 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
         }
     }
 
+    if (cfg.segments > 1 && !result.edgeSensitive && result.status == CaptureStatus::Ok)
+        allWarnings.push_back("segmented capture on a level-sensitive trigger: a window re-triggers at once while the "
+                              "trigger line still has the trigger level (update the firmware for edge re-arm)");
+
     CaptureDocument out;
     out.doc = {
         {"schema_version", kCaptureSchemaVersion},
@@ -294,6 +382,7 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
           {"channels", channels},
           {"trigger", trigger},
           {"timeout_ms", cfg.timeout.count()},
+          {"segments", cfg.segments},
           {"firmware_poll_latency_ms", defaultPollLatencyFor(info.version).count()}}},
         {"attempts", result.attempts},
         {"elapsed_ms", result.elapsed.count()},
@@ -305,49 +394,8 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
     if (!options.setup.empty())
         out.doc["setup"] = toJson(options.setup);
 
-    if (result.buffer) {
-        SignalAnalyzer::Options opts;
-        opts.collectEdges = options.collectEdges || options.summaryEdges;
-        out.stats = SignalAnalyzer(opts).analyze(*result.buffer);
-        if (options.summary || options.summaryEdges)
-            out.doc["capture"] = captureToJson(*result.buffer, *out.stats, options.summaryEdges, info.version.board);
-
-        if (options.latency) {
-            std::optional<std::size_t> stimIdx, reactIdx;
-            for (std::size_t i = 0; i < result.buffer->channels().size(); ++i) {
-                if (result.buffer->channels()[i].number == options.latency->stimChannel)
-                    stimIdx = i;
-                if (result.buffer->channels()[i].number == options.latency->reactChannel)
-                    reactIdx = i;
-            }
-            if (stimIdx && reactIdx) {
-                LatencyPairSpec pair{*stimIdx, options.latency->stimFalling, *reactIdx,
-                                     options.latency->reactFalling, std::nullopt};
-                out.latency = SignalAnalyzer::analyzeLatency(*result.buffer, pair, options.collectLatencyEvents);
-                out.doc["latency"] = toJson(*out.latency, false);
-            }
-        }
-
-        if (options.expectations) {
-            const auto checks = cli::evaluateExpectations(*options.expectations, *out.stats, out.latency);
-            bool allOk = !checks.empty();
-            auto arr = json::array();
-            for (const auto& c : checks) {
-                allOk = allOk && c.passed;
-                arr.push_back({{"expression", c.expression},
-                               {"passed", c.passed},
-                               {"actual", c.actual ? json(*c.actual) : json(nullptr)},
-                               {"detail", c.detail}});
-            }
-            out.expectationsPassed = allOk;
-            out.doc["assertions"] = {{"passed", allOk}, {"checks", std::move(arr)}};
-        }
-        if (options.invariants) {
-            const auto results = evaluateInvariants(*result.buffer, *options.invariants);
-            out.doc["invariants"] = toJson(*result.buffer, results);
-            out.expectationsPassed = out.expectationsPassed && allPassed(results);
-        }
-    }
+    if (result.buffer)
+        analyzeIntoDocument(out, *result.buffer, result.segments, options, info.version.board);
     if (result.lineDump) {
         auto dump = json::array();
         for (const auto& st : SignalAnalyzer{}.analyze(*result.lineDump))

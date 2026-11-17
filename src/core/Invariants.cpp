@@ -369,7 +369,7 @@ void addViolation(InvariantResult& r, std::size_t sample, std::string detail)
 {
     ++r.violations;
     if (r.examples.size() < InvariantResult::kMaxExamples)
-        r.examples.push_back({sample, std::move(detail)});
+        r.examples.push_back({sample, std::move(detail), std::nullopt, std::nullopt});
 }
 
 // Intervals in which `bad(word)` holds: a violation when one lasts longer than `settle` samples.
@@ -642,8 +642,13 @@ nlohmann::json toJson(const CaptureBuffer& buffer, const std::vector<InvariantRe
     auto arr = nlohmann::json::array();
     for (const auto& r : results) {
         auto examples = nlohmann::json::array();
-        for (const auto& v : r.examples)
-            examples.push_back({{"sample", v.sample}, {"time_us", buffer.timeOfSample(v.sample) * 1e6}, {"detail", v.detail}});
+        for (const auto& v : r.examples) {
+            examples.push_back({{"sample", v.sample},
+                                {"time_us", v.timeSeconds.value_or(buffer.timeOfSample(v.sample)) * 1e6},
+                                {"detail", v.detail}});
+            if (v.segment)
+                examples.back()["segment"] = *v.segment;
+        }
         nlohmann::json j = {{"rule", r.rule},
                             {"passed", r.passed},
                             {"checked", r.checked},

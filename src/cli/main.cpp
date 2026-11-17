@@ -202,6 +202,24 @@ void printInvariants(const json& invariants)
     }
 }
 
+void printSegments(const lt::SegmentAnalysis& a)
+{
+    std::size_t flagged = 0;
+    std::string first;
+    for (const auto& w : a.perWindow) {
+        const bool bad = w.value("edges", 0) == 0 || (w.contains("pairs") && w.value("pairs", 0) == 0) ||
+                         w.value("drops", 0) > 0 || w.value("spurious", 0) > 0 || w.value("invariant_violations", 0) > 0;
+        if (bad && flagged++ < 8)
+            first += (first.empty() ? "" : ", ") + std::to_string(w.value("window", 0));
+    }
+    std::cout << "Segments: " << a.layout.count << " windows x " << a.layout.postSamples << " samples ("
+              << a.layout.preSamples << " pre-trigger before window 1); time between windows not recorded\n";
+    std::cout << "Windows needing attention: " << flagged;
+    if (flagged)
+        std::cout << " (" << first << (flagged > 8 ? ", ..." : "") << ")";
+    std::cout << '\n';
+}
+
 // --invariant text -> rules (nullopt with a usage error).
 std::optional<std::optional<std::vector<lt::InvariantRule>>> invariantOption(const QCommandLineParser& p,
                                                                             std::string& error)
@@ -275,7 +293,7 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
                                 std::string userNote, const std::optional<lt::cli::LatencyArg>& latencyArg,
                                 const std::vector<lt::Annotation>& annotations = {}, const json* assertions = nullptr,
                                 const lt::SetupInfo& setup = {}, const std::vector<std::string>& warnings = {},
-                                const json* invariants = nullptr)
+                                const json* invariants = nullptr, const lt::SegmentAnalysis* segments = nullptr)
 {
     lt::ReportOptions ro;
     ro.mode = mode;
@@ -299,7 +317,7 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
             ro.latency = lt::LatencyPairSpec{*sIdx, latencyArg->stimFalling, *rIdx, latencyArg->reactFalling, {}};
     }
 
-    std::string out = lt::copyForAi(buf, ro);
+    std::string out = segments ? lt::segmentsForAi(*segments, ro) : lt::copyForAi(buf, ro);
     if (assertions && assertions->is_object() && assertions->contains("checks")) {
         std::ostringstream ss;
         ss << "\n### Assertions: " << (assertions->value("passed", false) ? "PASS" : "FAIL") << "\n\n";
@@ -528,6 +546,8 @@ int cmdCapture(const QStringList& args, Output o)
         {"freq", "Sample rate, e.g. 1M, 250k, 100000 (default 1M).", "Hz", "1M"},
         {"samples", "Total samples (pre + post trigger), e.g. 10k (default 10k).", "n", "10k"},
         {"pre-samples", "Samples kept before the trigger (default: 10% of --samples).", "n"},
+        {"segments", "Record N trigger windows in one run (segmented memory): --samples is one window, the "
+                     "firmware re-arms on the next edge, pre-trigger samples precede window 1 only.", "n"},
         {"channels", "1-based channels with optional names, e.g. 1:STIM,2:REACT,24:DO1 or 1-8 (default 1).",
          "list", "1"},
         {"trigger", "Trigger CH:rising|falling (a real edge with LogicTracer firmware, level-sensitive on older firmware) or "
@@ -623,10 +643,29 @@ int cmdCapture(const QStringList& args, Output o)
                            "their default pull-down). Fit an external pull-up resistor.");
     }
 
+    uint32_t segments = 1;
+    if (p.isSet("segments")) {
+        const auto n = lt::cli::parseQuantity(str(p.value("segments")));
+        if (!n || *n < 1 || *n > 65536)
+            return report(o, ExitUsage, "invalid --segments '" + str(p.value("segments")) + "' (expected 1..65536)");
+        segments = static_cast<uint32_t>(*n);
+    }
+    if (segments > 1) {
+        if (trigger->none)
+            return report(o, ExitUsage, "--segments needs --trigger (every window starts on a trigger edge)");
+        if (p.isSet("out-vcd") || p.isSet("out-csv"))
+            return report(o, ExitUsage, "--out-vcd / --out-csv cannot represent a segmented capture (the time "
+                                        "between windows is unknown); use --out-json");
+    }
+
     const bool hasArmedHook = p.isSet("ready-file") || p.isSet("on-armed");
     const QString sock = p.isSet("no-session") ? QString{} : socketPathFrom(p);
     const std::string reqPort = p.isSet("port") ? str(p.value("port")) : std::string{};
-    if (!hasArmedHook && sessionHoldsTargetPort(sock, reqPort)) {
+    const bool viaSession = !hasArmedHook && sessionHoldsTargetPort(sock, reqPort);
+    if (viaSession && segments > 1)
+        return report(o, ExitError, "--segments is not available through the GUI session; disconnect the device "
+                                    "in the GUI first");
+    if (viaSession) {
         json params = {
             {"channels", str(p.value("channels"))},
             {"freq", *freq},
@@ -746,6 +785,7 @@ int cmdCapture(const QStringList& args, Output o)
         spec.trigger = trigger->trigger;
     spec.timeout = *timeout;
     spec.probeOnTimeout = !p.isSet("no-probe");
+    spec.segments = segments;
 
     lt::DocumentOptions docOptions;
     docOptions.collectEdges = p.isSet("out-json");
@@ -799,7 +839,8 @@ int cmdCapture(const QStringList& args, Output o)
             aiText = buildBufferAiReport(*result.buffer, *aiMode, "LogicTracer capture (" + info.port + ")", trigDesc,
                                          info.version.raw, info.version.board, str(p.value("note")), latencyArg, {},
                                          assertionsPtr, *setup, doc["warnings"].get<std::vector<std::string>>(),
-                                         doc.contains("invariants") ? &doc["invariants"] : nullptr);
+                                         doc.contains("invariants") ? &doc["invariants"] : nullptr,
+                                         outcome.document.segments ? &*outcome.document.segments : nullptr);
         } else if (result.status == lt::CaptureStatus::Timeout) {
             aiText = lt::timeoutForAi(result.lineDump ? *result.lineDump : lt::CaptureBuffer{},
                                       lt::toString(result.status), result.error, trigDesc, info.version.board,
@@ -831,8 +872,10 @@ int cmdCapture(const QStringList& args, Output o)
         std::cout << result.buffer->size() << " samples @ " << lt::formatHz(spec.frequency) << " ("
                   << lt::formatTime(static_cast<double>(result.buffer->size()) / spec.frequency) << "), trigger "
                   << trigDesc << '\n';
+        if (outcome.document.segments)
+            printSegments(*outcome.document.segments);
         if (p.isSet("summary") && stats)
-            printSummaryTable(*stats);
+            printSummaryTable(outcome.document.segments ? outcome.document.segments->stats : *stats);
         if (outcome.document.latency) {
             printLatency(*outcome.document.latency);
         }
@@ -936,11 +979,11 @@ int cmdAnalyze(const QStringList& args, Output o)
     if (!setup)
         return report(o, ExitUsage, error);
 
-    lt::SignalAnalyzer::Options anOpts;
-    anOpts.collectEdges = p.isSet("out-json") || p.isSet("edges");
-    lt::CaptureDocument capDoc;
-    capDoc.stats = lt::SignalAnalyzer(anOpts).analyze(buf);
+    if (loaded.segments && (p.isSet("out-vcd") || p.isSet("out-csv")))
+        return report(o, ExitUsage, "--out-vcd / --out-csv cannot represent a segmented capture (the time between "
+                                    "windows is unknown); use --out-json");
 
+    lt::CaptureDocument capDoc;
     capDoc.doc = {
         {"schema_version", lt::kCaptureSchemaVersion},
         {"command", "analyze"},
@@ -957,40 +1000,15 @@ int cmdAnalyze(const QStringList& args, Output o)
     }
     if (!setup->empty())
         capDoc.doc["setup"] = lt::toJson(*setup);
-    if (p.isSet("summary") || p.isSet("edges") || o.json)
-        capDoc.doc["capture"] = lt::captureToJson(buf, *capDoc.stats, p.isSet("edges"));
-
-    if (latencyArg) {
-        std::size_t stimIdx = 0, reactIdx = 0;
-        for (std::size_t i = 0; i < buf.channels().size(); ++i) {
-            if (buf.channels()[i].number == latencyArg->stimChannel) stimIdx = i;
-            if (buf.channels()[i].number == latencyArg->reactChannel) reactIdx = i;
-        }
-        capDoc.latency = lt::SignalAnalyzer::analyzeLatency(
-            buf, {stimIdx, latencyArg->stimFalling, reactIdx, latencyArg->reactFalling, std::nullopt},
-            p.isSet("out-events-csv"));
-        capDoc.doc["latency"] = lt::toJson(*capDoc.latency, false);
-    }
-
-    if (expectations) {
-        const auto checks = lt::cli::evaluateExpectations(*expectations, *capDoc.stats, capDoc.latency);
-        bool allOk = !checks.empty();
-        auto arr = json::array();
-        for (const auto& c : checks) {
-            allOk = allOk && c.passed;
-            arr.push_back({{"expression", c.expression},
-                           {"passed", c.passed},
-                           {"actual", c.actual ? json(*c.actual) : json(nullptr)},
-                           {"detail", c.detail}});
-        }
-        capDoc.expectationsPassed = allOk;
-        capDoc.doc["assertions"] = {{"passed", allOk}, {"checks", std::move(arr)}};
-    }
-    if (*invariants) {
-        const auto results = lt::evaluateInvariants(buf, **invariants);
-        capDoc.doc["invariants"] = lt::toJson(buf, results);
-        capDoc.expectationsPassed = capDoc.expectationsPassed && lt::allPassed(results);
-    }
+    lt::DocumentOptions docOptions;
+    docOptions.collectEdges = p.isSet("out-json") || p.isSet("edges");
+    docOptions.summary = p.isSet("summary") || p.isSet("edges") || o.json;
+    docOptions.summaryEdges = p.isSet("edges");
+    docOptions.latency = latencyArg;
+    docOptions.collectLatencyEvents = p.isSet("out-events-csv");
+    docOptions.expectations = expectations;
+    docOptions.invariants = *invariants;
+    lt::analyzeIntoDocument(capDoc, buf, loaded.segments, docOptions);
 
     lt::CaptureResult fakeRes;
     fakeRes.status = lt::CaptureStatus::Ok;
@@ -1015,7 +1033,8 @@ int cmdAnalyze(const QStringList& args, Output o)
         aiText = buildBufferAiReport(buf, *aiMode, "LogicTracer analyze: " + inputPath, loaded.triggerDescription, {},
                                      str(p.value("board")), str(p.value("note")), latencyArg, loaded.annotations,
                                      assertionsPtr, *setup, loaded.warnings,
-                                     capDoc.doc.contains("invariants") ? &capDoc.doc["invariants"] : nullptr);
+                                     capDoc.doc.contains("invariants") ? &capDoc.doc["invariants"] : nullptr,
+                                     capDoc.segments ? &*capDoc.segments : nullptr);
     }
 
     if (p.isSet("ai")) {
@@ -1029,7 +1048,9 @@ int cmdAnalyze(const QStringList& args, Output o)
 
     std::cout << "Analyze " << inputPath << ": " << buf.size() << " samples @ " << lt::formatHz(buf.frequency())
               << ", trigger_sample=" << buf.triggerIndex() << '\n';
-    printSummaryTable(*capDoc.stats);
+    if (capDoc.segments)
+        printSegments(*capDoc.segments);
+    printSummaryTable(capDoc.segments ? capDoc.segments->stats : *capDoc.stats);
     if (capDoc.latency) {
         printLatency(*capDoc.latency);
     }

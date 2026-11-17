@@ -231,9 +231,16 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
         return "post-trigger samples " + std::to_string(c.postSamples) + " out of range " +
                std::to_string(lim.minPostSamples) + ".." + std::to_string(lim.maxPostSamples) + " (" + modeStr +
                " mode)";
-    if (static_cast<uint64_t>(c.preSamples) + c.postSamples > lim.maxTotalSamples)
-        return "total samples exceed device buffer: max " + std::to_string(lim.maxTotalSamples) + " in " +
-               modeStr + " mode";
+    if (c.segments == 0 || c.segments > 65536)
+        return "segments must be 1..65536";
+    if (c.segments > 1 && !c.trigger)
+        return "a segmented capture needs a trigger";
+    if (c.segments > 256 && m_info.generation == ProtocolGeneration::V5)
+        return "this firmware accepts at most 256 segments";
+    const uint64_t total = static_cast<uint64_t>(c.preSamples) + static_cast<uint64_t>(c.postSamples) * c.segments;
+    if (total > lim.maxTotalSamples)
+        return "total samples (" + std::to_string(total) + ") exceed device buffer: max " +
+               std::to_string(lim.maxTotalSamples) + " in " + modeStr + " mode";
     return std::nullopt;
 }
 
@@ -253,6 +260,7 @@ CaptureRequestPacket PicoConnection::buildRequest(const CaptureConfig& c, const 
     req.frequency = c.frequency;
     req.preSamples = c.preSamples;
     req.postSamples = c.postSamples;
+    req.loopCount = static_cast<uint16_t>(c.segments - 1);
     req.captureMode = captureModeFor(numbers);
     return req;
 }
@@ -281,7 +289,8 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
 
     std::vector<EdgeTrigger> plan;
     const auto captureTime = milliseconds(
-        1 + (static_cast<uint64_t>(config.preSamples) + config.postSamples) * 1000 / std::max(1u, config.frequency));
+        1 + (static_cast<uint64_t>(config.preSamples) + static_cast<uint64_t>(config.postSamples) * config.segments) *
+                1000 / std::max(1u, config.frequency));
     milliseconds wait;
     if (config.trigger) {
         plan.push_back(*config.trigger);
@@ -322,6 +331,9 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
     // Immediate mode: the trigger fires on the first sample, so the pre-trigger part holds stale memory.
     if (!config.trigger && result.buffer)
         result.buffer = result.buffer->dropFront(config.preSamples);
+    if (config.segments > 1 && config.trigger)
+        result.segments = SegmentLayout{config.segments, config.preSamples, config.postSamples, config.trigger->channel,
+                                        config.trigger->inverted};
 
     if (result.status == CaptureStatus::Timeout) {
         if (result.error.empty())

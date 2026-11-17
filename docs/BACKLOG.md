@@ -55,7 +55,12 @@ GPL-3.0 from upstream `gusmanb/logicanalyzer` with modification notices (see `NO
 - [x] Firmware: edge-sensitive trigger (type 4, `FEATURES:1`) with re-arm for `loopCount` (the same pulse
       cannot re-trigger). Verified on the live Pico: a falling trigger on an idle-LOW line now waits
       (TIMEOUT) instead of firing at once; immediate captures and probes unchanged.
-- [ ] Expose `loopCount` (with edge re-arm) in the host for N = 1000 burst series.
+- [x] `capture --segments N` (firmware `loopCount`, edge re-arm): window-by-window analysis combined for the
+      summary, latency, `--expect` and `--invariant`; `segments` in the JSON (layout + per-window rows),
+      `analyze` re-splits saved files, replay supports it. Verified on the Pico with the PYNQ burst: one BTN1
+      press, 100 windows of 2 us (20 020 samples instead of ~50 000), 100/100 pairs, 0 drops, 50..60 ns.
+- [ ] Segmented captures through the GUI session and MCP; burst timestamps for the edge programs (the time
+      between windows).
 - [x] Edge-fire on hardware with the PYNQ burst (BTN1, 100 MHz, 1000 pre-samples): `1:rising` fires on the
       first STIM rise (sample 1000, REACT at 994); `1:falling` on an idle-LOW line waits and fires on the
       first STIM fall with the rise 201 samples earlier in the pre-trigger buffer; `2:rising` with

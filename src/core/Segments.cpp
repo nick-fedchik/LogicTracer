@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Mykola Fedchyk
+
+#include "core/Segments.hpp"
+
+#include "core/Format.hpp"
+
+#include <algorithm>
+#include <sstream>
+
+namespace lt {
+
+nlohmann::json toJson(const SegmentLayout& layout)
+{
+    nlohmann::json j = {{"count", layout.count},
+                        {"pre_samples", layout.preSamples},
+                        {"post_samples", layout.postSamples},
+                        {"note", "windows are stored back to back; the time between them is not recorded"}};
+    if (layout.triggerChannel) {
+        j["trigger_channel"] = *layout.triggerChannel + 1;
+        j["trigger_edge"] = layout.triggerFalling ? "falling" : "rising";
+    }
+    return j;
+}
+
+std::optional<SegmentLayout> segmentLayoutFromJson(const nlohmann::json& j, std::string* error)
+{
+    auto fail = [&](std::string msg) -> std::optional<SegmentLayout> {
+        if (error)
+            *error = std::move(msg);
+        return std::nullopt;
+    };
+    if (!j.is_object())
+        return fail("segment layout must be an object");
+    auto uint = [&](const char* key, uint64_t lo, uint64_t hi) -> std::optional<uint32_t> {
+        if (!j.contains(key) || !j[key].is_number_integer())
+            return std::nullopt;
+        const auto v = j[key].get<int64_t>();
+        return v >= 0 && static_cast<uint64_t>(v) >= lo && static_cast<uint64_t>(v) <= hi
+                   ? std::optional<uint32_t>(static_cast<uint32_t>(v))
+                   : std::nullopt;
+    };
+    SegmentLayout l;
+    const auto count = uint("count", 1, 65536);
+    const auto pre = uint("pre_samples", 0, UINT32_MAX);
+    const auto post = uint("post_samples", 1, UINT32_MAX);
+    if (!count || !pre || !post)
+        return fail("segment layout needs count (1..65536), pre_samples and post_samples (>= 1)");
+    l.count = *count;
+    l.preSamples = *pre;
+    l.postSamples = *post;
+    if (j.contains("trigger_channel")) {
+        const auto ch = uint("trigger_channel", 1, 32);
+        if (!ch)
+            return fail("segment layout trigger_channel must be 1..32");
+        l.triggerChannel = static_cast<uint8_t>(*ch - 1);
+        l.triggerFalling = j.value("trigger_edge", std::string("rising")) == "falling";
+    }
+    return l;
+}
+
+std::vector<CaptureBuffer> splitSegments(const CaptureBuffer& buffer, const SegmentLayout& layout)
+{
+    std::vector<CaptureBuffer> out;
+    if (layout.count == 0 || layout.postSamples == 0 || buffer.size() != layout.totalSamples())
+        return out;
+    std::optional<std::size_t> trigBit;
+    if (layout.triggerChannel)
+        for (std::size_t i = 0; i < buffer.channels().size(); ++i)
+            if (buffer.channels()[i].number == *layout.triggerChannel)
+                trigBit = i;
+    const auto& s = buffer.samples();
+    out.reserve(layout.count);
+    out.emplace_back(buffer.channels(), buffer.frequency(), layout.preSamples,
+                     std::vector<uint32_t>(s.begin(), s.begin() + layout.preSamples + layout.postSamples));
+    for (uint32_t k = 1; k < layout.count; ++k) {
+        const auto first = s.begin() + layout.preSamples + static_cast<std::ptrdiff_t>(k) * layout.postSamples;
+        std::vector<uint32_t> w;
+        w.reserve(layout.postSamples + 1);
+        if (trigBit) {
+            const uint32_t mask = 1u << *trigBit;
+            w.push_back(layout.triggerFalling ? (*first | mask) : (*first & ~mask));
+        }
+        w.insert(w.end(), first, first + layout.postSamples);
+        CaptureBuffer win(buffer.channels(), buffer.frequency(), 0, std::move(w));
+        win.setTriggerIndex(trigBit ? 1 : 0);
+        out.push_back(std::move(win));
+    }
+    return out;
+}
+
+std::vector<ChannelStats> mergeChannelStats(const std::vector<std::vector<ChannelStats>>& windows)
+{
+    if (windows.empty())
+        return {};
+    std::vector<ChannelStats> out;
+    for (std::size_t c = 0; c < windows.front().size(); ++c) {
+        ChannelStats m;
+        const auto& f = windows.front()[c];
+        m.channelIndex = f.channelIndex;
+        m.channel = f.channel;
+        m.sampleRateHz = f.sampleRateHz;
+        m.triggerSample = f.triggerSample;
+        m.idleLevel = f.idleLevel;
+        m.finalLevel = windows.back()[c].finalLevel;
+        m.trailingSamples = windows.back()[c].trailingSamples;
+        double highSamples = 0, freqSum = 0, freqWeight = 0, dutySum = 0, dutyWeight = 0;
+        auto mergeWidth = [](std::optional<PulseWidth>& into, uint64_t& intoCount, const std::optional<PulseWidth>& w,
+                             uint64_t count) {
+            if (!w || count == 0)
+                return;
+            if (!into) {
+                into = *w;
+            } else {
+                into->minSamples = std::min(into->minSamples, w->minSamples);
+                into->maxSamples = std::max(into->maxSamples, w->maxSamples);
+                into->meanSamples = (into->meanSamples * static_cast<double>(intoCount) +
+                                     w->meanSamples * static_cast<double>(count)) /
+                                    static_cast<double>(intoCount + count);
+            }
+            intoCount += count;
+        };
+        uint64_t highCount = 0, lowCount = 0;
+        for (const auto& win : windows) {
+            const auto& st = win[c];
+            m.sampleCount += st.sampleCount;
+            m.transitions += st.transitions;
+            m.risingEdges += st.risingEdges;
+            m.fallingEdges += st.fallingEdges;
+            m.glitchCount += st.glitchCount;
+            m.pulseCountHigh += st.pulseCountHigh;
+            m.pulseCountLow += st.pulseCountLow;
+            mergeWidth(m.highWidth, highCount, st.highWidth, st.pulseCountHigh);
+            mergeWidth(m.lowWidth, lowCount, st.lowWidth, st.pulseCountLow);
+            highSamples += st.highTimePercent / 100.0 * static_cast<double>(st.sampleCount);
+            const auto w = static_cast<double>(st.transitions);
+            if (st.meanFrequencyHz && w > 0) {
+                freqSum += *st.meanFrequencyHz * w;
+                freqWeight += w;
+            }
+            if (st.dutyCyclePercent && w > 0) {
+                dutySum += *st.dutyCyclePercent * w;
+                dutyWeight += w;
+            }
+            if (!m.firstEdgeTimeS && st.firstEdgeTimeS)
+                m.firstEdgeTimeS = st.firstEdgeTimeS;
+        }
+        m.highTimePercent = m.sampleCount ? 100.0 * highSamples / static_cast<double>(m.sampleCount) : 0.0;
+        if (freqWeight > 0)
+            m.meanFrequencyHz = freqSum / freqWeight;
+        if (dutyWeight > 0)
+            m.dutyCyclePercent = dutySum / dutyWeight;
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+namespace {
+
+std::vector<InvariantResult> mergeInvariants(const std::vector<std::vector<InvariantResult>>& perWindow,
+                                             const std::vector<CaptureBuffer>& windows)
+{
+    std::vector<InvariantResult> out;
+    if (perWindow.empty())
+        return out;
+    out.resize(perWindow.front().size());
+    for (std::size_t r = 0; r < out.size(); ++r) {
+        auto& m = out[r];
+        m.rule = perWindow.front()[r].rule;
+        for (std::size_t w = 0; w < perWindow.size(); ++w) {
+            const auto& res = perWindow[w][r];
+            if (m.error.empty())
+                m.error = res.error;
+            m.checked += res.checked;
+            m.violations += res.violations;
+            m.censored += res.censored;
+            for (auto ex : res.examples) {
+                if (m.examples.size() >= InvariantResult::kMaxExamples)
+                    break;
+                ex.segment = static_cast<uint32_t>(w + 1);
+                ex.timeSeconds = windows[w].timeOfSample(ex.sample);
+                ex.detail = "window " + std::to_string(w + 1) + ": " + ex.detail;
+                m.examples.push_back(std::move(ex));
+            }
+        }
+        m.passed = m.error.empty() && m.violations == 0;
+    }
+    return out;
+}
+
+}  // namespace
+
+SegmentAnalysis analyzeSegments(const CaptureBuffer& buffer, const SegmentLayout& layout,
+                                const std::optional<LatencyPairSpec>& latency, bool keepLatencyEvents,
+                                const std::vector<InvariantRule>* invariants)
+{
+    SegmentAnalysis a;
+    a.layout = layout;
+    a.windows = splitSegments(buffer, layout);
+    std::vector<std::vector<ChannelStats>> stats;
+    std::vector<LatencyStats> lat;
+    std::vector<std::vector<InvariantResult>> inv;
+    for (std::size_t k = 0; k < a.windows.size(); ++k) {
+        const auto& w = a.windows[k];
+        stats.push_back(SignalAnalyzer{}.analyze(w));
+        uint64_t edges = 0;
+        for (const auto& st : stats.back())
+            edges += st.transitions;
+        nlohmann::json row = {{"window", k + 1}, {"samples", w.size()}, {"edges", edges}};
+        if (latency) {
+            lat.push_back(SignalAnalyzer::analyzeLatency(w, *latency, true));
+            const auto& l = lat.back();
+            row["pairs"] = l.count;
+            row["drops"] = l.unmatchedStimCount;
+            row["spurious"] = l.spuriousReactCount;
+            if (l.count)
+                row["max_delay_samples"] = l.maxSamples;
+        }
+        if (invariants) {
+            inv.push_back(evaluateInvariants(w, *invariants));
+            uint64_t v = 0;
+            for (const auto& r : inv.back())
+                v += r.violations + (r.error.empty() ? 0 : 1);
+            row["invariant_violations"] = v;
+        }
+        a.perWindow.push_back(std::move(row));
+    }
+    a.stats = mergeChannelStats(stats);
+    if (latency)
+        a.latency = SignalAnalyzer::mergeLatency(lat, keepLatencyEvents);
+    if (invariants)
+        a.invariants = mergeInvariants(inv, a.windows);
+    return a;
+}
+
+nlohmann::json toJson(const SegmentAnalysis& analysis)
+{
+    return {{"layout", toJson(analysis.layout)}, {"windows", analysis.perWindow}};
+}
+
+std::string segmentsForAi(const SegmentAnalysis& a, const ReportOptions& options)
+{
+    std::ostringstream ss;
+    const auto& L = a.layout;
+    const double rate = a.windows.empty() ? 0.0 : static_cast<double>(a.windows.front().frequency());
+    ss << "## " << (options.title.empty() ? std::string("LogicTracer segmented capture") : options.title) << "\n\n";
+    if (!options.userNote.empty())
+        ss << "> " << options.userNote << "\n\n";
+    for (const auto& w : options.warnings)
+        ss << "> WARNING: " << w << "\n";
+    if (!options.warnings.empty())
+        ss << "\n";
+    ss << "- Segmented capture: **" << L.count << " trigger windows** of " << L.postSamples << " samples";
+    if (rate > 0)
+        ss << " (" << formatTime(L.postSamples / rate) << ") at " << formatHz(static_cast<uint32_t>(rate));
+    ss << "; " << L.preSamples << " pre-trigger samples before window 1 only\n";
+    if (!options.triggerDescription.empty())
+        ss << "- Every window starts on: " << options.triggerDescription << "\n";
+    ss << "- The time between windows is NOT recorded: do not infer periods or gaps across windows\n";
+    if (!options.deviceVersion.empty())
+        ss << "- Device: " << options.deviceVersion << "\n";
+    for (const auto& [k, v] : options.setup)
+        ss << "- Setup " << k << ": " << v << "\n";
+
+    ss << "\n### Activity over all windows\n\n| Ch | Name | Edges | Rising | Falling | HIGH pulses | HIGH width "
+          "(samples) | Freq in window |\n|---|---|---|---|---|---|---|---|\n";
+    for (const auto& st : a.stats) {
+        ss << "| " << st.channel.displayNumber() << " | " << st.channel.label() << " | " << st.transitions << " | "
+           << st.risingEdges << " | " << st.fallingEdges << " | " << st.pulseCountHigh << " | ";
+        if (st.highWidth)
+            ss << st.highWidth->minSamples << ".." << st.highWidth->maxSamples;
+        else
+            ss << "-";
+        ss << " | " << (st.meanFrequencyHz ? formatHz(static_cast<uint32_t>(*st.meanFrequencyHz)) : std::string("-"))
+           << " |\n";
+    }
+    if (a.latency)
+        ss << latencyMarkdown(*a.latency);
+
+    std::vector<std::string> attention;
+    std::size_t flagged = 0;
+    for (const auto& w : a.perWindow) {
+        std::string why;
+        if (w.value("edges", 0) == 0)
+            why += "no edges; ";
+        if (w.contains("pairs") && w.value("pairs", 0) == 0)
+            why += "no latency pair; ";
+        if (w.value("drops", 0) > 0)
+            why += std::to_string(w.value("drops", 0)) + " drop(s); ";
+        if (w.value("spurious", 0) > 0)
+            why += std::to_string(w.value("spurious", 0)) + " spurious; ";
+        if (w.value("invariant_violations", 0) > 0)
+            why += std::to_string(w.value("invariant_violations", 0)) + " invariant violation(s); ";
+        if (why.empty())
+            continue;
+        ++flagged;
+        if (attention.size() < 16)
+            attention.push_back("- window " + std::to_string(w.value("window", 0)) + ": " + why.substr(0, why.size() - 2));
+    }
+    ss << "\n### Windows needing attention: " << flagged << " of " << L.count << "\n\n";
+    for (const auto& line : attention)
+        ss << line << "\n";
+    if (flagged > attention.size())
+        ss << "- ... " << flagged - attention.size() << " more (see `segments.windows` in the JSON)\n";
+
+    if (!a.windows.empty()) {
+        ReportOptions first = options;
+        first.title = "Window 1 of " + std::to_string(L.count) + " in detail";
+        first.userNote.clear();
+        first.warnings.clear();
+        ss << "\n" << copyForAi(a.windows.front(), first);
+    }
+    return ss.str();
+}
+
+}  // namespace lt

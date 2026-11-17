@@ -8,6 +8,7 @@ add_library(logictracer_core STATIC
     CaptureBuffer.cpp CaptureBuffer.hpp
     CaptureDiff.cpp CaptureDiff.hpp
     Invariants.cpp Invariants.hpp
+    Segments.cpp Segments.hpp
     CaptureTypes.cpp CaptureTypes.hpp
     DeviceProtocol.cpp DeviceProtocol.hpp
     Exporters.cpp Exporters.hpp

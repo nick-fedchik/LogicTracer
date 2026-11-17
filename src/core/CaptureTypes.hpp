@@ -44,6 +44,22 @@ struct EdgeTrigger {
     bool inverted = false;  // false = rising/high, true = falling/low
 };
 
+// Segmented capture: the firmware re-arms after each post-trigger window (loopCount = count - 1) and stores
+// the windows back to back: pre + post x count samples, the pre-trigger part before the first window only.
+// The time between windows is not recorded.
+struct SegmentLayout {
+    uint32_t count = 1;
+    uint32_t preSamples = 0;
+    uint32_t postSamples = 0;
+    std::optional<uint8_t> triggerChannel;  // hardware channel (0-based) whose edge starts every window
+    bool triggerFalling = false;
+
+    [[nodiscard]] uint64_t totalSamples() const noexcept
+    {
+        return preSamples + static_cast<uint64_t>(postSamples) * count;
+    }
+};
+
 struct CaptureConfig {
     std::vector<ChannelInfo> channels;
     uint32_t frequency = 1'000'000;
@@ -56,6 +72,8 @@ struct CaptureConfig {
     std::chrono::milliseconds timeout = 5000ms;
     // On TIMEOUT, run probe() on the same channels to report the current line state.
     bool probeOnTimeout = true;
+    // Trigger windows to record (needs a trigger); see SegmentLayout. 1 = an ordinary capture.
+    uint32_t segments = 1;
 };
 
 enum class CaptureStatus { Ok, Timeout, Error, Cancelled };
@@ -76,6 +94,7 @@ struct CaptureResult {
     bool portLost = false;                  // true when the serial device disconnected mid-operation
     bool edgeSensitive = false;             // the trigger fired on a real transition (not on a level)
     std::vector<std::string> warnings;      // caveats of the data source (e.g. a replayed VCD with x/z levels)
+    std::optional<SegmentLayout> segments;  // set for a segmented capture (CaptureConfig::segments > 1)
 };
 
 struct ProbeResult {
