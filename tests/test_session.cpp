@@ -512,7 +512,20 @@ private Q_SLOTS:
             QVERIFY2(cli.out.contains(expected), qPrintable(cli.out));
         QVERIFY(cli.err.contains("warning:") && cli.err.contains("1:transitions>100"));
         QCOMPARE(cli.err, direct.err);
-        QCOMPARE(cli.out.section('\n', 1), direct.out.section('\n', 1));  // first line names the transport
+        const auto resultLines = [](const QString& text) {
+            return text.trimmed().split('\n').mid(1);  // first line names the transport
+        };
+        auto proxyLines = resultLines(cli.out);
+        auto directLines = resultLines(direct.out);
+        const QString prefix = "wrote csv: ";
+        for (auto* lines : {&proxyLines, &directLines}) {
+            QVERIFY(!lines->isEmpty());
+            const auto written = lines->takeLast().trimmed();
+            QVERIFY2(written.startsWith(prefix), qPrintable(written));
+            // The GUI canonicalizes paths; /var and /private/var can identify the same file.
+            QCOMPARE(QFileInfo(written.mid(prefix.size())).canonicalFilePath(), QFileInfo(output).canonicalFilePath());
+        }
+        QCOMPARE(proxyLines, directLines);
 
         // An invalid request is a usage error, like on the direct path, and keeps the capture on screen live.
         const auto idBefore = runCli({"view", "--json"}, path).doc["capture_id"].get<std::uint64_t>();
