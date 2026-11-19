@@ -213,7 +213,20 @@ class Contracts(unittest.TestCase):
                       "--measure-latency", "1:falling..2:falling")
         with open(self.out("segnolat.json"), encoding="utf-8") as f:
             self.assertEqual(self.v.check(json.load(f), "capturefile.schema.json"), [])
-        self.json_cli("diff.schema.json", 0, "diff", self.out("segnolat.json"), self.rec, "--measure-latency", "1..2")
+        # A requested latency pair that one side does not record is a usage error, not an "equivalent" verdict.
+        self.json_cli("error.schema.json", 64, "diff", self.out("segnolat.json"), self.rec, "--measure-latency", "1..2")
+        self.json_cli("diff.schema.json", 0, "diff", self.rec, self.rec, "--measure-latency", "1..2")
+        empty = self.json_cli("diff.schema.json", 0, "diff", self.rec, self.rec, "--measure-latency", "1..3")
+        self.assertEqual(empty["latency"]["count"], {"a": 0, "b": 0})
+        self.assertEqual(empty["latency"]["p99_ns"], {"a": None, "b": None})
+        self.assertEqual(empty["latency"]["histogram_a"], [])
+        self.assertIsNone(empty["latency"]["same_fixed_delay_possible"])
+        idle = self.out("idle.json")
+        recording(idle, {"STIM": [], "REACT": []}, 100)
+        mixed = self.json_cli("diff.schema.json", 0, "diff", idle, self.rec, "--measure-latency", "1..2")
+        self.assertIsNone(mixed["latency"]["p99_ns"]["a"])
+        self.assertGreater(mixed["latency"]["p99_ns"]["b"], 0)
+        self.assertNotIn("delta", mixed["latency"]["p99_ns"])
 
     def test_error_documents_and_exit_codes(self):
         self.json_cli("error.schema.json", 64, "capture", "--samples", "lots")

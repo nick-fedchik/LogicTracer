@@ -1128,6 +1128,20 @@ int cmdDiff(const QStringList& args, Output o)
     if (!lt::loadCaptureFile(str(files[1]), b, &error))
         return report(o, ExitError, "B: " + error);
 
+    if (options.latency) {  // an explicitly requested comparison must be possible on both sides
+        const auto has = [](const lt::CaptureBuffer& buf, uint8_t ch) {
+            return std::any_of(buf.channels().begin(), buf.channels().end(),
+                               [ch](const lt::ChannelInfo& c) { return c.number == ch; });
+        };
+        for (const auto& [side, buf] : {std::pair<const char*, const lt::CaptureBuffer*>{"A", &a.buffer},
+                                        std::pair<const char*, const lt::CaptureBuffer*>{"B", &b.buffer}})
+            for (const uint8_t ch : {options.latency->stimChannel, options.latency->reactChannel})
+                if (!has(*buf, ch))
+                    return report(o, ExitUsage, "--measure-latency: channel " + std::to_string(ch + 1) +
+                                                    " is not present in capture " + side);
+    }
+    options.segmentsA = a.segments;
+    options.segmentsB = b.segments;
     json doc = lt::diffCaptures(a.buffer, b.buffer, options);
     auto loadWarnings = json::array();  // import caveats of the two files (JSON: warnings; Markdown: notes)
     for (const auto& w : a.warnings)

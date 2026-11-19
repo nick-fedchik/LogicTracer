@@ -6,6 +6,7 @@
 #include "core/AiReport.hpp"
 #include "core/Exporters.hpp"
 #include "core/Format.hpp"
+#include "core/Segments.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -89,8 +90,23 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
     json regressions = json::array(), improvements = json::array(), notes = json::array();
 
     // Channels, matched by hardware number.
+    // Segmented captures are analyzed window by window: the stored samples are not a continuous trace.
+    const auto segmented = [](const std::optional<SegmentLayout>& l, const CaptureBuffer& buf) {
+        return l && l->count > 1 && l->totalSamples() == buf.size();
+    };
+    const bool segA = segmented(options.segmentsA, a), segB = segmented(options.segmentsB, b);
+    if (segA != segB)
+        notes.push_back(std::string("only ") + (segA ? "A" : "B") +
+                        " is a segmented capture: its windows are analyzed separately from the continuous other side");
     SignalAnalyzer analyzer;
-    const auto statsA = analyzer.analyze(a), statsB = analyzer.analyze(b);
+    const auto specA0 = resolve(a, options), specB0 = resolve(b, options);
+    std::optional<SegmentAnalysis> windowsA, windowsB;
+    if (segA)
+        windowsA = analyzeSegments(a, *options.segmentsA, specA0, false, nullptr);
+    if (segB)
+        windowsB = analyzeSegments(b, *options.segmentsB, specB0, false, nullptr);
+    const auto statsA = windowsA ? windowsA->stats : analyzer.analyze(a);
+    const auto statsB = windowsB ? windowsB->stats : analyzer.analyze(b);
     json channels = json::array();
     for (std::size_t i = 0; i < statsA.size(); ++i) {
         const auto& ch = statsA[i].channel;
@@ -118,9 +134,9 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
     std::optional<LatencyStats> latA, latB;
     if (options.latency) {
         if (specA)
-            latA = SignalAnalyzer::analyzeLatency(a, *specA);
+            latA = windowsA ? windowsA->latency : SignalAnalyzer::analyzeLatency(a, *specA);
         if (specB)
-            latB = SignalAnalyzer::analyzeLatency(b, *specB);
+            latB = windowsB ? windowsB->latency : SignalAnalyzer::analyzeLatency(b, *specB);
         if (!latA || !latB)
             notes.push_back("the latency channels are not present in both captures");
     }
@@ -128,16 +144,21 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
         const auto& la = *latA;
         const auto& lb = *latB;
         const double tolerance = la.uncertaintyNs() + lb.uncertaintyNs();
+        constexpr double kEps = 1e-6;  // ns
+        // The two delay intervals (+-uncertainty around each value) are open: touching ends do not overlap.
+        const auto withinTolerance = [&](double delta) {
+            return std::abs(delta) <= kEps || std::abs(delta) < tolerance - kEps;
+        };
         auto metric = [&](const char* name, double va, double vb, bool hasValue) {
-            json m = {{"a", hasValue ? json(va) : json(nullptr)}, {"b", hasValue ? json(vb) : json(nullptr)}};
+            json m = {{"a", la.count ? json(va) : json(nullptr)}, {"b", lb.count ? json(vb) : json(nullptr)}};
             if (hasValue) {
                 m["delta"] = vb - va;
-                m["within_quantization"] = std::abs(vb - va) <= tolerance;
-                if (vb - va > tolerance)
+                m["within_quantization"] = withinTolerance(vb - va);
+                if (vb > va && !withinTolerance(vb - va))
                     regressions.push_back(std::string("latency ") + name + " increased by " + formatTime((vb - va) * 1e-9) +
                                           " (" + formatTime(va * 1e-9) + " -> " + formatTime(vb * 1e-9) +
                                           ", beyond the +-" + formatTime(tolerance * 1e-9) + " quantization)");
-                else if (va - vb > tolerance)
+                else if (va > vb && !withinTolerance(vb - va))
                     improvements.push_back(std::string("latency ") + name + " decreased by " +
                                            formatTime((va - vb) * 1e-9));
             }
@@ -151,9 +172,10 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
                     {"p50_ns", metric("p50", la.p50Ns, lb.p50Ns, both)},
                     {"p99_ns", metric("p99", la.p99Ns, lb.p99Ns, both)},
                     {"max_ns", metric("max", la.maxNs, lb.maxNs, both)},
-                    {"stdev_ns", {{"a", la.stdevNs}, {"b", lb.stdevNs}}},
-                    {"histogram_a", toJson(la)["histogram"]},
-                    {"histogram_b", toJson(lb)["histogram"]}};
+                    {"stdev_ns", {{"a", la.count ? json(la.stdevNs) : json(nullptr)},
+                                  {"b", lb.count ? json(lb.stdevNs) : json(nullptr)}}},
+                    {"histogram_a", toJson(la).value("histogram", json::array())},
+                    {"histogram_b", toJson(lb).value("histogram", json::array())}};
         if (lb.unmatchedStimCount > la.unmatchedStimCount)
             regressions.push_back("dropped stimuli increased (" + std::to_string(la.unmatchedStimCount) + " -> " +
                                   std::to_string(lb.unmatchedStimCount) + ")");
@@ -164,10 +186,12 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
             regressions.push_back("spurious reactions increased (" + std::to_string(la.spuriousReactCount) + " -> " +
                                   std::to_string(lb.spuriousReactCount) + ")");
         // Both captures may be explained by one fixed delay: then the histograms differ by sampling phase only.
-        if (la.constantDelayConsistent() && lb.constantDelayConsistent()) {
+        if (!both) {
+            lat["sampling_phase_verdict"] = "not comparable: at least one capture has no latency pairs";
+            lat["same_fixed_delay_possible"] = nullptr;
+        } else if (la.constantDelayConsistent() && lb.constantDelayConsistent()) {
             // Asynchronous captures bound the delay by an open interval, exact (in-design) ones by a point [d, d]:
             // the intersection is non-empty if lo < hi, or lo == hi with both ends closed.
-            constexpr double kEps = 1e-6;  // ns
             const double aLo = la.constantDelayLowerNs(), bLo = lb.constantDelayLowerNs();
             const double aHi = la.constantDelayUpperNs(), bHi = lb.constantDelayUpperNs();
             const double lo = std::max(aLo, bLo), hi = std::min(aHi, bHi);
@@ -198,7 +222,8 @@ json diffCaptures(const CaptureBuffer& a, const CaptureBuffer& b, const DiffOpti
     ReportOptions ra, rb;
     ra.latency = specA;
     rb.latency = specB;
-    const auto incA = findAnomalies(a, ra), incB = findAnomalies(b, rb);
+    const auto incA = segA ? findSegmentAnomalies(a, *options.segmentsA, ra) : findAnomalies(a, ra);
+    const auto incB = segB ? findSegmentAnomalies(b, *options.segmentsB, rb) : findAnomalies(b, rb);
     const auto kindsA = kindCounts(incA), kindsB = kindCounts(incB);
     json kinds = json::object();
     for (const auto& [k, n] : kindsA)

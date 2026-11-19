@@ -1158,6 +1158,53 @@ private Q_SLOTS:
         QCOMPARE(d["verdict"].get<std::string>(), std::string("improved"));
     }
 
+    // A seam between windows is not an edge: diff analyzes segmented captures window by window.
+    void diffAnalyzesSegmentedCapturesWindowByWindow()
+    {
+        const std::vector<uint32_t> react = {0, 0, 0, 1, 1, 0, 0, 1, 1, 0};
+        auto make = [&](const std::vector<uint32_t>& stim) {
+            std::vector<uint32_t> s;
+            for (std::size_t i = 0; i < stim.size(); ++i)
+                s.push_back(stim[i] | (react[i] << 1));
+            return lt::CaptureBuffer({{0, "STIM"}, {1, "REACT"}}, 1'000'000, 2, s);
+        };
+        // A: STIM falls and rises again at the seam; B: STIM stays HIGH across it. Both windows look the same.
+        const auto a = make({0, 0, 1, 1, 0, 0, 1, 1, 1, 1});
+        const auto b = make({0, 0, 1, 1, 1, 1, 1, 1, 1, 1});
+        const lt::SegmentLayout layout{2, 2, 4, uint8_t{0}, false, {}, 0.0};
+        lt::DiffOptions o;
+        o.latency = lt::DiffOptions::Latency{0, false, 1, false};
+        QCOMPARE(lt::diffCaptures(a, b, o)["verdict"].get<std::string>(), std::string("regression"));  // stitched
+        o.segmentsA = layout;
+        o.segmentsB = layout;
+        const auto d = lt::diffCaptures(a, b, o);
+        QCOMPARE(d["verdict"].get<std::string>(), std::string("equivalent"));
+        QCOMPARE(d["latency"]["count"]["a"].get<int>(), d["latency"]["count"]["b"].get<int>());
+        QCOMPARE(d["latency"]["spurious"]["b"].get<int>(), 0);
+    }
+
+    // Delay intervals that only touch are disjoint: the strict verdict must agree with "different fixed delays".
+    void diffTreatsTouchingDelayIntervalsAsDifferent()
+    {
+        auto make = [](std::size_t delay) {
+            std::vector<uint32_t> s(20, 0u);
+            for (std::size_t t0 : {1u, 11u})
+                for (std::size_t w = 0; w < 2; ++w) {
+                    s[t0 + w] |= 1u;
+                    s[t0 + delay + w] |= 2u;
+                }
+            return lt::CaptureBuffer({{0, "STIM"}, {1, "REACT"}}, 100'000'000, 0, s);
+        };
+        lt::DiffOptions o;
+        o.latency = lt::DiffOptions::Latency{0, false, 1, false};
+        auto d = lt::diffCaptures(make(1), make(3), o);  // 10 ns vs 30 ns: (0, 20) and (20, 40) ns
+        QCOMPARE(d["verdict"].get<std::string>(), std::string("regression"));
+        QVERIFY(!d["latency"]["p50_ns"]["within_quantization"].get<bool>());
+        QVERIFY(!d["latency"]["same_fixed_delay_possible"].get<bool>());
+        QCOMPARE(lt::diffCaptures(make(3), make(1), o)["verdict"].get<std::string>(), std::string("improved"));
+        QCOMPARE(lt::diffCaptures(make(1), make(2), o)["verdict"].get<std::string>(), std::string("equivalent"));
+    }
+
     // --invariant rules over a 1 MHz capture (1 sample = 1 us): pass/fail per kind, settle, censoring, errors.
     void invariantsCheckProtocolRules()
     {

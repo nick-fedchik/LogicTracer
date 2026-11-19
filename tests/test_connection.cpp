@@ -687,7 +687,7 @@ private Q_SLOTS:
 
 // A 1 MHz recording: CH1 (STIM) pulses at samples 100, 300, 500 (20 samples wide); CH3 (REACT)
 // follows each pulse 2 samples later. Saved as lossless JSON for the replay device.
-QString writeRecording(const QTemporaryDir& dir)
+QString writeRecording(const QTemporaryDir& dir, bool exact = false)
 {
     std::vector<uint32_t> s(700, 0u);
     for (std::size_t t0 : {100u, 300u, 500u})
@@ -695,7 +695,8 @@ QString writeRecording(const QTemporaryDir& dir)
             s[t0 + w] |= 1u;
             s[t0 + 2 + w] |= 2u;
         }
-    const lt::CaptureBuffer buf({{0, "STIM"}, {2, "REACT"}}, 1'000'000, 0, s);
+    lt::CaptureBuffer buf({{0, "STIM"}, {2, "REACT"}}, 1'000'000, 0, s);
+    buf.setExactTiming(exact);
     lt::SignalAnalyzer::Options opts;
     opts.collectEdges = true;
     const QString path = dir.filePath("rec.json");
@@ -1057,6 +1058,44 @@ private Q_SLOTS:
         QVERIFY(r.buffer->bit(4, 1) && !r.buffer->bit(5, 1));
     }
 
+    void replayKeepsExactTimingOnlyWithoutDecimation()
+    {
+        QTemporaryDir dir;
+        const std::string port = "replay:" + writeRecording(dir, true).toStdString();
+        auto dev = lt::createDevice(port);
+        QVERIFY2(dev->open(port, 100ms), dev->lastError().c_str());
+        lt::CaptureConfig c;
+        c.channels = {{0, {}}, {2, {}}};
+        c.frequency = 1'000'000;
+        c.preSamples = 10;
+        c.postSamples = 40;
+        c.probeOnTimeout = false;
+        auto r = dev->capture(c);  // immediate
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(r.buffer->exactTiming());
+        c.trigger = lt::EdgeTrigger{0, false};
+        r = dev->capture(c);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(r.buffer->exactTiming());
+        c.segments = 2;
+        c.postSamples = 40;
+        QVERIFY(dev->open(port, 100ms));
+        r = dev->capture(c);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(r.buffer->exactTiming());  // reassembled windows
+        QVERIFY(dev->open(port, 100ms));
+        c.segments = 1;
+        c.frequency = 500'000;  // decimated: intermediate samples are dropped
+        c.trigger.reset();
+        r = dev->capture(c);
+        QVERIFY2(r.status == lt::CaptureStatus::Ok, r.error.c_str());
+        QVERIFY(!r.buffer->exactTiming());
+        const std::string plain = "replay:" + writeRecording(dir).toStdString();
+        QVERIFY(dev->open(plain, 100ms));
+        c.frequency = 1'000'000;
+        QVERIFY(!dev->capture(c).buffer->exactTiming());
+    }
+
     void failedOpenIsReported()
     {
         lt::AsyncDevice ad;
@@ -1112,8 +1151,11 @@ private Q_SLOTS:
         const auto base = writeRecording(dir);
         QVERIFY(!base.isEmpty());
         nlohmann::json j;
-        QCOMPARE(run({"diff", base, base, "--measure-latency", "1..2", "--strict", "--json"}, &j), 0);
+        QCOMPARE(run({"diff", base, base, "--measure-latency", "1..3", "--strict", "--json"}, &j), 0);
         QCOMPARE(j["verdict"].get<std::string>(), std::string("equivalent"));
+        // A requested comparison of a channel that is not recorded is a usage error, never "equivalent".
+        QCOMPARE(run({"diff", base, base, "--measure-latency", "1..2", "--strict", "--json"}, &j), 64);
+        QVERIFY(!j.contains("verdict"));
         QCOMPARE(run({"diff", base, "--json"}, &j), 64);
         QCOMPARE(run({"diff", base, dir.filePath("missing.json"), "--json"}, &j), 1);
     }
