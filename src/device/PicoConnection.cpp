@@ -336,6 +336,7 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
 
     if (auto err = validate(config)) {
         result.error = *err;
+        result.usageError = true;
         return finish();
     }
 

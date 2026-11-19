@@ -48,6 +48,13 @@ struct TriggerSpacing {
 // Stored-buffer index of sample `local` of window `window` as split by splitSegments(buffer, layout).
 [[nodiscard]] std::size_t storedSample(const CaptureBuffer& buffer, const SegmentLayout& layout, std::size_t window,
                                        std::size_t local);
+// 0-based window that holds stored sample `sample`.
+[[nodiscard]] std::size_t windowOfStored(const SegmentLayout& layout, std::size_t sample);
+// Cursor distance across windows (nullopt unless both cursors are set and lie in different windows).
+[[nodiscard]] std::optional<CrossWindowCursors> crossWindowCursors(const SegmentLayout& layout, double samplePeriod,
+                                                                   int64_t triggerIndex,
+                                                                   std::optional<std::size_t> cursorA,
+                                                                   std::optional<std::size_t> cursorB);
 // Anomalies found window by window (the seams are not analysed), at stored-buffer samples, most severe first;
 // each detail names its window. `options` range fields are ignored (whole windows).
 [[nodiscard]] std::vector<AnomalyIncident> findSegmentAnomalies(const CaptureBuffer& buffer, const SegmentLayout& layout,

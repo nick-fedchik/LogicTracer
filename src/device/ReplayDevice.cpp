@@ -144,6 +144,8 @@ CaptureBuffer ReplayDevice::extract(const std::vector<ChannelInfo>& channels, st
     }
     CaptureBuffer out(std::move(outChannels), m_captureFrequency, 0, std::move(samples));
     out.setTriggerIndex(triggerIndex);
+    // Exact clock cycles survive only when every recorded sample is delivered (no decimation).
+    out.setExactTiming(m_recording.exactTiming() && step == 1);
     return out;
 }
 
@@ -166,8 +168,10 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
     };
 
     report(CaptureStage::Starting);
-    if (auto err = validate(config))
+    if (auto err = validate(config)) {
+        r.usageError = true;
         return finish(CaptureStatus::Error, *err);
+    }
     m_captureFrequency = config.frequency;
     const std::size_t step = m_recording.frequency() / config.frequency;
     const std::size_t pre = config.preSamples, post = config.postSamples;
@@ -229,7 +233,9 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
             const auto win = extract(config.channels, starts[k], post, 0);
             all.insert(all.end(), win.samples().begin(), win.samples().end());
         }
+        const bool exact = buffer.exactTiming();
         buffer = CaptureBuffer(buffer.channels(), buffer.frequency(), static_cast<uint32_t>(pre), std::move(all));
+        buffer.setExactTiming(exact);
         // The recording knows exactly when every window started.
         std::vector<double> times;
         for (const auto s : starts)

@@ -102,78 +102,78 @@ std::unique_ptr<lt::IDevice> openDevice(const QCommandLineParser& p, std::chrono
     return lt::openDevice(p.isSet("port") ? str(p.value("port")) : std::string(), timeout, error);
 }
 
-void printDiagnosisTable(const std::vector<lt::ChannelStats>& stats)
+std::string frequencyText(const json& channel)
+{
+    const auto& hz = channel.at("mean_frequency_hz");
+    return hz.is_number() ? lt::formatHz(hz.get<double>()) : "-";
+}
+
+void printDiagnosisTable(const json& channels)
 {
     std::cout << std::left << std::setw(5) << "CH" << std::setw(14) << "NAME" << std::setw(10) << "STATE"
               << std::setw(8) << "EDGES" << std::setw(8) << "HIGH%" << std::setw(14) << "FREQ"
               << "DIAGNOSIS\n";
-    for (const auto& st : stats) {
-        const auto d = lt::SignalAnalyzer::diagnose(st);
+    for (const auto& c : channels) {
         std::ostringstream high;
-        high << std::fixed << std::setprecision(1) << st.highTimePercent;
-        std::cout << std::left << std::setw(5) << st.channel.displayNumber() << std::setw(14) << st.channel.label()
-                  << std::setw(10) << lt::toString(d.state) << std::setw(8) << st.transitions << std::setw(8)
-                  << high.str() << std::setw(14) << (st.meanFrequencyHz ? lt::formatHz(*st.meanFrequencyHz) : "-")
-                  << d.code << '\n';
+        high << std::fixed << std::setprecision(1) << c.at("high_time_percent").get<double>();
+        std::cout << std::left << std::setw(5) << c.at("channel").get<int>() << std::setw(14) << c.at("name").get<std::string>()
+                  << std::setw(10) << c.at("state").get<std::string>() << std::setw(8) << c.at("transitions").get<uint64_t>()
+                  << std::setw(8) << high.str() << std::setw(14) << frequencyText(c) << c.at("diagnosis").get<std::string>() << '\n';
     }
 }
 
-void printSummaryTable(const std::vector<lt::ChannelStats>& stats)
+void printSummaryTable(const json& channels)
 {
     std::cout << std::left << std::setw(5) << "CH" << std::setw(14) << "NAME" << std::setw(6) << "IDLE"
               << std::setw(8) << "EDGES" << std::setw(8) << "PULSES" << std::setw(14) << "FREQ" << std::setw(8)
               << "DUTY%" << std::setw(12) << "MIN PW" << std::setw(12) << "MAX PW"
               << "GLITCH\n";
-    for (const auto& st : stats) {
-        std::optional<double> minW, maxW;
-        for (const auto& w : {st.highWidth, st.lowWidth}) {
-            if (!w)
-                continue;
-            const double mn = st.samplesToSeconds(static_cast<double>(w->minSamples));
-            const double mx = st.samplesToSeconds(static_cast<double>(w->maxSamples));
-            minW = minW ? std::min(*minW, mn) : mn;
-            maxW = maxW ? std::max(*maxW, mx) : mx;
-        }
+    for (const auto& c : channels) {
+        const auto width = [&](const char* key) {
+            return c.at(key).is_number() ? lt::formatTime(c.at(key).get<double>() * 1e-6) : "-";
+        };
         std::ostringstream duty;
-        if (st.dutyCyclePercent)
-            duty << std::fixed << std::setprecision(1) << *st.dutyCyclePercent;
+        if (c.at("duty_cycle_percent").is_number())
+            duty << std::fixed << std::setprecision(1) << c.at("duty_cycle_percent").get<double>();
         else
             duty << "-";
-        std::cout << std::left << std::setw(5) << st.channel.displayNumber() << std::setw(14) << st.channel.label()
-                  << std::setw(6) << st.idleLevel << std::setw(8) << st.transitions << std::setw(8)
-                  << (st.pulseCountHigh + st.pulseCountLow) << std::setw(14)
-                  << (st.meanFrequencyHz ? lt::formatHz(*st.meanFrequencyHz) : "-") << std::setw(8) << duty.str()
-                  << std::setw(12) << (minW ? lt::formatTime(*minW) : "-") << std::setw(12) << (maxW ? lt::formatTime(*maxW) : "-")
-                  << st.glitchCount << '\n';
+        std::cout << std::left << std::setw(5) << c.at("channel").get<int>() << std::setw(14) << c.at("name").get<std::string>()
+                  << std::setw(6) << c.at("idle_level").get<int>() << std::setw(8) << c.at("transitions").get<uint64_t>()
+                  << std::setw(8) << c.at("pulse_count_high").get<uint64_t>() + c.at("pulse_count_low").get<uint64_t>()
+                  << std::setw(14) << frequencyText(c) << std::setw(8) << duty.str()
+                  << std::setw(12) << width("min_pulse_width_us") << std::setw(12) << width("max_pulse_width_us")
+                  << c.at("glitch_detection").at("count").get<uint64_t>() << '\n';
     }
 }
 
-void printLatency(const lt::LatencyStats& lat)
+void printLatency(const json& l)
 {
-    std::cout << "Latency " << lat.stimChannel.label() << " -> " << lat.reactChannel.label() << ": N=" << lat.count
-              << ", drops=" << lat.unmatchedStimCount << ", spurious=" << lat.spuriousReactCount
-              << ", censored=" << (lat.censoredStimCount + lat.censoredReactCount);
-    if (lat.count > 0) {
-        std::cout << std::fixed << std::setprecision(2) << ", min=" << lat.minNs << " ns, mean=" << lat.meanNs
-                  << " ns, p50=" << lat.p50Ns << " ns, p99=" << lat.p99Ns << " ns (true <= "
-                  << lat.upperBoundNs(lat.p99Samples) << "), max=" << lat.maxNs << " ns (true <= "
-                  << lat.upperBoundNs(lat.maxSamples) << "), stdev=" << lat.stdevNs << " ns\n  histogram (samples x count):";
-        for (const auto& [d, c] : lat.histogram)
-            std::cout << ' ' << d << 'x' << c;
-        if (lat.exact)
-            std::cout << (lat.constantDelayConsistent() ? " | exact: constant delay of " + std::to_string(lat.minSamples) +
+    std::cout << "Latency " << l["stimulus"]["name"].get<std::string>() << " -> " << l["reaction"]["name"].get<std::string>()
+              << ": N=" << l["count"] << ", drops=" << l["unmatched_stimulus_count"] << ", spurious=" << l["spurious_reaction_count"]
+              << ", censored=" << l["censored_stimulus_count"].get<uint64_t>() + l["censored_reaction_count"].get<uint64_t>();
+    if (l["count"].get<uint64_t>() > 0) {
+        const auto& bounds = l["bounds_ns"];
+        std::cout << std::fixed << std::setprecision(2) << ", min=" << l["min_ns"].get<double>() << " ns, mean=" << l["mean_ns"].get<double>()
+                  << " ns, p50=" << l["p50_ns"].get<double>() << " ns, p99=" << l["p99_ns"].get<double>() << " ns (true <= "
+                  << bounds["p99_ub"].get<double>() << "), max=" << l["max_ns"].get<double>() << " ns (true <= "
+                  << bounds["max_ub"].get<double>() << "), stdev=" << l["stdev_ns"].get<double>() << " ns\n  histogram (samples x count):";
+        for (const auto& bin : l["histogram"])
+            std::cout << ' ' << bin["delta_samples"] << 'x' << bin["count"];
+        const auto& hypothesis = l["constant_delay_hypothesis"];
+        if (l["exact_timing"].get<bool>())
+            std::cout << (hypothesis["consistent"].get<bool>() ? " | exact: constant delay of " + l["samples"]["min"].dump() +
                                                               " clock cycles"
                                                         : std::string(" | exact cycle counts: the delay varies"));
-        else if (lat.constantDelayConsistent())
-            std::cout << " | consistent with one fixed delay in (" << lat.constantDelayLowerNs() << ", "
-                      << lat.constantDelayUpperNs() << ") ns";
+        else if (hypothesis["consistent"].get<bool>())
+            std::cout << " | consistent with one fixed delay in (" << hypothesis["interval_ns"][0].get<double>() << ", "
+                      << hypothesis["interval_ns"][1].get<double>() << ") ns";
         else
             std::cout << " | true delay varies (spread > 1 sample)";
         std::cout << std::defaultfloat;
     }
     std::cout << '\n';
-    if (lat.reversed)
-        std::cout << "  WARNING: " << lt::SignalAnalyzer::reversedHint(lat) << '\n';
+    if (l.contains("direction_warning"))
+        std::cout << "  WARNING: " << l["direction_warning"]["message"].get<std::string>() << '\n';
 }
 
 // Failed checks, and passing checks whose quantization bound could still violate the limit.
@@ -213,19 +213,19 @@ void printInvariants(const json& invariants)
     }
 }
 
-void printSegments(const lt::SegmentAnalysis& a)
+void printSegments(const lt::SegmentLayout& layout, const json& windows)
 {
     std::size_t flagged = 0;
     std::string first;
-    for (const auto& w : a.perWindow) {
+    for (const auto& w : windows) {
         const bool bad = w.value("edges", 0) == 0 || (w.contains("pairs") && w.value("pairs", 0) == 0) ||
                          w.value("drops", 0) > 0 || w.value("spurious", 0) > 0 || w.value("invariant_violations", 0) > 0;
         if (bad && flagged++ < 8)
             first += (first.empty() ? "" : ", ") + std::to_string(w.value("window", 0));
     }
-    std::cout << "Segments: " << a.layout.count << " windows x " << a.layout.postSamples << " samples ("
-              << a.layout.preSamples << " pre-trigger before window 1); ";
-    if (const auto s = lt::triggerSpacing(a.layout))
+    std::cout << "Segments: " << layout.count << " windows x " << layout.postSamples << " samples ("
+              << layout.preSamples << " pre-trigger before window 1); ";
+    if (const auto s = lt::triggerSpacing(layout))
         std::cout << "trigger spacing min " << lt::formatTime(s->min) << ", median " << lt::formatTime(s->median)
                   << ", max " << lt::formatTime(s->max) << '\n';
     else
@@ -468,8 +468,10 @@ int cmdProbe(const QStringList& args, Output o)
         if (o.json) {
             const std::string dumped = doc.dump(2);
             std::cout << dumped << std::endl;
-            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error))
-                return report(o, ExitError, error);
+            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
+                std::cerr << "logictracer-cli probe: " << error << std::endl;  // stdout keeps its single document
+                return ExitError;
+            }
         } else if (p.isSet("ai")) {
             std::cout << aiText;
             if (p.isSet("copy") && !copyAndConfirm(aiText, error))
@@ -519,8 +521,10 @@ int cmdProbe(const QStringList& args, Output o)
     if (o.json) {
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
-        if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error))
-            return report(o, ExitError, error);
+        if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
+            std::cerr << "logictracer-cli probe: " << error << std::endl;  // stdout keeps its single document
+            return ExitError;
+        }
     } else if (p.isSet("ai")) {
         std::cout << aiText;
         for (const auto& w : doc["warnings"])
@@ -534,7 +538,7 @@ int cmdProbe(const QStringList& args, Output o)
                   << " ms\n";
         for (const auto& w : doc["warnings"])
             std::cerr << "warning: " << w.get<std::string>() << '\n';
-        printDiagnosisTable(*probe.stats);
+        printDiagnosisTable(doc.at("channels"));
         if (p.isSet("copy") && !copyAndConfirm(aiText, error))
             return report(o, ExitError, error);
     }
@@ -542,6 +546,43 @@ int cmdProbe(const QStringList& args, Output o)
 }
 
 // ---------------------------------------------------------------------------------------------
+// Text rendering of a capture document returned by the GUI session: the same results the direct path prints.
+void printCaptureDetails(const json& doc, bool summary)
+{
+    for (const auto& w : doc.value("warnings", json::array()))
+        std::cerr << "warning: " << w.get<std::string>() << '\n';
+    if (doc.at("status") == "OK") {
+        const auto& cfg = doc.at("config");
+        const auto layout = doc.contains("segments") ? lt::segmentLayoutFromJson(doc["segments"]["layout"]) : std::nullopt;
+        const auto samples = doc.contains("capture") ? doc["capture"]["samples"].get<uint64_t>()
+                             : layout ? layout->totalSamples() : cfg["samples"].get<uint64_t>();
+        const auto hz = cfg["frequency_hz"].get<double>();
+        const auto& trigger = cfg["trigger"];
+        std::cout << samples << " samples @ " << lt::formatHz(hz) << " (" << lt::formatTime(samples / hz) << "), trigger "
+                  << (trigger["type"] == "edge" ? "CH" + trigger["channel"].dump() + " " + trigger["edge"].get<std::string>()
+                                                : "immediate") << '\n';
+        if (layout)
+            printSegments(*layout, doc["segments"]["windows"]);
+        if (summary && doc.contains("capture"))
+            printSummaryTable(doc["capture"]["channels"]);
+    }
+    if (doc.contains("latency"))
+        printLatency(doc["latency"]);
+    if (doc.contains("assertions")) {
+        std::cout << "Assertions: " << (doc["assertions"].value("passed", false) ? "PASS" : "FAIL") << '\n';
+        printAssertionIssues(doc["assertions"]);
+    }
+    if (doc.contains("invariants"))
+        printInvariants(doc["invariants"]);
+    if (doc.contains("line_dump")) {
+        std::cout << "Current line state:\n";
+        printDiagnosisTable(doc["line_dump"]["channels"]);
+    }
+    const json outputs = doc.value("outputs", json::object());
+    for (const auto& [kind, path] : outputs.items())
+        std::cout << "wrote " << kind << ": " << path.get<std::string>() << '\n';
+}
+
 int cmdCapture(const QStringList& args, Output o)
 {
     QCommandLineParser p;
@@ -674,6 +715,11 @@ int cmdCapture(const QStringList& args, Output o)
                                         "between windows is unknown); use --out-json");
     }
 
+    const lt::OutputPaths requestedOutputs{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
+                                           str(p.value("out-events-csv"))};
+    if (const auto duplicate = lt::duplicateOutputPath(requestedOutputs))
+        return report(o, ExitUsage, *duplicate);
+
     const bool hasArmedHook = p.isSet("ready-file") || p.isSet("on-armed");
     const QString sock = p.isSet("no-session") ? QString{} : socketPathFrom(p);
     const std::string reqPort = p.isSet("port") ? str(p.value("port")) : std::string{};
@@ -716,12 +762,23 @@ int cmdCapture(const QStringList& args, Output o)
         const bool expectOk = (!doc.contains("assertions") || doc["assertions"].value("passed", true)) &&
                               (!doc.contains("invariants") || doc["invariants"].value("passed", true));
         int rc = st == "OK" ? (expectOk ? ExitOk : ExitExpectFailed) : st == "TIMEOUT" ? ExitTimeout : ExitError;
+        if (rc == ExitOk) {  // a requested file the GUI could not write is a failure, not a silent warning
+            const json outs = doc.contains("outputs") ? doc["outputs"] : json::object();
+            for (const auto& [option, key] : {std::pair<const char*, const char*>{"out-vcd", "vcd"},
+                                              {"out-json", "json"},
+                                              {"out-csv", "csv"},
+                                              {"out-events-csv", "events_csv"}})
+                if (p.isSet(option) && !outs.contains(key))
+                    rc = ExitError;
+        }
 
         std::string sessionAi, reportError, reportErrorKind;
         if (p.isSet("ai") || (p.isSet("copy") && !o.json)) {
             json repParams = {{"mode", std::string(lt::toString(*aiMode))}};
             if (doc.contains("capture_id"))
                 repParams["capture_id"] = doc["capture_id"];  // the report must describe this very capture
+            if (doc.contains("attempt_id"))
+                repParams["attempt_id"] = doc["attempt_id"];  // ... and this very attempt, also when it failed
             if (p.isSet("note"))
                 repParams["note"] = str(p.value("note"));
             if (p.isSet("measure-latency"))
@@ -752,7 +809,11 @@ int cmdCapture(const QStringList& args, Output o)
             if (p.isSet("copy") && !copyAndConfirm(sessionAi, error))
                 return rc == ExitOk ? ExitError : rc;
         } else {
-            std::cout << "Capture " << st << " (via GUI session), " << doc.value("elapsed_ms", 0) << " ms\n";
+            std::cout << "Capture " << st << " (via GUI session), " << doc.value("elapsed_ms", 0) << " ms";
+            if (doc.contains("error"))
+                std::cout << ": " << doc["error"].get<std::string>();
+            std::cout << '\n';
+            printCaptureDetails(doc, p.isSet("summary"));
             if (p.isSet("copy") && !sessionAi.empty() && !copyAndConfirm(sessionAi, error))
                 return rc == ExitOk ? ExitError : rc;
         }
@@ -819,7 +880,6 @@ int cmdCapture(const QStringList& args, Output o)
     auto outcome = lt::performCapture(conn, spec, docOptions, warnings);
     json& doc = outcome.document.doc;
     const auto& result = outcome.result;
-    const auto& stats = outcome.document.stats;
     if (outcome.usageError) {
         if (o.json)
             std::cout << doc.dump(2) << std::endl;
@@ -828,17 +888,16 @@ int cmdCapture(const QStringList& args, Output o)
         return ExitUsage;
     }
 
-    lt::writeCaptureOutputs(
-        doc, result, outcome.document,
-        lt::OutputPaths{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
-                        str(p.value("out-events-csv"))},
-        conn.info().version.board);
+    const bool outputsWritten =
+        lt::writeCaptureOutputs(doc, result, outcome.document, requestedOutputs, conn.info().version.board);
     const json& outputs = doc["outputs"];
 
-    const int rc = result.status == lt::CaptureStatus::Ok
-                       ? (outcome.document.expectationsPassed ? ExitOk : ExitExpectFailed)
-                   : result.status == lt::CaptureStatus::Timeout ? ExitTimeout
-                                                                 : ExitError;
+    int rc = result.status == lt::CaptureStatus::Ok
+                 ? (outcome.document.expectationsPassed ? ExitOk : ExitExpectFailed)
+             : result.status == lt::CaptureStatus::Timeout ? ExitTimeout
+                                                           : ExitError;
+    if (rc == ExitOk && !outputsWritten)
+        rc = ExitError;
     if (o.json) {
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
@@ -885,32 +944,7 @@ int cmdCapture(const QStringList& args, Output o)
     if (!result.error.empty())
         std::cout << ": " << result.error;
     std::cout << '\n';
-    for (const auto& w : doc["warnings"])
-        std::cerr << "warning: " << w.get<std::string>() << '\n';
-    if (result.buffer) {
-        std::cout << result.buffer->size() << " samples @ " << lt::formatHz(spec.frequency) << " ("
-                  << lt::formatTime(static_cast<double>(result.buffer->size()) / spec.frequency) << "), trigger "
-                  << trigDesc << '\n';
-        if (outcome.document.segments)
-            printSegments(*outcome.document.segments);
-        if (p.isSet("summary") && stats)
-            printSummaryTable(outcome.document.segments ? outcome.document.segments->stats : *stats);
-        if (outcome.document.latency) {
-            printLatency(*outcome.document.latency);
-        }
-        if (doc.contains("assertions")) {
-            std::cout << "Assertions: " << (outcome.document.expectationsPassed ? "PASS" : "FAIL") << '\n';
-            printAssertionIssues(doc["assertions"]);
-        }
-        if (doc.contains("invariants"))
-            printInvariants(doc["invariants"]);
-    }
-    if (result.lineDump) {
-        std::cout << "Current line state:\n";
-        printDiagnosisTable(lt::SignalAnalyzer{}.analyze(*result.lineDump));
-    }
-    for (auto it = outputs.begin(); it != outputs.end(); ++it)
-        std::cout << "wrote " << it.key() << ": " << it.value().get<std::string>() << '\n';
+    printCaptureDetails(doc, p.isSet("summary"));
     if (p.isSet("copy") && !aiText.empty() && !copyAndConfirm(aiText, error)) {
         std::cerr << "logictracer-cli capture: " << error << std::endl;
         return rc == ExitOk ? ExitError : rc;
@@ -1002,6 +1036,11 @@ int cmdAnalyze(const QStringList& args, Output o)
         return report(o, ExitUsage, "--out-vcd / --out-csv cannot represent a segmented capture (the time between "
                                     "windows is unknown); use --out-json");
 
+    const lt::OutputPaths requestedOutputs{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
+                                           str(p.value("out-events-csv"))};
+    if (const auto duplicate = lt::duplicateOutputPath(requestedOutputs))
+        return report(o, ExitUsage, *duplicate);
+
     lt::CaptureDocument capDoc;
     capDoc.doc = {
         {"schema_version", lt::kCaptureSchemaVersion},
@@ -1021,7 +1060,7 @@ int cmdAnalyze(const QStringList& args, Output o)
         capDoc.doc["setup"] = lt::toJson(*setup);
     lt::DocumentOptions docOptions;
     docOptions.collectEdges = p.isSet("out-json") || p.isSet("edges");
-    docOptions.summary = p.isSet("summary") || p.isSet("edges") || o.json;
+    docOptions.summary = true;
     docOptions.summaryEdges = p.isSet("edges");
     docOptions.latency = latencyArg;
     docOptions.collectLatencyEvents = p.isSet("out-events-csv");
@@ -1032,12 +1071,29 @@ int cmdAnalyze(const QStringList& args, Output o)
     lt::CaptureResult fakeRes;
     fakeRes.status = lt::CaptureStatus::Ok;
     fakeRes.buffer = buf;
-    lt::writeCaptureOutputs(
-        capDoc.doc, fakeRes, capDoc,
-        lt::OutputPaths{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
-                        str(p.value("out-events-csv"))});
+    // The saved file keeps what the loaded recording carried besides samples: its device and the annotations.
+    if (!loaded.deviceVersion.empty() || !loaded.board.empty())
+        capDoc.fileOnly["device"] = {{"version", loaded.deviceVersion}, {"board", loaded.board}};
+    if (!loaded.annotations.empty()) {
+        auto notes = json::array();
+        for (const auto& a : loaded.annotations)
+            notes.push_back({{"id", a.id},
+                             {"time_us", a.timeSeconds * 1e6},
+                             {"duration_us", a.durationSeconds * 1e6},
+                             {"label", a.label},
+                             {"color", a.color},
+                             {"author", a.author}});
+        capDoc.fileOnly["annotations"] = std::move(notes);
+    }
+    const std::size_t warningsBeforeWrite = capDoc.doc["warnings"].size();
+    const bool outputsWritten = lt::writeCaptureOutputs(capDoc.doc, fakeRes, capDoc, requestedOutputs);
+    if (!o.json)
+        for (std::size_t i = warningsBeforeWrite; i < capDoc.doc["warnings"].size(); ++i)
+            std::cerr << "warning: " << capDoc.doc["warnings"][i].get<std::string>() << '\n';
 
-    const int rc = capDoc.expectationsPassed ? ExitOk : ExitExpectFailed;
+    int rc = capDoc.expectationsPassed ? ExitOk : ExitExpectFailed;
+    if (rc == ExitOk && !outputsWritten)
+        rc = ExitError;
     if (o.json) {
         const std::string dumped = capDoc.doc.dump(2);
         std::cout << dumped << std::endl;
@@ -1068,10 +1124,10 @@ int cmdAnalyze(const QStringList& args, Output o)
     std::cout << "Analyze " << inputPath << ": " << buf.size() << " samples @ " << lt::formatHz(buf.frequency())
               << ", trigger_sample=" << buf.triggerIndex() << '\n';
     if (capDoc.segments)
-        printSegments(*capDoc.segments);
-    printSummaryTable(capDoc.segments ? capDoc.segments->stats : *capDoc.stats);
+        printSegments(capDoc.segments->layout, capDoc.segments->perWindow);
+    printSummaryTable(capDoc.doc.at("capture").at("channels"));
     if (capDoc.latency) {
-        printLatency(*capDoc.latency);
+        printLatency(capDoc.doc.at("latency"));
     }
     if (capDoc.doc.contains("assertions")) {
         std::cout << "Assertions: " << (capDoc.expectationsPassed ? "PASS" : "FAIL") << '\n';
@@ -1128,6 +1184,20 @@ int cmdDiff(const QStringList& args, Output o)
     if (!lt::loadCaptureFile(str(files[1]), b, &error))
         return report(o, ExitError, "B: " + error);
 
+    if (options.latency) {  // an explicitly requested comparison must be possible on both sides
+        const auto has = [](const lt::CaptureBuffer& buf, uint8_t ch) {
+            return std::any_of(buf.channels().begin(), buf.channels().end(),
+                               [ch](const lt::ChannelInfo& c) { return c.number == ch; });
+        };
+        for (const auto& [side, buf] : {std::pair<const char*, const lt::CaptureBuffer*>{"A", &a.buffer},
+                                        std::pair<const char*, const lt::CaptureBuffer*>{"B", &b.buffer}})
+            for (const uint8_t ch : {options.latency->stimChannel, options.latency->reactChannel})
+                if (!has(*buf, ch))
+                    return report(o, ExitUsage, "--measure-latency: channel " + std::to_string(ch + 1) +
+                                                    " is not present in capture " + side);
+    }
+    options.segmentsA = a.segments;
+    options.segmentsB = b.segments;
     json doc = lt::diffCaptures(a.buffer, b.buffer, options);
     auto loadWarnings = json::array();  // import caveats of the two files (JSON: warnings; Markdown: notes)
     for (const auto& w : a.warnings)
@@ -1537,8 +1607,10 @@ int cmdView(const QStringList& args, Output o)
             doc["status"] = "OK";
             const std::string dumped = doc.dump(2);
             std::cout << dumped << std::endl;
-            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error))
-                return report(o, ExitError, error);
+            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
+                std::cerr << "logictracer-cli view: " << error << std::endl;  // stdout keeps its single document
+                return ExitError;
+            }
         } else {
             const std::string rep = sr.result["report"].get<std::string>();
             if (p.isSet("report"))
@@ -1555,8 +1627,10 @@ int cmdView(const QStringList& args, Output o)
         doc["status"] = "OK";
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
-        if (!copyAndConfirm(dumped + "\n", error))
-            return report(o, ExitError, error);
+        if (!copyAndConfirm(dumped + "\n", error)) {
+            std::cerr << "logictracer-cli view: " << error << std::endl;
+            return ExitError;
+        }
         return ExitOk;
     }
     return finishSessionCall(o, sr, [](const json& r) {

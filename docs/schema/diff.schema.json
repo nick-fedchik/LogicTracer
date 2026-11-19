@@ -300,12 +300,18 @@
         },
         "max_ns": {
           "type": "object",
+          "description": "Unmeasured sides are null. A delta and quantization comparison exist only when both sides were measured.",
+          "if": {
+            "properties": {"a": {"type": "number"}, "b": {"type": "number"}}
+          },
+          "then": {"required": ["delta", "within_quantization"]},
+          "else": {"properties": {"delta": false, "within_quantization": false}},
           "properties": {
             "a": {
-              "type": "number"
+              "type": ["number", "null"]
             },
             "b": {
-              "type": "number"
+              "type": ["number", "null"]
             },
             "delta": {
               "type": "number"
@@ -316,62 +322,18 @@
           },
           "required": [
             "a",
-            "b",
-            "delta",
-            "within_quantization"
+            "b"
           ],
           "additionalProperties": false
         },
         "p50_ns": {
-          "type": "object",
-          "properties": {
-            "a": {
-              "type": "number"
-            },
-            "b": {
-              "type": "number"
-            },
-            "delta": {
-              "type": "number"
-            },
-            "within_quantization": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "a",
-            "b",
-            "delta",
-            "within_quantization"
-          ],
-          "additionalProperties": false
+          "$ref": "#/properties/latency/properties/max_ns"
         },
         "p99_ns": {
-          "type": "object",
-          "properties": {
-            "a": {
-              "type": "number"
-            },
-            "b": {
-              "type": "number"
-            },
-            "delta": {
-              "type": "number"
-            },
-            "within_quantization": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "a",
-            "b",
-            "delta",
-            "within_quantization"
-          ],
-          "additionalProperties": false
+          "$ref": "#/properties/latency/properties/max_ns"
         },
         "same_fixed_delay_possible": {
-          "type": "boolean"
+          "type": ["boolean", "null"]
         },
         "sampling_phase_verdict": {
           "type": "string"
@@ -396,10 +358,10 @@
           "type": "object",
           "properties": {
             "a": {
-              "type": "number"
+              "type": ["number", "null"]
             },
             "b": {
-              "type": "number"
+              "type": ["number", "null"]
             }
           },
           "required": [

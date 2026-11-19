@@ -770,6 +770,68 @@ private Q_SLOTS:
         QVERIFY(win.waveform()->segmentStarts().empty());
     }
 
+    // Cursors in different windows: the stored-sample distance is not time, and a cursor slice of window 2
+    // describes window 2 (not an empty slice of window 1).
+    void segmentedCursorsAreNotStitchedTime()
+    {
+        QTemporaryDir dir;
+        const QString jsonFile = dir.filePath("seg.json");
+        std::vector<uint32_t> s = {0, 0, 1, 1, 3, 3, 3, 3};
+        for (int k = 0; k < 2; ++k)
+            s.insert(s.end(), {1, 1, 3, 3, 3, 3});
+        const lt::CaptureBuffer buf({{0, "A"}, {1, "B"}}, 1'000'000, 2, s);
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        auto doc = lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true);
+        doc["segments"] = {{"layout", lt::toJson(lt::SegmentLayout{3, 2, 6, uint8_t{0}, false, {0.0, 1e-3, 2e-3}, 0.0})}};
+        QVERIFY(lt::writeJsonFile(jsonFile.toStdString(), doc));
+
+        MainWindow win;
+        QString err;
+        QVERIFY2(win.openCaptureFile(jsonFile, &err), qPrintable(err));
+        auto* w = win.waveform();
+        win.setCopyMode(lt::CopyMode::CursorsOnly);
+
+        w->setCursorA(2);  // trigger of window 1
+        w->setCursorB(8);  // trigger of window 2, 1 ms later
+        auto options = w->reportOptions();
+        QVERIFY(options.crossWindow);
+        QCOMPARE(options.crossWindow->windowA, 1u);
+        QCOMPARE(options.crossWindow->windowB, 2u);
+        QVERIFY(options.crossWindow->elapsedSeconds);
+        QVERIFY(std::abs(*options.crossWindow->elapsedSeconds - 1e-3) < 1e-9);
+        const auto meta = lt::jsonMetadata(w->capture(), options);
+        QVERIFY(std::abs(meta["cursors"]["delta_us"].get<double>() - 1000.0) < 1e-6);
+        QVERIFY(meta["cursors"].contains("cross_window"));
+        QVERIFY(!meta["cursors"].contains("between"));  // no edges counted across the seam
+        const QString crossReport = win.aiReport();
+        QVERIFY(crossReport.contains("different windows"));
+        QVERIFY(!crossReport.contains("in detail"));
+
+        w->setCursorA(9);  // both in window 2 (stored samples 8..13)
+        w->setCursorB(11);
+        QVERIFY(!w->reportOptions().crossWindow);
+        const QString sliceReport = win.aiReport();
+        QVERIFY2(sliceReport.contains("Window 2 of 3 in detail"), qPrintable(sliceReport));
+        QVERIFY(sliceReport.contains("A = sample 1 "));  // offset in the recorded window
+        QVERIFY(!sliceReport.contains("(0 samples"));
+
+        w->setCursorA(8);
+        w->setCursorB(9);
+        const QString boundary = win.aiReport();
+        QVERIFY2(boundary.contains("Window 2 of 3 in detail") && boundary.contains("Cursor range (A..B): samples [0, 2)"),
+                 qPrintable(boundary));
+
+        // Without recorded start times the elapsed time is unknown, never the stitched distance.
+        doc["segments"] = {{"layout", lt::toJson(lt::SegmentLayout{3, 2, 6, uint8_t{0}, false, {}, 0.0})}};
+        QVERIFY(lt::writeJsonFile(jsonFile.toStdString(), doc));
+        QVERIFY2(win.openCaptureFile(jsonFile, &err), qPrintable(err));
+        w->setCursorA(2);
+        w->setCursorB(8);
+        QVERIFY(!w->reportOptions().crossWindow->elapsedSeconds);
+        QVERIFY(lt::jsonMetadata(w->capture(), w->reportOptions())["cursors"]["delta_us"].is_null());
+    }
+
     void snapToEdgeAndAiCopyModesWork()
     {
         MainWindow win;

@@ -6,11 +6,13 @@
 #include "core/ArgParsing.hpp"
 #include "core/Exporters.hpp"
 #include "core/Format.hpp"
+#include "core/Paths.hpp"
 #include "services/Session.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 
 namespace lt {
 
@@ -428,36 +430,42 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
     return out;
 }
 
-void writeCaptureOutputs(json& doc, const CaptureResult& result, const CaptureDocument& document,
+bool writeCaptureOutputs(json& doc, const CaptureResult& result, const CaptureDocument& document,
                          const OutputPaths& paths, std::string_view board)
 {
     json outputs = json::object();
     std::string error;
+    bool allWritten = true;
     if (document.segments && (!paths.vcdPath.empty() || !paths.csvPath.empty())) {
         doc["warnings"].push_back(std::string(kSegmentedTimelineError) + ": VCD/CSV not written");
         OutputPaths jsonOnly = paths;
         jsonOnly.vcdPath.clear();
         jsonOnly.csvPath.clear();
-        writeCaptureOutputs(doc, result, document, jsonOnly, board);
-        return;
+        return writeCaptureOutputs(doc, result, document, jsonOnly, board);
     }
     if (!paths.vcdPath.empty() && result.buffer) {
         if (writeVcdFile(paths.vcdPath, *result.buffer, &error, paths.confined))
             outputs["vcd"] = paths.vcdPath;
-        else
+        else {
             doc["warnings"].push_back(error);
+            allWritten = false;
+        }
     }
     if (!paths.csvPath.empty() && result.buffer) {
         if (writeCsvFile(paths.csvPath, *result.buffer, &error, paths.confined))
             outputs["csv"] = paths.csvPath;
-        else
+        else {
             doc["warnings"].push_back(error);
+            allWritten = false;
+        }
     }
     if (!paths.eventsCsvPath.empty() && document.latency) {
         if (writeEventsCsvFile(paths.eventsCsvPath, document.latency->events, &error, paths.confined))
             outputs["events_csv"] = paths.eventsCsvPath;
-        else
+        else {
             doc["warnings"].push_back(error);
+            allWritten = false;
+        }
     }
     if (!paths.jsonPath.empty()) {
         outputs["json"] = paths.jsonPath;
@@ -465,20 +473,44 @@ void writeCaptureOutputs(json& doc, const CaptureResult& result, const CaptureDo
         file["outputs"] = outputs;
         if (document.stats && result.buffer)
             file["capture"] = captureToJson(*result.buffer, *document.stats, true, board);
+        for (const auto& [key, value] : document.fileOnly.items())
+            file[key] = value;
         if (!writeJsonFile(paths.jsonPath, file, &error, paths.confined)) {
             outputs.erase("json");
             doc["warnings"].push_back(error);
+            allWritten = false;
         }
     }
     doc["outputs"] = outputs;
+    return allWritten;
 }
 
-void writeCaptureOutputs(json& doc, const CaptureResult& result, const std::optional<std::vector<ChannelStats>>& stats,
+bool writeCaptureOutputs(json& doc, const CaptureResult& result, const std::optional<std::vector<ChannelStats>>& stats,
                          const std::string& vcdPath, const std::string& jsonPath)
 {
     CaptureDocument d;
     d.stats = stats;
-    writeCaptureOutputs(doc, result, d, OutputPaths{vcdPath, jsonPath, {}, {}});
+    return writeCaptureOutputs(doc, result, d, OutputPaths{vcdPath, jsonPath, {}, {}});
+}
+
+std::optional<std::string> duplicateOutputPath(const OutputPaths& paths)
+{
+    std::vector<std::pair<const char*, std::filesystem::path>> seen;
+    const std::pair<const char*, const std::string*> requested[] = {
+        {"VCD", &paths.vcdPath}, {"JSON", &paths.jsonPath}, {"CSV", &paths.csvPath}, {"events CSV", &paths.eventsCsvPath}};
+    for (const auto& [name, path] : requested) {
+        if (path->empty())
+            continue;
+        std::error_code ec;
+        auto normal = std::filesystem::weakly_canonical(pathFromUtf8(*path), ec);
+        if (ec)
+            normal = std::filesystem::absolute(pathFromUtf8(*path)).lexically_normal();
+        for (const auto& [other, otherPath] : seen)
+            if (otherPath == normal)
+                return std::string(other) + " and " + name + " outputs point to the same file: " + *path;
+        seen.emplace_back(name, std::move(normal));
+    }
+    return std::nullopt;
 }
 
 CaptureOutcome performCapture(IDevice& conn, const CaptureRequestSpec& spec, const DocumentOptions& options,
@@ -512,10 +544,13 @@ ProbeDocument probeDocument(const DeviceInfo& info, const ProbeResult& r, uint32
 {
     ProbeDocument out;
     if (r.status != CaptureStatus::Ok || !r.buffer) {
-        out.doc = {{"command", "probe"},
+        out.doc = {{"schema_version", kCaptureSchemaVersion},
+                   {"command", "probe"},
                    {"status", std::string(toString(r.status))},
                    {"error", r.error},
                    {"port", info.port},
+                   {"device", toJson(info)},
+                   {"warnings", json::array()},
                    {"elapsed_ms", r.elapsed.count()}};
         return out;
     }

@@ -235,6 +235,16 @@ private:
     uint64_t m_nextCaptureId = 0;
     uint64_t m_currentCaptureId = 0;
     std::optional<FailureInfo> m_failure;
+    // The latest finished capture or probe attempt: a report bound to an attempt id never describes another one.
+    struct LastAttempt {
+        enum class Kind { None, Ok, Failed, Cancelled };
+        uint64_t id = 0;
+        Kind kind = Kind::None;
+        uint64_t captureId = 0;
+    };
+    uint64_t m_attemptCounter = 0;
+    LastAttempt m_lastAttempt;
+    bool bindAttempt(const nlohmann::json& params, nlohmann::json& bound, lt::session::Responder& reply);
     QString m_consumedNote;  // note text already attached to the previous device capture
     std::string m_lastBoard;
     std::optional<std::size_t> m_lastAnomaly;  // sample of the anomaly F3 last jumped to

@@ -8,6 +8,7 @@
 // the +-1 sample quantization of each capture can explain.
 
 #include "core/CaptureBuffer.hpp"
+#include "core/Segments.hpp"
 #include "core/SignalAnalyzer.hpp"
 
 #include <nlohmann/json.hpp>
@@ -26,6 +27,9 @@ struct DiffOptions {
         bool reactFalling = false;
     };
     std::optional<Latency> latency;
+    // Window layouts of segmented captures: each side is then analyzed window by window.
+    std::optional<SegmentLayout> segmentsA;
+    std::optional<SegmentLayout> segmentsB;
 };
 
 // Machine-readable comparison: {"a": ..., "b": ..., "channels": [...], "latency": {...}, "anomalies": {...},

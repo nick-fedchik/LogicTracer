@@ -702,6 +702,10 @@ void writeVcd(std::ostream& out, const CaptureBuffer& buffer)
 
     out << "$comment logictracer-cli capture: " << f << " Hz, " << buffer.size() << " samples, trigger at #"
         << timeOf(buffer.preSamples()) << " $end\n";
+    out << "$comment logictracer-channels";  // hardware channel numbers (1-based) in declaration order
+    for (std::size_t i = 0; i < buffer.channels().size(); ++i)
+        out << (i == 0 ? " " : ",") << buffer.channels()[i].displayNumber();
+    out << " $end\n";
     out << "$timescale 1 " << (ns ? "ns" : "ps") << " $end\n";
     out << "$scope module logic $end\n";
     const auto& chans = buffer.channels();
@@ -1059,6 +1063,7 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
     std::optional<uint32_t> commentFreq;
     std::optional<std::size_t> commentSamples;
     std::optional<uint64_t> commentTriggerTime;
+    std::vector<uint8_t> commentChannels;  // hardware numbers written by logictracer, in $var order
 
     struct Var {
         std::string id;
@@ -1077,6 +1082,20 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
                 if (!comment.empty())
                     comment += ' ';
                 comment += tok;
+            }
+            if (comment.starts_with("logictracer-channels ")) {
+                std::string_view list = std::string_view(comment).substr(21);
+                while (!list.empty()) {
+                    int n = 0;
+                    const auto [ptr, ec] = std::from_chars(list.data(), list.data() + list.size(), n);
+                    if (ec != std::errc{} || n < 1 || n > 32)
+                        break;
+                    commentChannels.push_back(static_cast<uint8_t>(n - 1));
+                    list.remove_prefix(static_cast<std::size_t>(ptr - list.data()));
+                    if (!list.empty() && list.front() == ',')
+                        list.remove_prefix(1);
+                }
+                continue;
             }
             // Match our own comment: "logictracer-cli capture: <f> Hz, <N> samples, trigger at #<T>"
             const auto hzPos = comment.find(" Hz, ");
@@ -1127,8 +1146,10 @@ bool readVcd(std::istream& in, LoadedCapture& out, std::string* error)
             if (widthStr == "1" && vars.size() < 32 && !idToIndex.contains(id)) {
                 const auto idx = vars.size();
                 idToIndex[id] = idx;
-                uint8_t chNum = static_cast<uint8_t>(idx);
-                if (name.size() > 2 && (name.starts_with("CH") || name.starts_with("ch"))) {
+                uint8_t chNum = idx < commentChannels.size() ? commentChannels[idx] : static_cast<uint8_t>(idx);
+                if (idx < commentChannels.size() && name == "CH" + std::to_string(chNum + 1))
+                    name.clear();  // the default label of that channel
+                else if (idx >= commentChannels.size() && name.size() > 2 && (name.starts_with("CH") || name.starts_with("ch"))) {
                     int parsed = 0;
                     const auto [ptr, ec] = std::from_chars(name.data() + 2, name.data() + name.size(), parsed);
                     if (ec == std::errc{} && ptr == name.data() + name.size() && parsed >= 1 && parsed <= 32) {
