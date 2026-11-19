@@ -43,6 +43,15 @@ struct Annotation {
     std::string author = "ai";
 };
 
+// Cursors A and B of a segmented capture that sit in different windows: the distance between their stored
+// samples is not elapsed time (the windows are stored back to back).
+struct CrossWindowCursors {
+    uint32_t windowA = 1;  // 1-based
+    uint32_t windowB = 1;
+    std::optional<double> elapsedSeconds;  // B - A from the recorded window start times; nullopt = not recorded
+    double resolutionSeconds = 0.0;        // timing resolution of those start times
+};
+
 struct ReportOptions {
     std::size_t first = 0;                                    // first visible sample
     std::size_t last = std::numeric_limits<std::size_t>::max();  // one past the last visible sample
@@ -64,6 +73,7 @@ struct ReportOptions {
     uint64_t captureId = 0;                   // identifies the capture on screen (0 = unknown)
     std::string banner;                       // warning shown above the report, e.g. "ARMED: new capture pending"
     std::vector<std::string> warnings;        // warnings the device layer raised for this capture
+    std::optional<CrossWindowCursors> crossWindow;  // set when both cursors exist but lie in different windows
 };
 
 // One incident the analyzers flagged (drop, spurious reaction, timing outlier, irregular period, ...).

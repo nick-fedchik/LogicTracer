@@ -5,6 +5,19 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- `diff` analyzes segmented captures window by window, treats touching delay intervals as different fixed
+  delays under `--strict`, and rejects a `--measure-latency` pair that one capture does not record.
+  Present channels with no matched events yield null latency metrics, not evidence of jitter.
+- Replay keeps `exact_timing` when it plays a recording at its own rate.
+- GUI: cursors in different windows of a segmented capture report no stitched-buffer time; a cursor report
+  describes the window that holds the cursors. Session reports can be bound to a capture attempt
+  (`attempt_id`), also when it failed; requests rejected as invalid exit 64 through the GUI as they do
+  directly and no longer mark the capture on screen stale; GUI-routed `capture` prints its results.
+- `capture`/`analyze` exit 1 when a requested output cannot be written and reject two outputs sharing a
+  file; `analyze --out-json` keeps annotations and device; VCD keeps hardware channel numbers; failed
+  `probe` documents carry the envelope; `--json --copy` failures leave one document on stdout.
+
 ## [0.6.1] - 2026-11-17
 
 ### Added

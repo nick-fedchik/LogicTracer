@@ -181,6 +181,41 @@ std::size_t storedSample(const CaptureBuffer& buffer, const SegmentLayout& layou
     return start + (local > shift ? local - shift : 0);
 }
 
+std::size_t windowOfStored(const SegmentLayout& layout, std::size_t sample)
+{
+    const std::size_t firstWindow = static_cast<std::size_t>(layout.preSamples) + layout.postSamples;
+    if (layout.count <= 1 || layout.postSamples == 0 || sample < firstWindow)
+        return 0;
+    return std::min<std::size_t>((sample - layout.preSamples) / layout.postSamples, layout.count - 1);
+}
+
+std::optional<CrossWindowCursors> crossWindowCursors(const SegmentLayout& layout, double samplePeriod,
+                                                     int64_t triggerIndex, std::optional<std::size_t> cursorA,
+                                                     std::optional<std::size_t> cursorB)
+{
+    if (!cursorA || !cursorB || layout.count < 2)
+        return std::nullopt;
+    const std::size_t wa = windowOfStored(layout, *cursorA), wb = windowOfStored(layout, *cursorB);
+    if (wa == wb)
+        return std::nullopt;
+    CrossWindowCursors out;
+    out.windowA = static_cast<uint32_t>(wa + 1);
+    out.windowB = static_cast<uint32_t>(wb + 1);
+    if (layout.triggerTimesSeconds.size() == layout.count) {
+        // Seconds from the window's own trigger (window 1 keeps its pre-trigger samples before t = 0).
+        const auto local = [&](std::size_t window, std::size_t sample, std::size_t trigger) {
+            return layout.triggerTimesSeconds[window] + (static_cast<double>(sample) - static_cast<double>(trigger)) * samplePeriod;
+        };
+        const auto start = [&](std::size_t window) {
+            return window == 0 ? static_cast<std::size_t>(std::max<int64_t>(0, triggerIndex))
+                               : static_cast<std::size_t>(layout.preSamples) + window * layout.postSamples;
+        };
+        out.elapsedSeconds = local(wb, *cursorB, start(wb)) - local(wa, *cursorA, start(wa));
+        out.resolutionSeconds = 2.0 * layout.triggerTimeResolutionSeconds + samplePeriod;
+    }
+    return out;
+}
+
 std::vector<AnomalyIncident> findSegmentAnomalies(const CaptureBuffer& buffer, const SegmentLayout& layout,
                                                   const ReportOptions& options)
 {
@@ -428,11 +463,46 @@ std::string segmentsForAi(const SegmentAnalysis& a, const ReportOptions& options
         ss << "- ... " << flagged - attention.size() << " more (see `segments.windows` in the JSON)\n";
 
     if (!a.windows.empty()) {
-        ReportOptions first = options;
-        first.title = "Window 1 of " + std::to_string(L.count) + " in detail";
-        first.userNote.clear();
-        first.warnings.clear();
-        ss << "\n" << copyForAi(a.windows.front(), first);
+        // The window to detail: the one that holds both cursors, otherwise window 1.
+        std::size_t window = 0;
+        ReportOptions detail = options;
+        const bool cursors = options.cursorA && options.cursorB;
+        const double period = 1.0 / std::max(1.0, rate);
+        const auto trigger = a.windows.front().triggerIndex();
+        const auto cross = cursors ? crossWindowCursors(L, period, trigger, options.cursorA, options.cursorB)
+                                   : std::nullopt;
+        bool skipDetail = false;
+        std::optional<CaptureBuffer> recordedWindow;
+        if (cross) {
+            ss << "\n- Cursors A (window " << cross->windowA << ") and B (window " << cross->windowB
+               << ") are in different windows: ";
+            if (cross->elapsedSeconds)
+                ss << "elapsed A to B = " << formatTime(std::abs(*cross->elapsedSeconds)) << " (±"
+                   << formatTime(cross->resolutionSeconds) << "). ";
+            else
+                ss << "the time between windows is NOT recorded, so there is no elapsed time. ";
+            ss << "No cursor slice is shown: move both cursors into one window for a detailed range.\n";
+            skipDetail = true;
+        } else if (cursors) {
+            window = windowOfStored(L, *options.cursorA);
+            if (window > 0 && window < a.windows.size()) {
+                const std::size_t start = static_cast<std::size_t>(L.preSamples) + window * L.postSamples;
+                // The analysis baseline is inferred, not evidence for the cursor slice.
+                if (hasSyntheticSample(a.windows[window], L))
+                    recordedWindow = a.windows[window].slice(1, L.postSamples);
+                detail.cursorA = *options.cursorA - start;
+                detail.cursorB = *options.cursorB - start;
+                detail.first = 0;
+                detail.last = std::numeric_limits<std::size_t>::max();
+                detail.annotations.clear();  // annotation times are relative to the trigger of window 1
+            }
+        }
+        if (!skipDetail) {
+            detail.title = "Window " + std::to_string(window + 1) + " of " + std::to_string(L.count) + " in detail";
+            detail.userNote.clear();
+            detail.warnings.clear();
+            ss << "\n" << copyForAi(recordedWindow ? *recordedWindow : a.windows[window], detail);
+        }
     }
     return ss.str();
 }

@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Mykola Fedchyk
 
 #include "core/Exporters.hpp"
+#include "core/SignalAnalyzer.hpp"
 #include "FakeDevice.hpp"
 #include "gui/MainWindow.hpp"
 #include "services/Session.hpp"
@@ -40,6 +41,7 @@ auto awaitOffThread(F&& f)
 struct CliRun {
     int exitCode = -1;
     QString out;
+    QString err;
     json doc;
 };
 
@@ -53,6 +55,7 @@ CliRun runCli(const QStringList& args, const QString& socket)
     p.waitForFinished(1000);
     r.exitCode = p.exitCode();
     r.out = QString::fromUtf8(p.readAllStandardOutput());
+    r.err = QString::fromUtf8(p.readAllStandardError());
     r.doc = json::parse(r.out.toStdString(), nullptr, false);
     return r;
 }
@@ -467,6 +470,131 @@ private Q_SLOTS:
         QVERIFY(!win.device().isBusy());
         r = awaitOffThread([path] { return sess::call(path, "probe", {{"channels", "1"}, {"window_ms", 2}}, 10000); });
         QVERIFY2(r.ok, r.error.c_str());
+    }
+
+    // A GUI-routed capture behaves like a direct one: usage errors exit 64 without disturbing the screen, results
+    // and failed checks are printed, and a report bound to an attempt never describes another attempt.
+    void sessionCapturesMatchDirectOnesAndBindReportsToTheAttempt()
+    {
+        QTemporaryDir rec;
+        const QString file = rec.filePath("rec.json");
+        std::vector<uint32_t> samples(700, 0u);
+        for (std::size_t t0 : {100u, 300u, 500u})
+            for (std::size_t w = 0; w < 20; ++w)
+                samples[t0 + w] |= 1u;  // CH1 toggles, CH2 never does
+        const lt::CaptureBuffer buf({{0, "STIM"}, {1, "IDLE"}}, 1'000'000, 0, samples);
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        QVERIFY(lt::writeJsonFile(file.toStdString(), lt::captureToJson(buf, lt::SignalAnalyzer(opts).analyze(buf), true)));
+
+        lt::gui::MainWindow win;
+        win.show();
+        const QString path = socket("attempt.sock");
+        QVERIFY(win.startSession(path));
+        const QString port = "replay:" + file;
+        win.setPortText(port);
+        for (auto* b : win.findChildren<QPushButton*>())
+            if (b->text() == "Connect")
+                b->click();
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+
+        const QString output = rec.filePath("capture.csv");
+        const QStringList args = {"capture", "--port", port, "--freq", "1M", "--samples", "400", "--channels", "1:STIM,2:IDLE",
+                                  "--summary", "--measure-latency", "1:rising..1:falling", "--expect", "1:transitions>100",
+                                  "--invariant", "never(STIM)", "--out-csv", output, "--pull-up", "1"};
+        const auto direct = runCli(QStringList(args) << "--no-session", path);
+        QCOMPARE(direct.exitCode, 3);
+        QVERIFY(QFile::remove(output));
+        auto cli = runCli(args, path);
+        QCOMPARE(cli.exitCode, 3);
+        QVERIFY(QFile::exists(output));
+        for (const auto* expected : {"STIM", "histogram", "Assertions: FAIL", "Invariants: FAIL", "wrote csv:"})
+            QVERIFY2(cli.out.contains(expected), qPrintable(cli.out));
+        QVERIFY(cli.err.contains("warning:") && cli.err.contains("1:transitions>100"));
+        QCOMPARE(cli.err, direct.err);
+        QCOMPARE(cli.out.section('\n', 1), direct.out.section('\n', 1));  // first line names the transport
+
+        // An invalid request is a usage error, like on the direct path, and keeps the capture on screen live.
+        const auto idBefore = runCli({"view", "--json"}, path).doc["capture_id"].get<std::uint64_t>();
+        cli = runCli({"capture", "--port", port, "--freq", "3M", "--samples", "8", "--json"}, path);
+        QCOMPARE(cli.exitCode, 64);
+        const auto state = runCli({"view", "--json"}, path).doc;
+        QCOMPARE(state["capture_id"].get<std::uint64_t>(), idBefore);
+        QCOMPARE(state["display_state"].get<std::string>(), std::string("live"));
+
+        // Reports follow their own attempt, also when it failed.
+        const json ok = {{"channels", "1:STIM,2:IDLE"}, {"samples", 50}};
+        const json failing = {{"channels", "1:STIM,2:IDLE"}, {"samples", 50}, {"trigger", "2:rising"},
+                              {"timeout_ms", 200}, {"probe_on_timeout", false}};
+        auto r = awaitOffThread([path, ok] { return sess::call(path, "capture", ok, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
+        const auto first = r.result["attempt_id"].get<std::uint64_t>();
+        const auto firstCapture = r.result.at("capture_id");
+        r = awaitOffThread([path, failing] { return sess::call(path, "capture", failing, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
+        QCOMPARE(r.result["status"].get<std::string>(), std::string("TIMEOUT"));
+        const auto second = r.result["attempt_id"].get<std::uint64_t>();
+        QVERIFY(second > first);
+        const auto guarded = callInThread(path, "get_report", {{"capture_id", firstCapture}});
+        QCOMPARE(guarded.errorCode, sess::error::StaleCapture);
+
+        auto report = [&](std::uint64_t attempt) {
+            return awaitOffThread([path, attempt] { return sess::call(path, "get_report", {{"attempt_id", attempt}}); });
+        };
+        auto rep = report(first);  // a later failure must not replace the report of the earlier capture
+        QVERIFY(!rep.ok);
+        QCOMPARE(rep.errorCode, sess::error::StaleCapture);
+        rep = report(second);
+        QVERIFY2(rep.ok, rep.error.c_str());
+        QCOMPARE(rep.result["metadata"]["status"].get<std::string>(), std::string("TIMEOUT"));
+
+        r = awaitOffThread([path, ok] { return sess::call(path, "capture", ok, 10000); });
+        QVERIFY2(r.ok, r.error.c_str());
+        const auto third = r.result["attempt_id"].get<std::uint64_t>();
+        QCOMPARE(report(second).errorCode, sess::error::StaleCapture);
+        rep = report(third);
+        QVERIFY2(rep.ok, rep.error.c_str());
+        QCOMPARE(rep.result["metadata"]["capture_id"].get<std::uint64_t>(), r.result["capture_id"].get<std::uint64_t>());
+    }
+
+    void cancelledAttemptCannotReturnPreviousWaveformReport()
+    {
+        fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0)
+                d.send(fake::idReply("V6_5", true));
+            else if (payload[0] == 1)
+                d.send("CAPTURE_STARTED\n");  // stay armed until the host cancels
+        });
+        LT_REQUIRE_PTY(dev);
+        lt::gui::MainWindow win;
+        const QString path = socket("cancel.sock");
+        QVERIFY(win.startSession(path));
+        QVERIFY(win.device().open(QString::fromStdString(dev.port())));
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        win.loadDemo();
+        const auto before = callInThread(path, "get_report");
+        QVERIFY2(before.ok, before.error.c_str());
+        const auto previousId = before.result.at("metadata").at("capture_id");
+
+        connect(&win.device(), &lt::AsyncDevice::progress, &win, [&](int stage) {
+            if (stage == static_cast<int>(lt::CaptureStage::WaitingForTrigger))
+                win.device().requestCancel();
+        });
+        const auto cancelled = callInThread(path, "capture", {{"channels", "1"}, {"trigger", "1:rising"},
+                                                               {"samples", 300}, {"timeout_ms", 3000}});
+        QVERIFY2(cancelled.ok, cancelled.error.c_str());
+        QCOMPARE(cancelled.result.at("status").get<std::string>(), std::string("CANCELLED"));
+        QVERIFY(!cancelled.result.contains("capture_id"));
+        const auto attempt = cancelled.result.at("attempt_id").get<uint64_t>();
+        QVERIFY(attempt > 0);
+
+        const auto bound = callInThread(path, "get_report", {{"attempt_id", attempt}});
+        QVERIFY(!bound.ok);
+        QCOMPARE(bound.errorCode, sess::error::StaleCapture);
+        QVERIFY(bound.error.find("cancelled") != std::string::npos);
+        const auto current = callInThread(path, "get_report");
+        QVERIFY2(current.ok, current.error.c_str());
+        QVERIFY(current.result.at("metadata").at("capture_id") == previousId);
     }
 
     void cliAiAndCopyWriteToClipboardBackend()

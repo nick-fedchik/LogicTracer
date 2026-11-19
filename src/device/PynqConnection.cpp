@@ -263,8 +263,10 @@ CaptureResult PynqConnection::capture(const CaptureConfig& config)
         return r;
     };
     report(CaptureStage::Starting);
-    if (auto err = validate(config))
+    if (auto err = validate(config)) {
+        r.usageError = true;
         return finish(CaptureStatus::Error, *err);
+    }
 
     json req = {{"cmd", "capture"}, {"timeout_ms", config.timeout.count()}};
     uint32_t pre = 0;

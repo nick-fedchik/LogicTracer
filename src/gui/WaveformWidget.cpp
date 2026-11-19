@@ -3,6 +3,8 @@
 
 #include "gui/WaveformWidget.hpp"
 
+#include "core/Segments.hpp"
+
 #include "core/DeviceProtocol.hpp"
 #include "core/Format.hpp"
 
@@ -175,6 +177,7 @@ void WaveformWidget::setCapture(const lt::CaptureBuffer& buffer)
     m_cursorB.reset();
     m_annotations.clear();  // annotation times are relative to the trigger of the capture they were made on
     m_segmentStarts.clear();
+    m_segmentLayout.reset();
     m_anomalies.clear();  // the owner supplies them (setAnomalies) once the analysis options are known
     m_view.setTotalSamples(m_buffer.size());
     updateViewWidth();
@@ -246,6 +249,9 @@ lt::ReportOptions WaveformWidget::reportOptions() const
     o.cursorA = m_cursorA;
     o.cursorB = m_cursorB;
     o.annotations = m_annotations;
+    if (m_segmentLayout)
+        o.crossWindow = lt::crossWindowCursors(*m_segmentLayout, m_buffer.samplePeriodSeconds(), m_buffer.triggerIndex(),
+                                               m_cursorA, m_cursorB);
     return o;
 }
 
@@ -320,6 +326,13 @@ void WaveformWidget::setSegmentStarts(std::vector<std::size_t> starts)
 {
     m_segmentStarts = std::move(starts);
     update();
+}
+
+void WaveformWidget::setSegmentLayout(std::optional<lt::SegmentLayout> layout)
+{
+    m_segmentLayout = std::move(layout);
+    update();
+    Q_EMIT cursorsChanged();
 }
 
 // The time between windows of a segmented capture is unknown: a dashed seam marks every window start.
@@ -823,10 +836,25 @@ void WaveformWidget::drawCursors(QPainter& p, const QRectF& plot) const
 
     if (m_cursorA && m_cursorB) {
         const double xa = xOfSample(static_cast<double>(*m_cursorA)), xb = xOfSample(static_cast<double>(*m_cursorB));
-        const double dt = m_buffer.timeOfSample(*m_cursorB) - m_buffer.timeOfSample(*m_cursorA);
-        QString text = QString("Δ %1").arg(QString::fromStdString(lt::formatTime(std::abs(dt))));
-        if (dt != 0.0)
-            text += QString("  (%1)").arg(QString::fromStdString(lt::formatHz(1.0 / std::abs(dt))));
+        QString text;
+        const auto cross = m_segmentLayout ? lt::crossWindowCursors(*m_segmentLayout, m_buffer.samplePeriodSeconds(),
+                                                                    m_buffer.triggerIndex(), m_cursorA, m_cursorB)
+                                           : std::nullopt;
+        if (cross) {  // the stored distance between windows is not elapsed time
+            text = cross->elapsedSeconds
+                       ? QString("Δ %1  (windows %2→%3)")
+                             .arg(QString::fromStdString(lt::formatTime(std::abs(*cross->elapsedSeconds))))
+                             .arg(cross->windowA)
+                             .arg(cross->windowB)
+                       : QString("Δ n/a  (windows %1→%2, time between windows not recorded)")
+                             .arg(cross->windowA)
+                             .arg(cross->windowB);
+        } else {
+            const double dt = m_buffer.timeOfSample(*m_cursorB) - m_buffer.timeOfSample(*m_cursorA);
+            text = QString("Δ %1").arg(QString::fromStdString(lt::formatTime(std::abs(dt))));
+            if (dt != 0.0)
+                text += QString("  (%1)").arg(QString::fromStdString(lt::formatHz(1.0 / std::abs(dt))));
+        }
         // Measurement bar just below the ruler, on a backing so it stays readable over the waveforms.
         const double y = kPlotTop + 26;
         const QFontMetrics fm(p.font());

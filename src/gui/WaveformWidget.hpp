@@ -5,6 +5,7 @@
 
 #include "core/AiReport.hpp"
 #include "core/CaptureBuffer.hpp"
+#include "core/CaptureTypes.hpp"
 #include "gui/ViewTransform.hpp"
 
 #include <QWidget>
@@ -108,6 +109,8 @@ public Q_SLOTS:
     void setShowAnomalyMarkers(bool show);
     // Segmented capture: first stored sample of every trigger window (drawn as seams; empty = continuous).
     void setSegmentStarts(std::vector<std::size_t> starts);
+    // Layout of a segmented capture: cursors in different windows get no stitched-buffer time.
+    void setSegmentLayout(std::optional<lt::SegmentLayout> layout);
     void setCursorA(std::size_t sample);
     void setCursorB(std::size_t sample);
     void setSnapToEdges(bool enabled);
@@ -175,6 +178,7 @@ private:
     QWidget* m_emptyCard = nullptr;
     std::vector<lt::AnomalyIncident> m_anomalies;
     std::vector<std::size_t> m_segmentStarts;
+    std::optional<lt::SegmentLayout> m_segmentLayout;
     bool m_showAnomalies = true;
     double m_rowHeightPx = 0;  // 0 = auto
     double m_scrollY = 0;

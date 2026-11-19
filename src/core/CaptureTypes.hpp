@@ -89,6 +89,7 @@ enum class CaptureStage { Starting, WaitingForTrigger, Downloading, Done };
 struct CaptureResult {
     CaptureStatus status = CaptureStatus::Error;
     std::string error;
+    bool usageError = false;  // the device rejected the request itself (validate()); nothing was armed
     std::optional<CaptureBuffer> buffer;
     CaptureMode mode = CaptureMode::Channels8;
     std::optional<EdgeTrigger> triggerUsed;

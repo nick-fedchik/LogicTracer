@@ -501,7 +501,15 @@ std::string cursorLine(const CaptureBuffer& b, const ReportOptions& o)
     };
     name("A", o.cursorA);
     name("B", o.cursorB);
-    if (o.cursorA && o.cursorB) {
+    if (o.cursorA && o.cursorB && o.crossWindow) {
+        const auto& x = *o.crossWindow;
+        ss << "A is in window " << x.windowA << ", B in window " << x.windowB << "; ";
+        if (x.elapsedSeconds)
+            ss << "elapsed A to B = " << formatTime(std::abs(*x.elapsedSeconds)) << " (±" << formatTime(x.resolutionSeconds)
+               << ", from the recorded window start times)";
+        else
+            ss << "the elapsed time between windows is NOT recorded (stored-sample distance is not time)";
+    } else if (o.cursorA && o.cursorB) {
         const double dt = b.timeOfSample(*o.cursorB) - b.timeOfSample(*o.cursorA);
         ss << "Δt = " << formatTime(std::abs(dt)) << " (" << (*o.cursorB >= *o.cursorA ? "" : "B before A, ")
            << std::abs(static_cast<long long>(*o.cursorB) - static_cast<long long>(*o.cursorA)) << " samples)";
@@ -969,7 +977,15 @@ nlohmann::json jsonMetadata(const CaptureBuffer& b, const ReportOptions& o)
         cursors["a"] = {{"sample", *o.cursorA}, {"us", atUs(*o.cursorA)}};
     if (o.cursorB)
         cursors["b"] = {{"sample", *o.cursorB}, {"us", atUs(*o.cursorB)}};
-    if (o.cursorA && o.cursorB) {
+    if (o.cursorA && o.cursorB && o.crossWindow) {
+        const auto& x = *o.crossWindow;
+        cursors["delta_us"] = x.elapsedSeconds ? nlohmann::json(*x.elapsedSeconds * kUs) : nlohmann::json(nullptr);
+        cursors["cross_window"] = {{"window_a", x.windowA},
+                                   {"window_b", x.windowB},
+                                   {"elapsed_known", x.elapsedSeconds.has_value()},
+                                   {"resolution_us", x.resolutionSeconds * kUs},
+                                   {"note", "the cursors are in different windows: stored-sample distance is not elapsed time"}};
+    } else if (o.cursorA && o.cursorB) {
         cursors["delta_us"] = atUs(*o.cursorB) - atUs(*o.cursorA);
         if (r.size() > 0) {
             const auto lo = std::min(*o.cursorA, *o.cursorB), hi = std::max(*o.cursorA, *o.cursorB);

@@ -236,6 +236,10 @@
       ],
       "additionalProperties": false
     },
+    "attempt_id": {
+      "type": "integer",
+      "description": "GUI session only: identifies this capture attempt (also when it failed or was cancelled); a report requested with it never describes another attempt"
+    },
     "capture_id": {
       "type": "integer",
       "description": "GUI session only: the capture now on screen"

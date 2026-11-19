@@ -708,6 +708,16 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
     const QString candidateTrigger = std::exchange(m_pendingTriggerDescription, QString{});
     auto pendingWarnings = std::exchange(m_pendingWarnings, {});
     const bool fromSession = pending && !pending->isProbe;
+    if (r.usageError) {  // the request itself was invalid: nothing was armed, the screen keeps its meaning
+        stopRepeat();
+        restoreIdleState();
+        updateReport();
+        showStatus(QString::fromStdString(r.error), true);
+        if (fromSession)
+            pending->reply.fail(lt::session::error::InvalidParams, r.error);
+        return;
+    }
+    const uint64_t attemptId = ++m_attemptCounter;
     // One effective setup for the entry, the AI report and the session result: the engineer's setup for the
     // next capture, overridden per key by the request's one-off meta (which is not kept for later captures).
     lt::SetupInfo effectiveSetup = m_nextSetup;
@@ -722,6 +732,7 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         entryWarnings.insert(entryWarnings.end(), r.warnings.begin(), r.warnings.end());
         showNewCapture(*r.buffer, candidateTrigger, effectiveSetup, std::move(entryWarnings), false, liveStamp(),
                        r.segments);
+        m_lastAttempt = {attemptId, LastAttempt::Kind::Ok, m_currentCaptureId};
         showStatus(tr("Capture complete: %1 samples in %2 ms").arg(r.buffer->size()).arg(r.elapsed.count()));
         if (m_repeat->isChecked() && !fromSession) {
             const auto generation = m_repeatGeneration;
@@ -730,6 +741,7 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         break;
     }
     case lt::CaptureStatus::Cancelled:
+        m_lastAttempt = {attemptId, LastAttempt::Kind::Cancelled, 0};
         stopRepeat();
         restoreIdleState();
         showStatus(tr("Capture cancelled"));
@@ -750,6 +762,7 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         }
         recordFailure(FailureInfo{r.lineDump ? *r.lineDump : lt::CaptureBuffer{}, std::string(lt::toString(r.status)),
                                   r.error, candidateTrigger});
+        m_lastAttempt = {attemptId, LastAttempt::Kind::Failed, 0};
         showStatus(statusMsg, true);
         break;
     }
@@ -759,6 +772,7 @@ void MainWindow::onCaptureFinished(const lt::CaptureResult& r)
         auto docOptions = pending->options;
         docOptions.setup = effectiveSetup;
         auto doc = lt::captureDocument(m_device.info(), pending->spec, pending->config, r, pending->warnings, docOptions);
+        doc.doc["attempt_id"] = attemptId;
         if (r.status == lt::CaptureStatus::Ok)
             doc.doc["capture_id"] = m_currentCaptureId;
         lt::writeCaptureOutputs(doc.doc, r, doc, pending->outputs, m_device.info().version.board);
@@ -812,15 +826,19 @@ void MainWindow::onProbeFinished(const lt::ProbeResult& r)
     const auto pending = std::exchange(m_pending, std::nullopt);
     const QString candidateTrigger = std::exchange(m_pendingTriggerDescription, QString{});
     const bool ok = r.status == lt::CaptureStatus::Ok && r.buffer;
+    const uint64_t attemptId = ++m_attemptCounter;
     if (ok) {
         consumeNote();
         m_failure.reset();
         showNewCapture(*r.buffer, candidateTrigger, m_nextSetup, {}, true, liveStamp());
+        m_lastAttempt = {attemptId, LastAttempt::Kind::Ok, m_currentCaptureId};
         showStatus(tr("Probe complete (%1 ms)").arg(r.elapsed.count()));
     } else if (r.status == lt::CaptureStatus::Cancelled) {
+        m_lastAttempt = {attemptId, LastAttempt::Kind::Cancelled, 0};
         showStatus(tr("Probe cancelled"));
     } else {
         recordFailure(FailureInfo{lt::CaptureBuffer{}, std::string(lt::toString(r.status)), r.error, candidateTrigger});
+        m_lastAttempt = {attemptId, LastAttempt::Kind::Failed, 0};
         showStatus(QString::fromStdString(r.error), true);
     }
     if (pending && pending->isProbe) {
@@ -921,6 +939,7 @@ void MainWindow::showEntry(std::size_t index)
     m_segments = e.segments;
     m_waveform->setCapture(e.buffer);
     m_waveform->setSegmentStarts(e.segments ? lt::segmentStarts(*e.segments) : std::vector<std::size_t>{});
+    m_waveform->setSegmentLayout(e.segments);
     m_waveform->setAnnotations(e.annotations);
     if (e.cursorA)
         m_waveform->setCursorA(*e.cursorA);
@@ -1574,7 +1593,10 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
             return;
         reply.ok(stateJson());
     } else if (method == "get_report") {
-        if (!checkCaptureId(params, reply))
+        json bound = params;
+        if (!bindAttempt(params, bound, reply))
+            return;
+        if (!checkCaptureId(bound, reply))
             return;
         for (const char* key : {"note", "latency"})
             if (params.contains(key) && !params[key].is_string()) {
@@ -1593,7 +1615,12 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                 return;
             }
         }
-        if (m_failure && m_waveform->displayState() == WaveformWidget::DisplayState::Stale) {
+        const bool boundFailure = params.contains("attempt_id") && m_lastAttempt.kind == LastAttempt::Kind::Failed;
+        if (m_failure && (boundFailure || m_waveform->displayState() == WaveformWidget::DisplayState::Stale)) {
+            if (bound.contains("capture_id")) {
+                reply.fail(sess::error::StaleCapture, "the current failure report does not describe the requested waveform");
+                return;
+            }
             auto ignored = json::array();
             for (const char* key : {"mode", "latency"})
                 if (params.contains(key))
@@ -1680,6 +1707,36 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
             startSelfTest(*options, std::move(reply));
     } else {
         reply.fail(sess::error::MethodNotFound, "unknown method '" + method + "'");
+    }
+}
+
+// A request bound to a capture attempt is answered only while that attempt is still the latest one.
+bool MainWindow::bindAttempt(const json& p, json& bound, sess::Responder& reply)
+{
+    if (!p.contains("attempt_id"))
+        return true;
+    if (!p["attempt_id"].is_number_unsigned()) {
+        reply.fail(sess::error::InvalidParams, "attempt_id must be a positive integer");
+        return false;
+    }
+    const auto wanted = p["attempt_id"].get<uint64_t>();
+    const auto stale = [&](const std::string& why) {
+        reply.fail(sess::error::StaleCapture, "capture attempt #" + std::to_string(wanted) + " " + why,
+                   {{"requested_attempt_id", wanted}, {"current_attempt_id", m_lastAttempt.id}});
+        return false;
+    };
+    if (wanted != m_lastAttempt.id)
+        return stale("is no longer the latest attempt (the latest is #" + std::to_string(m_lastAttempt.id) + ")");
+    switch (m_lastAttempt.kind) {
+    case LastAttempt::Kind::Ok:
+        bound["capture_id"] = m_lastAttempt.captureId;  // the waveform must still be this attempt's
+        return true;
+    case LastAttempt::Kind::Failed:
+        if (m_failure)
+            return true;
+        return stale("failed, but its failure report is no longer available");
+    default:
+        return stale("was cancelled: there is no report for it");
     }
 }
 
