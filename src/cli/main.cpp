@@ -468,8 +468,10 @@ int cmdProbe(const QStringList& args, Output o)
         if (o.json) {
             const std::string dumped = doc.dump(2);
             std::cout << dumped << std::endl;
-            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error))
-                return report(o, ExitError, error);
+            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
+                std::cerr << "logictracer-cli probe: " << error << std::endl;  // stdout keeps its single document
+                return ExitError;
+            }
         } else if (p.isSet("ai")) {
             std::cout << aiText;
             if (p.isSet("copy") && !copyAndConfirm(aiText, error))
@@ -519,8 +521,10 @@ int cmdProbe(const QStringList& args, Output o)
     if (o.json) {
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
-        if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error))
-            return report(o, ExitError, error);
+        if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
+            std::cerr << "logictracer-cli probe: " << error << std::endl;  // stdout keeps its single document
+            return ExitError;
+        }
     } else if (p.isSet("ai")) {
         std::cout << aiText;
         for (const auto& w : doc["warnings"])
@@ -674,6 +678,11 @@ int cmdCapture(const QStringList& args, Output o)
                                         "between windows is unknown); use --out-json");
     }
 
+    const lt::OutputPaths requestedOutputs{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
+                                           str(p.value("out-events-csv"))};
+    if (const auto duplicate = lt::duplicateOutputPath(requestedOutputs))
+        return report(o, ExitUsage, *duplicate);
+
     const bool hasArmedHook = p.isSet("ready-file") || p.isSet("on-armed");
     const QString sock = p.isSet("no-session") ? QString{} : socketPathFrom(p);
     const std::string reqPort = p.isSet("port") ? str(p.value("port")) : std::string{};
@@ -716,6 +725,15 @@ int cmdCapture(const QStringList& args, Output o)
         const bool expectOk = (!doc.contains("assertions") || doc["assertions"].value("passed", true)) &&
                               (!doc.contains("invariants") || doc["invariants"].value("passed", true));
         int rc = st == "OK" ? (expectOk ? ExitOk : ExitExpectFailed) : st == "TIMEOUT" ? ExitTimeout : ExitError;
+        if (rc == ExitOk) {  // a requested file the GUI could not write is a failure, not a silent warning
+            const json outs = doc.contains("outputs") ? doc["outputs"] : json::object();
+            for (const auto& [option, key] : {std::pair<const char*, const char*>{"out-vcd", "vcd"},
+                                              {"out-json", "json"},
+                                              {"out-csv", "csv"},
+                                              {"out-events-csv", "events_csv"}})
+                if (p.isSet(option) && !outs.contains(key))
+                    rc = ExitError;
+        }
 
         std::string sessionAi, reportError, reportErrorKind;
         if (p.isSet("ai") || (p.isSet("copy") && !o.json)) {
@@ -828,17 +846,16 @@ int cmdCapture(const QStringList& args, Output o)
         return ExitUsage;
     }
 
-    lt::writeCaptureOutputs(
-        doc, result, outcome.document,
-        lt::OutputPaths{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
-                        str(p.value("out-events-csv"))},
-        conn.info().version.board);
+    const bool outputsWritten =
+        lt::writeCaptureOutputs(doc, result, outcome.document, requestedOutputs, conn.info().version.board);
     const json& outputs = doc["outputs"];
 
-    const int rc = result.status == lt::CaptureStatus::Ok
-                       ? (outcome.document.expectationsPassed ? ExitOk : ExitExpectFailed)
-                   : result.status == lt::CaptureStatus::Timeout ? ExitTimeout
-                                                                 : ExitError;
+    int rc = result.status == lt::CaptureStatus::Ok
+                 ? (outcome.document.expectationsPassed ? ExitOk : ExitExpectFailed)
+             : result.status == lt::CaptureStatus::Timeout ? ExitTimeout
+                                                           : ExitError;
+    if (rc == ExitOk && !outputsWritten)
+        rc = ExitError;
     if (o.json) {
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
@@ -1002,6 +1019,11 @@ int cmdAnalyze(const QStringList& args, Output o)
         return report(o, ExitUsage, "--out-vcd / --out-csv cannot represent a segmented capture (the time between "
                                     "windows is unknown); use --out-json");
 
+    const lt::OutputPaths requestedOutputs{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
+                                           str(p.value("out-events-csv"))};
+    if (const auto duplicate = lt::duplicateOutputPath(requestedOutputs))
+        return report(o, ExitUsage, *duplicate);
+
     lt::CaptureDocument capDoc;
     capDoc.doc = {
         {"schema_version", lt::kCaptureSchemaVersion},
@@ -1032,12 +1054,29 @@ int cmdAnalyze(const QStringList& args, Output o)
     lt::CaptureResult fakeRes;
     fakeRes.status = lt::CaptureStatus::Ok;
     fakeRes.buffer = buf;
-    lt::writeCaptureOutputs(
-        capDoc.doc, fakeRes, capDoc,
-        lt::OutputPaths{str(p.value("out-vcd")), str(p.value("out-json")), str(p.value("out-csv")),
-                        str(p.value("out-events-csv"))});
+    // The saved file keeps what the loaded recording carried besides samples: its device and the annotations.
+    if (!loaded.deviceVersion.empty() || !loaded.board.empty())
+        capDoc.fileOnly["device"] = {{"version", loaded.deviceVersion}, {"board", loaded.board}};
+    if (!loaded.annotations.empty()) {
+        auto notes = json::array();
+        for (const auto& a : loaded.annotations)
+            notes.push_back({{"id", a.id},
+                             {"time_us", a.timeSeconds * 1e6},
+                             {"duration_us", a.durationSeconds * 1e6},
+                             {"label", a.label},
+                             {"color", a.color},
+                             {"author", a.author}});
+        capDoc.fileOnly["annotations"] = std::move(notes);
+    }
+    const std::size_t warningsBeforeWrite = capDoc.doc["warnings"].size();
+    const bool outputsWritten = lt::writeCaptureOutputs(capDoc.doc, fakeRes, capDoc, requestedOutputs);
+    if (!o.json)
+        for (std::size_t i = warningsBeforeWrite; i < capDoc.doc["warnings"].size(); ++i)
+            std::cerr << "warning: " << capDoc.doc["warnings"][i].get<std::string>() << '\n';
 
-    const int rc = capDoc.expectationsPassed ? ExitOk : ExitExpectFailed;
+    int rc = capDoc.expectationsPassed ? ExitOk : ExitExpectFailed;
+    if (rc == ExitOk && !outputsWritten)
+        rc = ExitError;
     if (o.json) {
         const std::string dumped = capDoc.doc.dump(2);
         std::cout << dumped << std::endl;
@@ -1551,8 +1590,10 @@ int cmdView(const QStringList& args, Output o)
             doc["status"] = "OK";
             const std::string dumped = doc.dump(2);
             std::cout << dumped << std::endl;
-            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error))
-                return report(o, ExitError, error);
+            if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
+                std::cerr << "logictracer-cli view: " << error << std::endl;  // stdout keeps its single document
+                return ExitError;
+            }
         } else {
             const std::string rep = sr.result["report"].get<std::string>();
             if (p.isSet("report"))
@@ -1569,8 +1610,10 @@ int cmdView(const QStringList& args, Output o)
         doc["status"] = "OK";
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
-        if (!copyAndConfirm(dumped + "\n", error))
-            return report(o, ExitError, error);
+        if (!copyAndConfirm(dumped + "\n", error)) {
+            std::cerr << "logictracer-cli view: " << error << std::endl;
+            return ExitError;
+        }
         return ExitOk;
     }
     return finishSessionCall(o, sr, [](const json& r) {

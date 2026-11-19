@@ -1940,6 +1940,10 @@ void MainWindow::sessionCapture(const json& p, sess::Responder reply)
         reply.fail(sess::error::InvalidParams, err);
         return;
     }
+    if (const auto duplicate = lt::duplicateOutputPath(lt::OutputPaths{*vcd, *jsn, *csv, *evCsv})) {
+        reply.fail(sess::error::InvalidParams, *duplicate);
+        return;
+    }
     if (!evCsv->empty() && !opts->latency) {
         reply.fail(sess::error::InvalidParams, "out_events_csv requires 'latency'");
         return;

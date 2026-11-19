@@ -194,6 +194,12 @@ class Contracts(unittest.TestCase):
         self.json_cli("diff.schema.json", 0, "diff", self.out("seg.json"), self.rec)
         self.json_cli("probe.schema.json", 0, "probe", "--port", self.port, "--no-session", "--channels", "1:STIM,2:REACT")
         self.json_cli("probe.schema.json", 64, "probe", "--port", self.port, "--no-session", "--channels", "9")
+        gap = self.out("gap.json")  # CH1 and CH3 recorded: probing CH2 fails inside the backend (exit 1)
+        with open(gap, "w", encoding="utf-8") as f:
+            json.dump({"schema_version": 1, "format": "logictracer-capture-v1", "sample_rate_hz": 1_000_000,
+                       "samples": 100, "trigger_sample": 0,
+                       "channels": [{"channel": c, "idle_level": 0, "edge_samples": []} for c in (1, 3)]}, f)
+        self.json_cli("probe.schema.json", 1, "probe", "--port", "replay:" + gap, "--no-session", "--channels", "2")
         rc, out = self.run_cli("detect", "--no-session", "--no-handshake", "--json")  # 0 with a device, else 1
         doc = json.loads(out)
         self.assertEqual(self.v.check(doc, "detect.schema.json"), [])

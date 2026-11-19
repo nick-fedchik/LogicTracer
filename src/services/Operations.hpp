@@ -68,6 +68,7 @@ struct CaptureDocument {
     std::optional<LatencyStats> latency;
     bool expectationsPassed = true;  // --expect assertions and --invariant rules
     std::optional<SegmentAnalysis> segments;  // window-by-window analysis of a segmented capture
+    nlohmann::json fileOnly = nlohmann::json::object();  // extra keys of the saved --out-json file (not of stdout)
 };
 
 inline constexpr const char* kSegmentedTimelineError =
@@ -96,11 +97,15 @@ struct OutputPaths {
 
 // Writes the optional VCD / lossless-JSON / CSV / events-CSV files (empty path = skip) and records
 // them under doc["outputs"]; failures are appended to doc["warnings"].
-void writeCaptureOutputs(nlohmann::json& doc, const CaptureResult& result,
+// Returns false when a requested file could not be written.
+bool writeCaptureOutputs(nlohmann::json& doc, const CaptureResult& result,
                          const CaptureDocument& document, const OutputPaths& paths,
                          std::string_view board = {});
+
+// A message when two requested outputs resolve to the same file (the second write would replace the first).
+[[nodiscard]] std::optional<std::string> duplicateOutputPath(const OutputPaths& paths);
 // Backwards-compatible 2-path overload.
-void writeCaptureOutputs(nlohmann::json& doc, const CaptureResult& result,
+bool writeCaptureOutputs(nlohmann::json& doc, const CaptureResult& result,
                          const std::optional<std::vector<ChannelStats>>& stats, const std::string& vcdPath,
                          const std::string& jsonPath);
 

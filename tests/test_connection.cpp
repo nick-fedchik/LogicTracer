@@ -1160,6 +1160,66 @@ private Q_SLOTS:
         QCOMPARE(run({"diff", base, dir.filePath("missing.json"), "--json"}, &j), 1);
     }
 
+    void failedOrCollidingExportsAreNotSuccess()
+    {
+        QTemporaryDir dir;
+        const auto rec = writeRecording(dir);
+        nlohmann::json j;
+        QString raw;
+        const QString missing = dir.filePath("absent/out.json");
+        QCOMPARE(run({"analyze", rec, "--out-json", missing, "--json"}, &j), 1);
+        QVERIFY(j["outputs"].empty());
+        QVERIFY(!j["warnings"].empty());
+        QCOMPARE(run({"capture", "--no-session", "--port", "replay:" + rec, "--samples", "10", "--out-json", missing, "--json"}, &j), 1);
+        const QString same = dir.filePath("same.csv");
+        QCOMPARE(run({"analyze", rec, "--measure-latency", "1..3", "--out-csv", same, "--out-events-csv", same, "--json"}, &j), 64);
+        QVERIFY(!QFile::exists(same));
+        QCOMPARE(run({"analyze", rec, "--out-json", dir.filePath("ok.json"), "--json"}, &j), 0);
+    }
+
+    void jsonConversionKeepsAnnotationsAndDevice()
+    {
+        QTemporaryDir dir;
+        QFile in(writeRecording(dir));
+        QVERIFY(in.open(QIODevice::ReadOnly));
+        auto doc = nlohmann::json::parse(in.readAll().toStdString());
+        in.close();
+        doc["device"] = {{"version", "LOGICTRACER_PICO_0_6_1"}, {"board", "PICO"}};
+        doc["annotations"] = nlohmann::json::array({{{"id", 7}, {"label", "Review this edge"}, {"time_us", 100.0},
+                                                      {"duration_us", 5.0}, {"color", "orange"}, {"author", "engineer"}}});
+        QVERIFY(lt::writeJsonFile(dir.filePath("marked.json").toStdString(), doc));
+        QCOMPARE(run({"analyze", dir.filePath("marked.json"), "--out-json", dir.filePath("converted.json"), "--json"}), 0);
+        lt::LoadedCapture loaded;
+        std::string err;
+        QVERIFY2(lt::loadCaptureFile(dir.filePath("converted.json").toStdString(), loaded, &err), err.c_str());
+        QCOMPARE(loaded.deviceVersion, std::string("LOGICTRACER_PICO_0_6_1"));
+        QCOMPARE(loaded.board, std::string("PICO"));
+        QCOMPARE(loaded.annotations.size(), std::size_t{1});
+        QCOMPARE(loaded.annotations[0].id, uint64_t{7});
+        QCOMPARE(loaded.annotations[0].label, std::string("Review this edge"));
+        QCOMPARE(loaded.annotations[0].author, std::string("engineer"));
+        QCOMPARE(loaded.annotations[0].color, std::string("orange"));
+        QVERIFY(std::abs(loaded.annotations[0].durationSeconds - 5e-6) < 1e-12);
+    }
+
+    void probeFailureAndClipboardFailureKeepOneJsonDocument()
+    {
+        QTemporaryDir dir;
+        const auto rec = writeRecording(dir);
+        nlohmann::json j;
+        QCOMPARE(run({"probe", "--no-session", "--port", "replay:" + rec, "--channels", "2", "--json"}, &j), 1);
+        QVERIFY(j.contains("schema_version") && j["warnings"].is_array());
+        QCOMPARE(j["status"].get<std::string>(), std::string("ERROR"));
+
+        qputenv("LOGICTRACER_CLIPBOARD_FILE", dir.filePath("absent/clip.txt").toUtf8());
+        QString raw;
+        QCOMPARE(run({"probe", "--no-session", "--port", "replay:" + rec, "--channels", "1", "--window", "1", "--json", "--copy"},
+                     &j, &raw), 1);
+        qunsetenv("LOGICTRACER_CLIPBOARD_FILE");
+        QVERIFY2(!j.is_discarded(), qPrintable(raw));  // exactly one document on stdout
+        QCOMPARE(j["status"].get<std::string>(), std::string("OK"));
+    }
+
     void analyzeInvariantsSetExitCode()
     {
         QTemporaryDir dir;

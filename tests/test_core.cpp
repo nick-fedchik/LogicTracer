@@ -1205,6 +1205,25 @@ private Q_SLOTS:
         QCOMPARE(lt::diffCaptures(make(1), make(2), o)["verdict"].get<std::string>(), std::string("equivalent"));
     }
 
+    // VCD keeps the hardware channel numbers, also for sparse sets and custom names.
+    void vcdRoundTripKeepsChannelNumbers()
+    {
+        const lt::CaptureBuffer buf({{0, "STIM"}, {23, "REACT"}, {5, ""}}, 1'000'000, 0, {0, 1, 3, 7, 6, 0});
+        std::stringstream vcd;
+        lt::writeVcd(vcd, buf);
+        lt::LoadedCapture loaded;
+        std::string err;
+        QVERIFY2(lt::readVcd(vcd, loaded, &err), err.c_str());
+        const auto& ch = loaded.buffer.channels();
+        QCOMPARE(ch.size(), std::size_t{3});
+        QCOMPARE(int(ch[0].number), 0);
+        QCOMPARE(int(ch[1].number), 23);
+        QCOMPARE(int(ch[2].number), 5);
+        QCOMPARE(ch[1].name, std::string("REACT"));
+        QCOMPARE(ch[2].name, std::string());
+        QCOMPARE(loaded.buffer.samples(), buf.samples());
+    }
+
     // --invariant rules over a 1 MHz capture (1 sample = 1 us): pass/fail per kind, settle, censoring, errors.
     void invariantsCheckProtocolRules()
     {
