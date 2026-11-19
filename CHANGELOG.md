@@ -5,6 +5,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-19
+
 ### Fixed
 - `diff` analyzes segmented captures window by window, treats touching delay intervals as different fixed
   delays under `--strict`, and rejects a `--measure-latency` pair that one capture does not record.
@@ -207,6 +209,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.6.2]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.2
 [0.6.1]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.1
 [0.6.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.0
 [0.5.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.5.0
