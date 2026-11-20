@@ -39,6 +39,16 @@ In the entry-level class, the main architectural alternative is the **Infineon (
 | **Mid-range FPGA analyzers** (DreamSourceLab **DSLogic Plus / U3Pro**, Digilent **Digital Discovery**, ~$100–$300) | **FPGA + SDRAM buffer + USB 2.0/3.0**; 400 MS/s – 1 GS/s, 256 Mbit–2 Gbit RAM | 16–32 ch, programmable thresholds (1.2–5 V), shielded probes | Deep hardware memory, adjustable logic thresholds (1.8 V / 2.5 V / 3.3 V / 5 V), input protection and impedance control. |
 | **Professional USB 3.0 analyzers** (**Saleae Logic Pro 8 / 16**, ~$500–$1,500) | Up to 500 MS/s digital + 50 MS/s analog, USB 3.0 continuous streaming | 8–16 ch, programmable thresholds + analog | Simultaneous analog/digital capture, multi-gigabyte streaming, mature protocol analyzers and SDK. |
 
+### Monitoring a CAN device
+
+**Do not connect CAN_H or CAN_L directly to Pico GPIOs.** They are differential bus lines, not 3.3 V logic signals.
+To measure bit timing, connect a Pico input to the CAN transceiver’s **RXD** output after verifying that its logic level is 3.3 V.
+Connect Pico GND to the transceiver’s logic-side ground. A second channel can capture a device output on the same timebase to measure its response delay.
+If only CAN_H and CAN_L are accessible, use an external CAN transceiver with a 3.3 V RXD output in silent (listen-only) mode.
+
+LogicTracer captures the digital waveform; it does not decode CAN frames or read SocketCAN interfaces.
+For frame IDs and payload bytes on Linux, use a SocketCAN-compatible USB–CAN adapter instead. Configure it for the bus bitrate and listen-only mode, then run `candump can0`.
+
 ## Components
 
 | Path | What |
