@@ -9,8 +9,10 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QLocalSocket>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QProcess>
 #include <QPushButton>
@@ -19,6 +21,7 @@
 
 #include <chrono>
 #include <future>
+#include <map>
 
 using namespace std::chrono_literals;
 using json = nlohmann::json;
@@ -59,6 +62,119 @@ CliRun runCli(const QStringList& args, const QString& socket)
     r.doc = json::parse(r.out.toStdString(), nullptr, false);
     return r;
 }
+
+class SchemaValidator {
+    std::map<std::string, json> m_files;
+
+    const json& load(const std::string& name)
+    {
+        auto it = m_files.find(name);
+        if (it != m_files.end())
+            return it->second;
+        QFile f(QString::fromUtf8(LT_SCHEMA_DIR) + "/" + QString::fromStdString(name));
+        if (!f.open(QIODevice::ReadOnly))
+            return m_files[name] = json::object();
+        return m_files[name] = json::parse(f.readAll().toStdString(), nullptr, false);
+    }
+
+    static bool typeOk(const json& v, const std::string& t)
+    {
+        if (t == "object")
+            return v.is_object();
+        if (t == "array")
+            return v.is_array();
+        if (t == "string")
+            return v.is_string();
+        if (t == "boolean")
+            return v.is_boolean();
+        if (t == "null")
+            return v.is_null();
+        if (t == "integer")
+            return v.is_number_integer();
+        if (t == "number")
+            return v.is_number();
+        return false;
+    }
+
+    void checkNode(const json& val, const json& schema, const std::string& file, const std::string& path,
+                   QStringList& errs)
+    {
+        if (schema.contains("$ref")) {
+            const std::string ref = schema["$ref"].get<std::string>();
+            const auto hash = ref.find('#');
+            const std::string targetFile = (hash == 0 || hash == std::string::npos) ? (hash == 0 ? file : ref) : ref.substr(0, hash);
+            const std::string ptr = (hash == std::string::npos) ? "" : ref.substr(hash + 1);
+            const json& root = load(targetFile);
+            const json& target = ptr.empty() ? root : root.at(json::json_pointer(ptr));
+            checkNode(val, target, targetFile, path, errs);
+            return;
+        }
+        if (schema.contains("const") && val != schema["const"])
+            errs << QString::fromStdString(path + ": expected const " + schema["const"].dump() + ", got " + val.dump());
+        if (schema.contains("enum")) {
+            bool found = false;
+            for (const auto& item : schema["enum"])
+                if (val == item)
+                    found = true;
+            if (!found)
+                errs << QString::fromStdString(path + ": " + val.dump() + " not in enum");
+        }
+        if (schema.contains("type")) {
+            bool ok = false;
+            if (schema["type"].is_array()) {
+                for (const auto& t : schema["type"])
+                    if (typeOk(val, t.get<std::string>()))
+                        ok = true;
+            } else {
+                ok = typeOk(val, schema["type"].get<std::string>());
+            }
+            if (!ok) {
+                errs << QString::fromStdString(path + ": wrong type for " + val.dump());
+                return;
+            }
+        }
+        if (schema.contains("pattern") && val.is_string()) {
+            QRegularExpression re(QString::fromStdString(schema["pattern"].get<std::string>()));
+            if (!re.match(QString::fromStdString(val.get<std::string>())).hasMatch())
+                errs << QString::fromStdString(path + ": string does not match pattern");
+        }
+        if (val.is_object()) {
+            const json props = schema.value("properties", json::object());
+            if (schema.contains("required")) {
+                for (const auto& req : schema["required"]) {
+                    const std::string k = req.get<std::string>();
+                    if (!val.contains(k))
+                        errs << QString::fromStdString(path + ": missing required '" + k + "'");
+                }
+            }
+            const bool allowExtra = !schema.contains("additionalProperties") ||
+                                    (schema["additionalProperties"].is_boolean() && schema["additionalProperties"].get<bool>());
+            const bool extraSchema = schema.contains("additionalProperties") && schema["additionalProperties"].is_object();
+            for (auto it = val.begin(); it != val.end(); ++it) {
+                if (props.contains(it.key()))
+                    checkNode(it.value(), props[it.key()], file, path + "." + it.key(), errs);
+                else if (extraSchema)
+                    checkNode(it.value(), schema["additionalProperties"], file, path + "." + it.key(), errs);
+                else if (!allowExtra)
+                    errs << QString::fromStdString(path + ": undocumented field '" + it.key() + "'");
+            }
+        }
+        if (val.is_array() && schema.contains("items") && schema["items"].is_object() && !schema["items"].empty()) {
+            for (std::size_t i = 0; i < val.size(); ++i)
+                checkNode(val[i], schema["items"], file, path + "[" + std::to_string(i) + "]", errs);
+        }
+    }
+
+public:
+    QString validate(const json& doc, const std::string& schemaFile)
+    {
+        if (doc.is_discarded())
+            return "invalid JSON";
+        QStringList errs;
+        checkNode(doc, load(schemaFile), schemaFile, "$", errs);
+        return errs.join("; ");
+    }
+};
 
 }  // namespace
 
@@ -676,6 +792,36 @@ private Q_SLOTS:
         QString err;
         QVERIFY(!b.startSession(socket("one.sock"), &err));
         QVERIFY(!err.isEmpty());
+    }
+
+    void viewAndAnnotateJsonMatchSchemas()
+    {
+        SchemaValidator validator;
+        lt::gui::MainWindow win;
+        const QString sock = socket("schema.sock");
+        QVERIFY(win.startSession(sock));
+
+        auto check = [&](const QStringList& args, const char* schema) {
+            const auto r = runCli(args, sock);
+            QVERIFY2(r.exitCode == 0, qPrintable(r.out + "\n" + r.err));
+            const QString err = validator.validate(r.doc, schema);
+            QVERIFY2(err.isEmpty(), qPrintable(err + "\n" + r.out));
+        };
+
+        // Empty GUI state before loading a capture.
+        check({"view", "--json"}, "view.schema.json");
+
+        win.loadDemo();
+        check({"view", "--json"}, "view.schema.json");
+        check({"annotate", "--time", "5us", "--duration", "2us", "--label", "pulse check", "--color", "#00aa00", "--json"},
+              "annotate.schema.json");
+        check({"annotate", "--list", "--json"}, "annotate.schema.json");
+        check({"view", "--start", "-5us", "--end", "40us", "--cursor-a", "0us", "--cursor-b", "10us", "--json"},
+              "view.schema.json");
+        check({"view", "--anomalies", "--latency", "1..2", "--json"}, "view.schema.json");
+        check({"view", "--report", "--latency", "1..2", "--ai-mode", "full", "--note", "schema test", "--json"},
+              "view.schema.json");
+        check({"annotate", "--clear", "--json"}, "annotate.schema.json");
     }
 };
 

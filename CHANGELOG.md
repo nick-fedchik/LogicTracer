@@ -5,6 +5,25 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- Session JSON contracts (`#23`, `B-10`): `logictracer-cli view --json` and `annotate --json` now include
+  the standard `schema_version` and `warnings` envelope fields and are validated against
+  `docs/schema/view.schema.json` and `docs/schema/annotate.schema.json`.
+- Offline MCP tools (`#24`): `lt_analyze_file` (with `channels`, `measure_latency`, `expect`, `invariant`,
+  `decode` and `exact_timing`) and `lt_diff_captures` (with `measure_latency` and `strict`) analyze and
+  compare saved `.json`, `.vcd` and `.lac` captures without a connected device or open GUI.
+- Protocol decoders (`#25`): `--decode` on `capture` and `analyze` (and `decode` in GUI/MCP) decodes
+  `uart`, `spi`, `i2c` and `can` (CAN 2.0A 11-bit and 2.0B 29-bit with bit-destuffing, CRC-15 `0x4599`,
+  ACK slot, and stuff/CRC/form/ACK error detection), window by window on segmented captures.
+- Protocol expectations, anomaly incidents and GUI frame overlay (`#26`): `--expect` supports `frames`,
+  `protocol_errors`, `nacks` and `<proto>:frames|errors|nacks` (`uart`, `spi`, `i2c`, `can`); protocol
+  errors emit severity-3 anomaly incidents (`F3` navigation and `lt_get_anomalies`); the GUI adds a
+  `Decode` field and draws decoded frame spans and labels over the waveform.
+- Multi-channel pattern triggers (`#27`): `--trigger pattern:<base_ch>:<bits>` and `<ch>=0|1,...` across
+  CLI, GUI and MCP, using RP2040 `TriggerType::Fast` (1–5 contiguous channels in `CH1..CH16` at full rate)
+  and `TriggerType::Complex` (6–16 contiguous channels with a `GP0 -> GP1` jumper warning) plus
+  `ReplayDevice` pattern matching.
+
 ## [0.6.2] - 2026-11-19
 
 ### Fixed

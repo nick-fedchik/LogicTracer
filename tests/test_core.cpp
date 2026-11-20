@@ -7,6 +7,7 @@
 #include "core/CaptureBuffer.hpp"
 #include "core/CaptureDiff.hpp"
 #include "core/Invariants.hpp"
+#include "core/ProtocolDecoder.hpp"
 #include "core/Segments.hpp"
 #include "core/DeviceProtocol.hpp"
 #include "core/Exporters.hpp"
@@ -1570,6 +1571,252 @@ private Q_SLOTS:
         const auto a = lt::findAnomalies(b, o);
         for (std::size_t i = 1; i < a.size(); ++i)
             QVERIFY(a[i - 1].severity >= a[i].severity);
+    }
+
+    void protocolDecodersUartSpiI2cCanAndExpectations()
+    {
+        std::string err;
+        // 1. UART 8N1 @ 100 kbaud on 1 MHz capture (10 samples/bit): valid byte 0x55 ('U'), then framing error.
+        {
+            std::vector<uint32_t> s(300, 1u);
+            auto putBit = [&](std::size_t bitIdx, std::size_t startSample, bool high) {
+                for (std::size_t k = 0; k < 10; ++k) {
+                    if (high)
+                        s[startSample + bitIdx * 10 + k] |= 1u;
+                    else
+                        s[startSample + bitIdx * 10 + k] &= ~1u;
+                }
+            };
+            // Frame 1 at sample 20: start(0), 0x55 LSB-first (1,0,1,0,1,0,1,0), stop(1)
+            putBit(0, 20, false);
+            for (int b = 0; b < 8; ++b)
+                putBit(static_cast<std::size_t>(b + 1), 20, ((0x55 >> b) & 1) != 0);
+            putBit(9, 20, true);
+            // Frame 2 at sample 150: start(0), 0x00, bad stop(0) -> framing error
+            for (int b = 0; b <= 9; ++b)
+                putBit(static_cast<std::size_t>(b), 150, false);
+
+            const lt::CaptureBuffer buf({{0, "TX"}}, 1'000'000, 0, s);
+            const auto specs = lt::parseDecoderSpecs("uart:tx=1,baud=100k", &err);
+            QVERIFY2(specs.has_value(), err.c_str());
+            QVERIFY2(lt::validateDecoderChannels(*specs, buf.channels(), &err), err.c_str());
+            const auto decoded = lt::decodeProtocols(buf, *specs);
+            QCOMPARE(decoded.size(), std::size_t{1});
+            QCOMPARE(decoded[0].frameCount, std::size_t{2});
+            QCOMPARE(decoded[0].errorCount, std::size_t{1});
+            QCOMPARE(decoded[0].frames[0].data, (std::vector<uint32_t>{0x55}));
+            QVERIFY(decoded[0].frames[0].errors.empty());
+            QCOMPARE(decoded[0].frames[1].errors, (std::vector<std::string>{"framing_error"}));
+            QCOMPARE(decoded[0].errors[0].kind, std::string("uart_framing_error"));
+
+            lt::ReportOptions ro;
+            ro.decoders = *specs;
+            const auto anomalies = lt::findAnomalies(buf, ro);
+            QVERIFY(!anomalies.empty());
+            QCOMPARE(anomalies.front().severity, 3);
+            QVERIFY(anomalies.front().kind.find("uart_framing_error") != std::string::npos);
+            QVERIFY(lt::markdownSummary(buf, ro).find("### Decoded bus protocols") != std::string::npos);
+            QCOMPARE(lt::jsonMetadata(buf, ro)["decoded"][0]["frames"].get<int>(), 2);
+        }
+
+        // 2. SPI Mode 0 (CPOL=0, CPHA=0): CS=CH4, CLK=CH1, MOSI=CH2 (0xA5), MISO=CH3 (0x3C).
+        {
+            std::vector<uint32_t> s(120, 1u << 3);  // CS idle HIGH
+            for (std::size_t i = 10; i < 100; ++i)
+                s[i] = 0;  // CS active LOW
+            for (int b = 0; b < 8; ++b) {
+                const bool mosi = ((0xA5 >> (7 - b)) & 1) != 0;
+                const bool miso = ((0x3C >> (7 - b)) & 1) != 0;
+                const std::size_t base = 15 + static_cast<std::size_t>(b) * 10;
+                for (std::size_t k = 0; k < 10; ++k) {
+                    if (mosi) s[base + k] |= (1u << 1);
+                    if (miso) s[base + k] |= (1u << 2);
+                    if (k >= 5) s[base + k] |= (1u << 0);  // CLK rises at base+5
+                }
+            }
+            const lt::CaptureBuffer buf({{0, "CLK"}, {1, "MOSI"}, {2, "MISO"}, {3, "CS"}}, 1'000'000, 0, s);
+            const auto specs = lt::parseDecoderSpecs("spi:clk=1,mosi=2,miso=3,cs=4", &err);
+            QVERIFY2(specs.has_value(), err.c_str());
+            const auto decoded = lt::decodeProtocols(buf, *specs);
+            QCOMPARE(decoded[0].frameCount, std::size_t{1});
+            QCOMPARE(decoded[0].errorCount, std::size_t{0});
+            QCOMPARE(decoded[0].frames[0].data, (std::vector<uint32_t>{0xA5}));
+            QCOMPARE(decoded[0].frames[0].misoData, (std::vector<uint32_t>{0x3C}));
+        }
+
+        // 3. I2C: address 0x50 write + ACK + byte 0x42 + ACK + STOP; then address 0x51 read + NACK + STOP.
+        {
+            std::vector<uint32_t> s;
+            auto push = [&](bool scl, bool sda, int count = 4) {
+                const uint32_t w = (scl ? 1u : 0u) | (sda ? 2u : 0u);
+                for (int i = 0; i < count; ++i)
+                    s.push_back(w);
+            };
+            auto i2cBit = [&](bool bit) {
+                push(false, bit, 4);
+                push(true, bit, 4);
+                push(false, bit, 4);
+            };
+            auto i2cStart = [&]() {
+                push(true, true, 4);
+                push(true, false, 4);
+                push(false, false, 4);
+            };
+            auto i2cStop = [&]() {
+                push(false, false, 4);
+                push(true, false, 4);
+                push(true, true, 6);
+            };
+            auto i2cByte = [&](uint8_t byte, bool ack) {
+                for (int b = 7; b >= 0; --b)
+                    i2cBit(((byte >> b) & 1) != 0);
+                i2cBit(!ack);  // SDA=0 is ACK, SDA=1 is NACK
+            };
+            i2cStart();
+            i2cByte(static_cast<uint8_t>((0x50 << 1) | 0), true);
+            i2cByte(0x42, true);
+            i2cStop();
+
+            i2cStart();
+            i2cByte(static_cast<uint8_t>((0x51 << 1) | 1), false);
+            i2cStop();
+
+            const lt::CaptureBuffer buf({{0, "SCL"}, {1, "SDA"}}, 1'000'000, 0, s);
+            const auto specs = lt::parseDecoderSpecs("i2c:scl=1,sda=2", &err);
+            QVERIFY2(specs.has_value(), err.c_str());
+            const auto decoded = lt::decodeProtocols(buf, *specs);
+            QCOMPARE(decoded[0].frameCount, std::size_t{2});
+            QCOMPARE(decoded[0].nackCount, std::size_t{1});
+            QCOMPARE(decoded[0].frames[0].address.value_or(0), 0x50u);
+            QCOMPARE(decoded[0].frames[0].ack, std::optional<bool>(true));
+            QCOMPARE(decoded[0].frames[0].data, (std::vector<uint32_t>{0x42}));
+            QCOMPARE(decoded[0].frames[1].address.value_or(0), 0x51u);
+            QCOMPARE(decoded[0].frames[1].read, std::optional<bool>(true));
+            QCOMPARE(decoded[0].frames[1].ack, std::optional<bool>(false));
+            QCOMPARE(decoded[0].frames[1].errors, (std::vector<std::string>{"address_nack"}));
+            QCOMPARE(decoded[0].errors[0].kind, std::string("i2c_nack"));
+        }
+
+        // 4. CAN 2.0A @ 100 kbit/s on 1 MHz capture (10 samples/bit) with bit-stuffing and CRC-15 (0x4599).
+        {
+            auto buildCanFrame = [](uint16_t id11, const std::vector<uint8_t>& data, bool ackSlotLow) {
+                std::vector<int> rawBits;
+                rawBits.push_back(0);  // SOF
+                for (int b = 10; b >= 0; --b)
+                    rawBits.push_back((id11 >> b) & 1);
+                rawBits.push_back(0);  // RTR = 0 (data frame)
+                rawBits.push_back(0);  // IDE = 0 (standard 11-bit)
+                rawBits.push_back(0);  // r0 = 0
+                const int dlc = static_cast<int>(data.size());
+                for (int b = 3; b >= 0; --b)
+                    rawBits.push_back((dlc >> b) & 1);
+                for (uint8_t byte : data)
+                    for (int b = 7; b >= 0; --b)
+                        rawBits.push_back((byte >> b) & 1);
+
+                uint16_t crc = 0;
+                for (int bit : rawBits) {
+                    const uint16_t nxt = static_cast<uint16_t>(bit ^ ((crc >> 14) & 1u));
+                    crc = static_cast<uint16_t>((crc << 1) & 0x7FFFu);
+                    if (nxt)
+                        crc ^= 0x4599u;
+                }
+                for (int b = 14; b >= 0; --b)
+                    rawBits.push_back((crc >> b) & 1);
+
+                // Bit-stuff from SOF through CRC sequence
+                std::vector<int> wireBits;
+                int runLen = 0;
+                int runVal = -1;
+                for (int bit : rawBits) {
+                    wireBits.push_back(bit);
+                    if (bit == runVal) {
+                        ++runLen;
+                        if (runLen == 5) {
+                            const int stuff = 1 - bit;
+                            wireBits.push_back(stuff);
+                            runVal = stuff;
+                            runLen = 1;
+                        }
+                    } else {
+                        runVal = bit;
+                        runLen = 1;
+                    }
+                }
+                wireBits.push_back(1);  // CRC delimiter
+                wireBits.push_back(ackSlotLow ? 0 : 1);  // ACK slot
+                wireBits.push_back(1);  // ACK delimiter
+                for (int i = 0; i < 7; ++i)
+                    wireBits.push_back(1);  // EOF
+                return wireBits;
+            };
+
+            // Data 0xF8 has five consecutive '1' bits, exercising bit-stuffing and destuffing.
+            const auto wireOk = buildCanFrame(0x123, {0xF8, 0x42}, true);
+            const auto wireNack = buildCanFrame(0x124, {0x01}, false);
+            std::vector<uint32_t> s(30, 1u);
+            for (int bit : wireOk)
+                for (int k = 0; k < 10; ++k)
+                    s.push_back(bit ? 1u : 0u);
+            for (int i = 0; i < 30; ++i)
+                s.push_back(1u);
+            for (int bit : wireNack)
+                for (int k = 0; k < 10; ++k)
+                    s.push_back(bit ? 1u : 0u);
+            for (int i = 0; i < 30; ++i)
+                s.push_back(1u);
+
+            const lt::CaptureBuffer buf({{0, "CAN_RX"}}, 1'000'000, 0, s);
+            const auto specs = lt::parseDecoderSpecs("can:rx=1,bitrate=100k", &err);
+            QVERIFY2(specs.has_value(), err.c_str());
+            const auto decoded = lt::decodeProtocols(buf, *specs);
+            QCOMPARE(decoded[0].frameCount, std::size_t{2});
+            QCOMPARE(decoded[0].errorCount, std::size_t{1});
+            QCOMPARE(decoded[0].nackCount, std::size_t{1});
+            QCOMPARE(decoded[0].frames[0].address.value_or(0), 0x123u);
+            QCOMPARE(decoded[0].frames[0].data, (std::vector<uint32_t>{0xF8, 0x42}));
+            QCOMPARE(decoded[0].frames[0].ack, std::optional<bool>(true));
+            QVERIFY(decoded[0].frames[0].errors.empty());
+            QCOMPARE(decoded[0].frames[1].address.value_or(0), 0x124u);
+            QCOMPARE(decoded[0].frames[1].ack, std::optional<bool>(false));
+            QCOMPARE(decoded[0].errors[0].kind, std::string("can_ack_error"));
+
+            // Protocol expectations via evaluateExpectations
+            const auto clauses = lt::cli::parseExpectations(
+                "frames==2,protocol_errors==1,nacks==1,can:frames==2,can:errors==1,can:nacks==1", &err);
+            QVERIFY2(clauses.has_value(), err.c_str());
+            const auto stats = lt::SignalAnalyzer().analyze(buf);
+            const auto eval = lt::cli::evaluateExpectations(*clauses, stats, std::nullopt, decoded);
+            for (const auto& check : eval)
+                QVERIFY2(check.passed, (check.expression + ": " + check.detail).c_str());
+        }
+    }
+
+    void patternTriggersParseAndValidate()
+    {
+        std::string err;
+        const auto fast = lt::cli::parseTrigger("pattern:1:1010", 24, &err);
+        QVERIFY2(fast.has_value(), err.c_str());
+        QVERIFY(!fast->none && fast->trigger.isPattern());
+        QCOMPARE(int(fast->trigger.channel), 0);
+        QCOMPARE(int(fast->trigger.bitCount), 4);
+        QCOMPARE(fast->trigger.patternBits(), std::string("1010"));
+        QCOMPARE(fast->trigger.patternTriggerType(), lt::TriggerType::Fast);
+        QCOMPARE(fast->trigger.describe(), std::string("CH1-CH4==1010"));
+
+        const auto complex = lt::cli::parseTrigger("2=1,3=0,4=1,5=1,6=0,7=1", 24, &err);
+        QVERIFY2(complex.has_value(), err.c_str());
+        QVERIFY(complex->trigger.isPattern());
+        QCOMPARE(int(complex->trigger.channel), 1);
+        QCOMPARE(int(complex->trigger.bitCount), 6);
+        QCOMPARE(complex->trigger.patternBits(), std::string("101101"));
+        QCOMPARE(complex->trigger.patternTriggerType(), lt::TriggerType::Complex);
+        QCOMPARE(complex->trigger.describe(), std::string("CH2-CH7==101101"));
+
+        QVERIFY(!lt::cli::parseTrigger("1=1,3=0", 24, &err));  // non-contiguous channels
+        QVERIFY(err.find("contiguous") != std::string::npos);
+        QVERIFY(!lt::cli::parseTrigger("pattern:14:1010", 24, &err));  // exceeds CH16 limit
+        QVERIFY(!lt::cli::parseTrigger("pattern:1:102", 24, &err));    // invalid bit character
     }
 };
 

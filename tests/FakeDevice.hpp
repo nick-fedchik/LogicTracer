@@ -28,7 +28,10 @@ namespace fake {
 struct Request {
     std::size_t size = 0;  // struct size without the command byte: 48 (V5 layout) or 56 (V6 layout)
     uint8_t triggerType = 0;
+    uint8_t trigger = 0;
     bool inverted = false;
+    uint8_t invertedOrCount = 0;
+    uint16_t triggerValue = 0;
     uint32_t pre = 0;
     uint32_t post = 0;
     uint32_t loop = 0;
@@ -53,7 +56,10 @@ inline Request parseRequest(const std::vector<uint8_t>& payload)
     const bool v6 = r.size == 56;
     const std::vector<uint8_t> st(s, s + r.size);
     r.triggerType = st[0];
+    r.trigger = st[1];
     r.inverted = st[2] != 0;
+    r.invertedOrCount = st[2];
+    r.triggerValue = static_cast<uint16_t>(st[4] | (st[5] << 8));
     r.pre = u32(st, v6 ? 44 : 36);
     r.post = u32(st, v6 ? 48 : 40);
     r.loop = v6 ? (st[52] | (st[53] << 8)) : st[44];

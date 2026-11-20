@@ -251,8 +251,18 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
         numbers.push_back(ch.number);
     }
     // channel == device channel count selects the external trigger input.
-    if (c.trigger && c.trigger->channel > m_info.channels)
-        return "trigger channel out of range";
+    if (c.trigger) {
+        if (c.trigger->isPattern()) {
+            if (c.trigger->channel > 15 || c.trigger->bitCount < 1 || c.trigger->bitCount > 16 ||
+                c.trigger->channel + c.trigger->bitCount > 16 ||
+                c.trigger->channel + c.trigger->bitCount > m_info.channels)
+                return "pattern trigger channels out of range (must be 1..16 contiguous channels within CH1..CH16)";
+            if (c.segments > 1)
+                return "segmented captures are not supported with a pattern trigger";
+        } else if (c.trigger->channel > m_info.channels) {
+            return "trigger channel out of range";
+        }
+    }
 
     if (c.frequency < m_info.minFrequency() || c.frequency > m_info.maxFrequency)
         return "frequency " + std::to_string(c.frequency) + " Hz out of range " +
@@ -286,9 +296,16 @@ CaptureRequestPacket PicoConnection::buildRequest(const CaptureConfig& c, const 
                                                   bool edgeSensitive) const
 {
     CaptureRequestPacket req;
-    req.triggerType = edgeSensitive ? TriggerType::EdgeSensitive : TriggerType::Edge;
-    req.triggerChannel = trigger.channel;
-    req.invertedOrCount = trigger.inverted ? 1 : 0;
+    if (trigger.isPattern()) {
+        req.triggerType = trigger.patternTriggerType();
+        req.triggerChannel = trigger.channel;
+        req.invertedOrCount = trigger.bitCount;
+        req.triggerValue = trigger.pattern;
+    } else {
+        req.triggerType = edgeSensitive ? TriggerType::EdgeSensitive : TriggerType::Edge;
+        req.triggerChannel = trigger.channel;
+        req.invertedOrCount = trigger.inverted ? 1 : 0;
+    }
     std::vector<uint8_t> numbers;
     for (std::size_t i = 0; i < c.channels.size(); ++i) {
         req.channels[i] = c.channels[i].number;
@@ -364,8 +381,14 @@ CaptureResult PicoConnection::capture(const CaptureConfig& config)
 
     // A user trigger means "on this transition": use the edge-sensitive program when the firmware has it. The
     // immediate plan relies on the level-sensitive one (one of the two polarities fires at once).
-    const bool edgeSensitive = config.trigger.has_value() && m_info.supportsEdgeTrigger();
+    const bool edgeSensitive = config.trigger.has_value() && !config.trigger->isPattern() && m_info.supportsEdgeTrigger();
     result.edgeSensitive = edgeSensitive;
+    if (config.trigger && config.trigger->isPattern()) {
+        result.warnings.push_back(
+            std::string("pattern trigger (") +
+            (config.trigger->patternTriggerType() == TriggerType::Fast ? "Fast" : "Complex") +
+            " PIO mode) requires a jumper between GP0 (trigger output) and GP1 (trigger input) on the Pico board");
+    }
     std::vector<uint32_t> timestamps;
     std::optional<uint32_t> recorded;
     for (const auto& trig : plan) {

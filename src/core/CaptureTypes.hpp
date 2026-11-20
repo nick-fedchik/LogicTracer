@@ -40,8 +40,35 @@ struct DetectedPort {
 // real transition fires; older firmware is level-sensitive ("jmp pin"): a rising trigger fires as soon as the
 // line is HIGH, falling as soon as it is LOW.
 struct EdgeTrigger {
-    uint8_t channel = 0;    // 0-based
-    bool inverted = false;  // false = rising/high, true = falling/low
+    uint8_t channel = 0;    // 0-based (or base channel for pattern trigger)
+    bool inverted = false;  // edge: false = rising/high, true = falling/low
+    uint8_t bitCount = 0;   // 0 = single-channel edge trigger; 1..16 = contiguous pattern trigger width
+    uint16_t pattern = 0;   // bit k (0 <= k < bitCount) = required level on channel (channel + k)
+
+    [[nodiscard]] bool isPattern() const noexcept { return bitCount > 0; }
+    [[nodiscard]] TriggerType patternTriggerType() const noexcept
+    {
+        return bitCount <= 5 ? TriggerType::Fast : TriggerType::Complex;
+    }
+    [[nodiscard]] std::string patternBits() const
+    {
+        std::string s;
+        s.reserve(bitCount);
+        for (uint8_t i = 0; i < bitCount; ++i)
+            s.push_back(((pattern >> i) & 1u) ? '1' : '0');
+        return s;
+    }
+    [[nodiscard]] std::string describe() const
+    {
+        if (isPattern()) {
+            std::string s = "CH" + std::to_string(channel + 1);
+            if (bitCount > 1)
+                s += "-CH" + std::to_string(channel + bitCount);
+            s += "==" + patternBits();
+            return s;
+        }
+        return "CH" + std::to_string(channel + 1) + (inverted ? " falling" : " rising");
+    }
 };
 
 // Segmented capture: the firmware re-arms after each post-trigger window (loopCount = count - 1) and stores

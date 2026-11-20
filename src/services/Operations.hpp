@@ -8,6 +8,7 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Invariants.hpp"
+#include "core/ProtocolDecoder.hpp"
 #include "core/Segments.hpp"
 #include "device/IDevice.hpp"
 #include "device/PicoConnection.hpp"
@@ -59,6 +60,7 @@ struct DocumentOptions {
     bool collectLatencyEvents = false;
     std::optional<std::vector<cli::ExpectationClause>> expectations;
     std::optional<std::vector<InvariantRule>> invariants;  // protocol rules ("invariants" in the document)
+    std::vector<DecoderSpec> decoders;                     // bus protocol decoders ("decoded" in the document)
     SetupInfo setup;  // recorded as "setup" in the document and the lossless capture file
 };
 
@@ -66,6 +68,7 @@ struct CaptureDocument {
     nlohmann::json doc;
     std::optional<std::vector<ChannelStats>> stats;  // analysis of result.buffer
     std::optional<LatencyStats> latency;
+    std::optional<std::vector<DecodedBus>> decoded;
     bool expectationsPassed = true;  // --expect assertions and --invariant rules
     std::optional<SegmentAnalysis> segments;  // window-by-window analysis of a segmented capture
     nlohmann::json fileOnly = nlohmann::json::object();  // extra keys of the saved --out-json file (not of stdout)

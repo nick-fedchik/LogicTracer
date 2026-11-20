@@ -5,6 +5,7 @@
 
 #include "core/CaptureBuffer.hpp"
 #include "core/CaptureTypes.hpp"
+#include "core/ProtocolDecoder.hpp"
 #include "core/SignalAnalyzer.hpp"
 
 #include <cstdint>
@@ -75,6 +76,7 @@ struct ExpectationCheck {
 [[nodiscard]] std::vector<ExpectationCheck> evaluateExpectations(
     const std::vector<ExpectationClause>& clauses,
     const std::vector<ChannelStats>& channelStats,
-    const std::optional<LatencyStats>& latencyStats);
+    const std::optional<LatencyStats>& latencyStats,
+    const std::vector<DecodedBus>& decoded = {});
 
 }  // namespace lt::cli

@@ -190,6 +190,11 @@ class Contracts(unittest.TestCase):
         self.json_cli("analyze.schema.json", 0, "analyze", self.out("seg.json"), "--measure-latency", "1..2")
         self.json_cli("analyze.schema.json", 0, "analyze", self.out("full.vcd"))
         self.json_cli("analyze.schema.json", 0, "analyze", self.rec, "--measure-latency", "2..1")  # direction check
+        self.json_cli("analyze.schema.json", 0, "analyze", self.rec, "--decode", "uart:tx=1,baud=500k",
+                      "--expect", "uart:frames>=1")
+        self.json_cli("capture.schema.json", 0, "capture", "--port", self.port, "--no-session", "--freq", "1M",
+                      "--samples", "60", "--pre-samples", "5", "--channels", "1:STIM,2:REACT",
+                      "--trigger", "pattern:1:10", "--decode", "uart:tx=1,baud=500k")
         self.json_cli("diff.schema.json", 0, "diff", self.out("full.json"), self.out("full.json"), "--measure-latency", "1..2")
         self.json_cli("diff.schema.json", 0, "diff", self.out("seg.json"), self.rec)
         self.json_cli("probe.schema.json", 0, "probe", "--port", self.port, "--no-session", "--channels", "1:STIM,2:REACT")

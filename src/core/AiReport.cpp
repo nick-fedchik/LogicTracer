@@ -367,7 +367,7 @@ std::optional<Motif> detectMotif(const CaptureBuffer& b, const std::vector<Chron
 }
 
 Insights computeInsights(const CaptureBuffer& b, const Range& r, const std::vector<ChannelStats>& stats,
-                         const std::optional<LatencyStats>& lat)
+                         const std::optional<LatencyStats>& lat, const std::vector<DecodedBus>& decoded = {})
 {
     Insights in;
     in.transitions = collectChronologicalEdges(b, r, kMaxInsightTransitions);
@@ -388,6 +388,10 @@ Insights computeInsights(const CaptureBuffer& b, const Range& r, const std::vect
                                     "pair #" + std::to_string(ev.eventId) + ": delay " + std::to_string(ev.deltaSamples) +
                                         " samples (" + formatTime(ev.deltaNs * 1e-9) + "), median " +
                                         std::to_string(lat->p50Samples)});
+    }
+    for (const auto& bus : decoded) {
+        for (const auto& err : bus.errors)
+            in.anomalies.push_back({err.sample, 3, err.kind, err.detail});
     }
     for (const auto& st : stats) {
         if (st.period) {
@@ -478,6 +482,28 @@ std::optional<LatencyStats> computeLatency(const CaptureBuffer& b, const Range& 
     if (o.latency->stimChannelIndex >= b.channels().size() || o.latency->reactChannelIndex >= b.channels().size())
         return std::nullopt;
     return SignalAnalyzer::analyzeLatency(b.slice(r.first, r.size()), *o.latency, false);
+}
+
+std::vector<DecodedBus> decodeRange(const CaptureBuffer& b, const Range& r, const ReportOptions& o)
+{
+    if (o.decoders.empty() || r.size() < 2)
+        return {};
+    auto buses = decodeProtocols(b.slice(r.first, r.size()), o.decoders);
+    if (r.first > 0) {
+        for (auto& bus : buses) {
+            for (auto& f : bus.frames) {
+                f.startSample += r.first;
+                f.endSample += r.first;
+                f.startTimeUs = b.timeOfSample(f.startSample) * kUs;
+                f.endTimeUs = b.timeOfSample(f.endSample) * kUs;
+            }
+            for (auto& e : bus.errors) {
+                e.sample += r.first;
+                e.timeUs = b.timeOfSample(e.sample) * kUs;
+            }
+        }
+    }
+    return buses;
 }
 
 // Sample position (fractional) of an annotation on this capture's time base.
@@ -708,6 +734,9 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
     const auto lat = computeLatency(b, r, o);
     if (lat)
         ss << latencyMarkdown(*lat);
+    const auto decoded = decodeRange(b, r, o);
+    if (!decoded.empty())
+        ss << decodedMarkdown(decoded);
 
     if (o.cursorA && o.cursorB && r.size() && !r.clampedToCursors) {
         const auto lo = std::min(*o.cursorA, *o.cursorB), hi = std::max(*o.cursorA, *o.cursorB);
@@ -723,7 +752,7 @@ std::string markdownSummary(const CaptureBuffer& b, const ReportOptions& o)
         }
     }
 
-    const Insights insights = computeInsights(b, r, stats, lat);
+    const Insights insights = computeInsights(b, r, stats, lat, decoded);
     if (insights.motif) {
         const auto& m = *insights.motif;
         ss << "\n### Chronological transitions: repeating motif ×" << m.repetitions << " (cycle of "
@@ -1011,9 +1040,12 @@ nlohmann::json jsonMetadata(const CaptureBuffer& b, const ReportOptions& o)
         doc["latency"] = toJson(*lat, false);
         doc["latency"]["sample_offset"] = r.first;  // sample fields inside latency are relative to this
     }
+    const auto decoded = decodeRange(b, r, o);
+    if (!decoded.empty())
+        doc["decoded"] = toJson(decoded);
 
     {
-        const Insights insights = computeInsights(b, r, stats, lat);
+        const Insights insights = computeInsights(b, r, stats, lat, decoded);
         if (insights.motif) {
             const auto& m = *insights.motif;
             auto pos = nlohmann::json::array();
@@ -1223,8 +1255,9 @@ std::vector<AnomalyIncident> findAnomalies(const CaptureBuffer& b, const ReportO
     const Range r = normalize(b, o);
     const auto stats = analyzeRange(b, r);
     const auto lat = computeLatency(b, r, o);
+    const auto decoded = decodeRange(b, r, o);
     std::vector<AnomalyIncident> out;
-    for (auto& a : computeInsights(b, r, stats, lat).anomalies)
+    for (auto& a : computeInsights(b, r, stats, lat, decoded).anomalies)
         out.push_back({a.sample, a.severity, std::move(a.kind), std::move(a.detail)});
     return out;
 }

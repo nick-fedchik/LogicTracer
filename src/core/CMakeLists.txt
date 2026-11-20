@@ -15,6 +15,7 @@ add_library(logictracer_core STATIC
     Exporters.cpp Exporters.hpp
     Format.hpp
     Paths.hpp
+    ProtocolDecoder.cpp ProtocolDecoder.hpp
     SignalAnalyzer.cpp SignalAnalyzer.hpp
 )
 add_library(LogicTracer::Core ALIAS logictracer_core)

@@ -52,6 +52,7 @@ public:
     void setCopyMode(lt::CopyMode mode);
     void setAiNote(const QString& note);
     void setLatencySpec(const QString& spec);
+    void setDecodeSpec(const QString& spec);
     // Identifies the capture on screen; strictly increasing, never 0 once a capture exists.
     [[nodiscard]] uint64_t captureId() const noexcept { return m_currentCaptureId; }
     [[nodiscard]] WaveformWidget::DisplayState displayState() const noexcept { return m_waveform->displayState(); }
@@ -201,6 +202,7 @@ private:
     QPlainTextEdit* m_report = nullptr;
     QLineEdit* m_aiNote = nullptr;
     QLineEdit* m_latencySpec = nullptr;
+    QLineEdit* m_decodeSpec = nullptr;
     QComboBox* m_copyMode = nullptr;
     QPushButton* m_copyButton = nullptr;
     QLabel* m_reportSize = nullptr;

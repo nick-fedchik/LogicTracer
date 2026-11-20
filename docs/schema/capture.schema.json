@@ -92,10 +92,25 @@
         "trigger": {
           "type": "object",
           "properties": {
+            "bit_count": {
+              "type": "integer"
+            },
             "channel": {
               "type": "integer"
             },
             "edge": {
+              "type": "string"
+            },
+            "gpio": {
+              "type": "integer"
+            },
+            "mode": {
+              "enum": [
+                "fast",
+                "complex"
+              ]
+            },
+            "pattern": {
               "type": "string"
             },
             "sensitivity": {
@@ -131,6 +146,9 @@
     },
     "invariants": {
       "$ref": "common.schema.json#/$defs/invariants"
+    },
+    "decoded": {
+      "$ref": "common.schema.json#/$defs/decoded"
     },
     "latency": {
       "$ref": "common.schema.json#/$defs/latency"

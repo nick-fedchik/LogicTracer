@@ -190,6 +190,9 @@
         "sample_rate_hz": {
           "type": "number"
         },
+        "sample_offset": {
+          "type": "integer"
+        },
         "samples": {
           "type": "object",
           "properties": {
@@ -442,6 +445,147 @@
         "passed"
       ],
       "additionalProperties": false
+    },
+    "decoded": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "protocol": {
+            "enum": [
+              "uart",
+              "spi",
+              "i2c",
+              "can"
+            ]
+          },
+          "spec": {
+            "type": "string"
+          },
+          "frames": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "nacks": {
+            "type": "integer"
+          },
+          "transactions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start_sample": {
+                  "type": "integer"
+                },
+                "end_sample": {
+                  "type": "integer"
+                },
+                "start_us": {
+                  "type": "number"
+                },
+                "end_us": {
+                  "type": "number"
+                },
+                "segment": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "integer"
+                },
+                "extended_id": {
+                  "type": "boolean"
+                },
+                "remote_frame": {
+                  "type": "boolean"
+                },
+                "read": {
+                  "type": "boolean"
+                },
+                "ack": {
+                  "type": "boolean"
+                },
+                "data": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "miso_data": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "start_sample",
+                "end_sample",
+                "start_us",
+                "end_us",
+                "kind",
+                "summary",
+                "data",
+                "errors"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "error_events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "sample": {
+                  "type": "integer"
+                },
+                "time_us": {
+                  "type": "number"
+                },
+                "segment": {
+                  "type": "integer"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "sample",
+                "time_us",
+                "kind",
+                "detail"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "protocol",
+          "spec",
+          "frames",
+          "errors",
+          "nacks",
+          "transactions",
+          "error_events"
+        ],
+        "additionalProperties": false
+      }
     },
     "segments": {
       "type": "object",

@@ -322,6 +322,68 @@ void WaveformWidget::setShowAnomalyMarkers(bool show)
     update();
 }
 
+void WaveformWidget::setDecodedBuses(std::vector<lt::DecodedBus> buses)
+{
+    m_decoded = std::move(buses);
+    update();
+}
+
+void WaveformWidget::drawDecodedFrames(QPainter& p, const QRectF& plot, double rh) const
+{
+    if (m_decoded.empty() || m_rows.empty())
+        return;
+    const auto rowForChIndex = [&](std::size_t chIdx) -> std::optional<std::size_t> {
+        for (std::size_t r = 0; r < m_rows.size(); ++r) {
+            if (m_rows[r] == chIdx)
+                return r;
+        }
+        return std::nullopt;
+    };
+    p.save();
+    QFont smallFont = font();
+    smallFont.setPointSizeF(std::max(7.5, smallFont.pointSizeF() - 1.0));
+    p.setFont(smallFont);
+    const QFontMetrics fm(smallFont);
+
+    for (const auto& bus : m_decoded) {
+        if (!bus.channelIndex)
+            continue;
+        const auto rowIdx = rowForChIndex(*bus.channelIndex);
+        if (!rowIdx)
+            continue;
+        const QRectF row(0, kPlotTop + static_cast<double>(*rowIdx) * rh - m_scrollY, width(), rh);
+        if (row.top() >= height() || row.bottom() <= kPlotTop)
+            continue;
+
+        for (const auto& f : bus.frames) {
+            const double x0 = xOfSample(static_cast<double>(f.startSample));
+            const double x1 = xOfSample(static_cast<double>(f.endSample + 1));
+            if (x1 < plot.left() || x0 > plot.right())
+                continue;
+
+            const double left = std::max(plot.left(), x0);
+            const double right = std::min(plot.right(), std::max(x0 + 2.0, x1));
+            const double capH = std::min(16.0, std::max(10.0, rh * 0.42));
+            const QRectF box(left, row.center().y() - capH * 0.5, right - left, capH);
+
+            const bool hasErr = (f.ack.has_value() && !*f.ack) || !f.errors.empty();
+            const QColor fill = hasErr ? QColor(170, 55, 50, 200) : QColor(40, 85, 135, 200);
+            const QColor border = hasErr ? QColor(235, 100, 90) : QColor(100, 175, 240);
+            p.setPen(QPen(border, 1.0));
+            p.setBrush(fill);
+            p.drawRoundedRect(box, 3.0, 3.0);
+
+            if (box.width() >= 22.0) {
+                p.setPen(QColor(240, 245, 255));
+                const QString label = fm.elidedText(QString::fromStdString(f.summary), Qt::ElideRight,
+                                                    static_cast<int>(box.width() - 6.0));
+                p.drawText(box.adjusted(3.0, 0.0, -3.0, 0.0), Qt::AlignVCenter | Qt::AlignLeft, label);
+            }
+        }
+    }
+    p.restore();
+}
+
 void WaveformWidget::setSegmentStarts(std::vector<std::size_t> starts)
 {
     m_segmentStarts = std::move(starts);
@@ -659,6 +721,7 @@ void WaveformWidget::paintEvent(QPaintEvent*)
             p.fillRect(row, kRowAlt);
         drawChannel(p, plot, m_rows[r], row);
     }
+    drawDecodedFrames(p, plot, rh);
     p.restore();
     if (const double maxScroll = maxScrollY(); maxScroll > 0) {  // scroll indicator
         const double track = plot.height();

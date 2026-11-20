@@ -41,6 +41,8 @@ The schemas ([JSON Schema 2020-12](https://json-schema.org/)) are in [`docs/sche
 | `bootloader --json` | [`bootloader.schema.json`](schema/bootloader.schema.json) |
 | `about --json` | [`about.schema.json`](schema/about.schema.json) |
 | `selftest --json` | [`selftest.schema.json`](schema/selftest.schema.json) (check names and `data` in [SELFTEST.md](SELFTEST.md)) |
+| `view --json` (GUI session state, steering, anomalies, report) | [`view.schema.json`](schema/view.schema.json) |
+| `annotate --json` (add, `--list`, `--clear`) | [`annotate.schema.json`](schema/annotate.schema.json) |
 | an error before the command could run (usage, missing file, ...) | [`error.schema.json`](schema/error.schema.json) |
 | the lossless capture file (`--out-json`) | [`capturefile.schema.json`](schema/capturefile.schema.json) |
 | shared parts: latency, invariants, assertions, segments, device, per-channel summary, setup | [`common.schema.json`](schema/common.schema.json) |
@@ -64,6 +66,5 @@ Output paths in `outputs` are the paths that were requested.
 
 ## Not yet covered
 
-- The responses of the GUI session commands `annotate` and `view` (they need a running GUI).
-- MCP tool results are the capture/probe documents above wrapped in MCP `structuredContent`; the MCP
+- MCP tool results are the capture/probe/analyze/diff documents above wrapped in MCP `structuredContent`; the MCP
   envelope itself is checked by `tests/test_mcp.cpp`, not by schema.

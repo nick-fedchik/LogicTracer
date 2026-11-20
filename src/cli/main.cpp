@@ -213,6 +213,39 @@ void printInvariants(const json& invariants)
     }
 }
 
+void printDecoded(const json& decoded)
+{
+    for (const auto& bus : decoded) {
+        const std::string proto = bus.value("protocol", std::string{});
+        const std::size_t nFrames = bus.value("frames", std::size_t{0});
+        const std::size_t nErrors = bus.value("errors", std::size_t{0});
+        std::cout << "Decoded " << proto << " (" << bus.value("spec", std::string{}) << "): " << nFrames << " frame(s), "
+                  << nErrors << " error(s)\n";
+        std::size_t shown = 0;
+        if (bus.contains("transactions")) {
+            for (const auto& f : bus["transactions"]) {
+                if (shown++ == 16)
+                    break;
+                std::cout << "  [" << f.value("start_sample", 0) << ".." << f.value("end_sample", 0) << "] ";
+                if (f.contains("segment"))
+                    std::cout << "(win " << f["segment"].get<uint32_t>() << ") ";
+                std::cout << f.value("summary", std::string{}) << '\n';
+            }
+            if (nFrames > 16)
+                std::cout << "  ... " << (nFrames - 16) << " more frame(s)\n";
+        }
+        std::size_t errShown = 0;
+        if (bus.contains("error_events")) {
+            for (const auto& e : bus["error_events"]) {
+                if (errShown++ == 8)
+                    break;
+                std::cout << "  ERROR @" << e.value("sample", 0) << " (" << e.value("kind", std::string{})
+                          << "): " << e.value("detail", std::string{}) << '\n';
+            }
+        }
+    }
+}
+
 void printSegments(const lt::SegmentLayout& layout, const json& windows)
 {
     std::size_t flagged = 0;
@@ -248,6 +281,30 @@ std::optional<std::optional<std::vector<lt::InvariantRule>>> invariantOption(con
         return std::nullopt;
     }
     return std::optional<std::vector<lt::InvariantRule>>{std::move(*rules)};
+}
+
+std::optional<std::vector<lt::DecoderSpec>> decoderOption(const QCommandLineParser& p,
+                                                          const std::vector<lt::ChannelInfo>& channels,
+                                                          std::string& error)
+{
+    if (!p.isSet("decode"))
+        return std::vector<lt::DecoderSpec>{};
+    std::string combined;
+    for (const auto& val : p.values("decode")) {
+        if (!combined.empty())
+            combined += ';';
+        combined += str(val);
+    }
+    auto specs = lt::parseDecoderSpecs(combined, &error);
+    if (!specs) {
+        error = "--decode: " + error;
+        return std::nullopt;
+    }
+    if (!lt::validateDecoderChannels(*specs, channels, &error)) {
+        error = "--decode: " + error;
+        return std::nullopt;
+    }
+    return specs;
 }
 
 QString socketPathFrom(const QCommandLineParser& p)
@@ -309,7 +366,8 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
                                 std::string userNote, const std::optional<lt::cli::LatencyArg>& latencyArg,
                                 const std::vector<lt::Annotation>& annotations = {}, const json* assertions = nullptr,
                                 const lt::SetupInfo& setup = {}, const std::vector<std::string>& warnings = {},
-                                const json* invariants = nullptr, const lt::SegmentAnalysis* segments = nullptr)
+                                const json* invariants = nullptr, const lt::SegmentAnalysis* segments = nullptr,
+                                const std::vector<lt::DecoderSpec>& decoders = {})
 {
     lt::ReportOptions ro;
     ro.mode = mode;
@@ -321,6 +379,7 @@ std::string buildBufferAiReport(const lt::CaptureBuffer& buf, lt::CopyMode mode,
     ro.annotations = annotations;
     ro.setup = setup;
     ro.warnings = warnings;
+    ro.decoders = decoders;
     if (latencyArg) {
         std::optional<std::size_t> sIdx, rIdx;
         for (std::size_t i = 0; i < buf.channels().size(); ++i) {
@@ -559,8 +618,13 @@ void printCaptureDetails(const json& doc, bool summary)
         const auto hz = cfg["frequency_hz"].get<double>();
         const auto& trigger = cfg["trigger"];
         std::cout << samples << " samples @ " << lt::formatHz(hz) << " (" << lt::formatTime(samples / hz) << "), trigger "
-                  << (trigger["type"] == "edge" ? "CH" + trigger["channel"].dump() + " " + trigger["edge"].get<std::string>()
-                                                : "immediate") << '\n';
+                  << (trigger["type"] == "edge"
+                          ? "CH" + trigger["channel"].dump() + " " + trigger["edge"].get<std::string>()
+                      : trigger["type"] == "pattern"
+                          ? "pattern CH" + trigger["channel"].dump() + "==" + trigger["pattern"].get<std::string>() +
+                                " (" + trigger["mode"].get<std::string>() + ")"
+                          : std::string("immediate"))
+                  << '\n';
         if (layout)
             printSegments(*layout, doc["segments"]["windows"]);
         if (summary && doc.contains("capture"))
@@ -574,6 +638,8 @@ void printCaptureDetails(const json& doc, bool summary)
     }
     if (doc.contains("invariants"))
         printInvariants(doc["invariants"]);
+    if (doc.contains("decoded"))
+        printDecoded(doc["decoded"]);
     if (doc.contains("line_dump")) {
         std::cout << "Current line state:\n";
         printDiagnosisTable(doc["line_dump"]["channels"]);
@@ -607,8 +673,8 @@ int cmdCapture(const QStringList& args, Output o)
                      "firmware re-arms on the next edge, pre-trigger samples precede window 1 only.", "n"},
         {"channels", "1-based channels with optional names, e.g. 1:STIM,2:REACT,24:DO1 or 1-8 (default 1).",
          "list", "1"},
-        {"trigger", "Trigger CH:rising|falling (a real edge with LogicTracer firmware, level-sensitive on older firmware) or "
-         "'none' for an immediate capture.",
+        {"trigger", "Trigger CH:rising|falling, pattern:<base_ch>:<bits> / <ch>=0|1,... (1..16 contiguous channels), "
+         "or 'none' for an immediate capture.",
          "spec", "none"},
         {"pull-up", "Channels that should have pull-ups (not supported by the firmware; reported as warning).",
          "list"},
@@ -621,6 +687,8 @@ int cmdCapture(const QStringList& args, Output o)
         {"expect", "Pass/fail assertions (exit 3 on failure), e.g. 'p99_ns<=60,drops==0,DO1:low_pulses>=1'.", "expr"},
         {"invariant", "Protocol rules over the whole capture (exit 3 on violation), e.g. "
                       "'never(COMMIT & REJECT); within(STIM, REACT, 100ns)'.", "rules"},
+        {"decode", "Decode bus protocol (repeatable): uart:tx=1,baud=115200 | spi:clk=1,mosi=2 | "
+                   "i2c:scl=1,sda=2 | can:rx=1,bitrate=500k.", "spec"},
         {"out-json", "Write lossless capture JSON v1 (with edge_samples) to a file.", "file"},
         {"out-vcd", "Write the waveform to a VCD file (GTKWave / PulseView).", "file"},
         {"out-csv", "Write sample-by-sample CSV table (SampleIndex,TimeRelativeNs,...).", "file"},
@@ -683,6 +751,9 @@ int cmdCapture(const QStringList& args, Output o)
     const auto invariants = invariantOption(p, error);
     if (!invariants)
         return report(o, ExitUsage, error);
+    const auto decoders = decoderOption(p, *channels, error);
+    if (!decoders)
+        return report(o, ExitUsage, error);
     const auto setup = parseMetaOptions(p, {}, error);
     if (!setup)
         return report(o, ExitUsage, error);
@@ -710,6 +781,8 @@ int cmdCapture(const QStringList& args, Output o)
     if (segments > 1) {
         if (trigger->none)
             return report(o, ExitUsage, "--segments needs --trigger (every window starts on a trigger edge)");
+        if (trigger->trigger.isPattern())
+            return report(o, ExitUsage, "--segments is not supported with a pattern trigger");
         if (p.isSet("out-vcd") || p.isSet("out-csv"))
             return report(o, ExitUsage, "--out-vcd / --out-csv cannot represent a segmented capture (the time "
                                         "between windows is unknown); use --out-json");
@@ -739,6 +812,12 @@ int cmdCapture(const QStringList& args, Output o)
         if (p.isSet("measure-latency")) params["latency"] = str(p.value("measure-latency"));
         if (p.isSet("expect")) params["expect"] = str(p.value("expect"));
         if (p.isSet("invariant")) params["invariant"] = str(p.value("invariant"));
+        if (!decoders->empty()) {
+            auto decArr = json::array();
+            for (const auto& d : *decoders)
+                decArr.push_back(d.raw);
+            params["decode"] = std::move(decArr);
+        }
         if (segments > 1) params["segments"] = segments;
         if (!setup->empty()) params["meta"] = lt::toJson(*setup);
         // The GUI resolves relative paths against its own working directory: send the caller's.
@@ -783,6 +862,12 @@ int cmdCapture(const QStringList& args, Output o)
                 repParams["note"] = str(p.value("note"));
             if (p.isSet("measure-latency"))
                 repParams["latency"] = str(p.value("measure-latency"));
+            if (!decoders->empty()) {
+                auto decArr = json::array();
+                for (const auto& d : *decoders)
+                    decArr.push_back(d.raw);
+                repParams["decode"] = std::move(decArr);
+            }
             const auto rep = lt::session::call(sock, "get_report", repParams, 5000);
             if (rep.ok && rep.result.contains("report")) {
                 sessionAi = rep.result["report"].get<std::string>();
@@ -875,6 +960,7 @@ int cmdCapture(const QStringList& args, Output o)
     docOptions.collectLatencyEvents = p.isSet("out-events-csv");
     docOptions.expectations = expectations;
     docOptions.invariants = *invariants;
+    docOptions.decoders = *decoders;
     docOptions.setup = *setup;
 
     auto outcome = lt::performCapture(conn, spec, docOptions, warnings);
@@ -907,9 +993,7 @@ int cmdCapture(const QStringList& args, Output o)
     }
 
     const auto& info = conn.info();
-    const std::string trigDesc = spec.trigger ? "CH" + std::to_string(spec.trigger->channel + 1) +
-                                                    (spec.trigger->inverted ? " falling" : " rising")
-                                              : std::string("immediate");
+    const std::string trigDesc = spec.trigger ? spec.trigger->describe() : std::string("immediate");
     std::string aiText;
     if (p.isSet("ai") || p.isSet("copy")) {
         if (result.buffer) {
@@ -918,7 +1002,8 @@ int cmdCapture(const QStringList& args, Output o)
                                          info.version.raw, info.version.board, str(p.value("note")), latencyArg, {},
                                          assertionsPtr, *setup, doc["warnings"].get<std::vector<std::string>>(),
                                          doc.contains("invariants") ? &doc["invariants"] : nullptr,
-                                         outcome.document.segments ? &*outcome.document.segments : nullptr);
+                                         outcome.document.segments ? &*outcome.document.segments : nullptr,
+                                         *decoders);
         } else if (result.status == lt::CaptureStatus::Timeout) {
             aiText = lt::timeoutForAi(result.lineDump ? *result.lineDump : lt::CaptureBuffer{},
                                       lt::toString(result.status), result.error, trigDesc, info.version.board,
@@ -975,6 +1060,8 @@ int cmdAnalyze(const QStringList& args, Output o)
         {"expect", "Pass/fail assertions (exit 3 on failure), e.g. 'p99_ns<=60,drops==0'.", "expr"},
         {"invariant", "Protocol rules over the whole capture (exit 3 on violation), e.g. "
                       "'onehot(S0,S1,S2); stable(D0,D1,CLK:rising,setup=5ns,hold=2ns)'.", "rules"},
+        {"decode", "Decode bus protocol (repeatable): uart:tx=1,baud=115200 | spi:clk=1,mosi=2 | "
+                   "i2c:scl=1,sda=2 | can:rx=1,bitrate=500k.", "spec"},
         {"out-json", "Convert/write lossless capture JSON v1 to a file.", "file"},
         {"out-vcd", "Convert/write VCD waveform to a file.", "file"},
         {"out-csv", "Write sample-by-sample CSV table.", "file"},
@@ -1028,6 +1115,9 @@ int cmdAnalyze(const QStringList& args, Output o)
     const auto invariants = invariantOption(p, error);
     if (!invariants)
         return report(o, ExitUsage, error);
+    const auto decoders = decoderOption(p, buf.channels(), error);
+    if (!decoders)
+        return report(o, ExitUsage, error);
     const auto setup = parseMetaOptions(p, loaded.setup, error);
     if (!setup)
         return report(o, ExitUsage, error);
@@ -1066,6 +1156,7 @@ int cmdAnalyze(const QStringList& args, Output o)
     docOptions.collectLatencyEvents = p.isSet("out-events-csv");
     docOptions.expectations = expectations;
     docOptions.invariants = *invariants;
+    docOptions.decoders = *decoders;
     lt::analyzeIntoDocument(capDoc, buf, loaded.segments, docOptions);
 
     lt::CaptureResult fakeRes;
@@ -1109,7 +1200,7 @@ int cmdAnalyze(const QStringList& args, Output o)
                                      str(p.value("board")), str(p.value("note")), latencyArg, loaded.annotations,
                                      assertionsPtr, *setup, loaded.warnings,
                                      capDoc.doc.contains("invariants") ? &capDoc.doc["invariants"] : nullptr,
-                                     capDoc.segments ? &*capDoc.segments : nullptr);
+                                     capDoc.segments ? &*capDoc.segments : nullptr, *decoders);
     }
 
     if (p.isSet("ai")) {
@@ -1135,6 +1226,8 @@ int cmdAnalyze(const QStringList& args, Output o)
     }
     if (capDoc.doc.contains("invariants"))
         printInvariants(capDoc.doc["invariants"]);
+    if (capDoc.doc.contains("decoded"))
+        printDecoded(capDoc.doc["decoded"]);
     if (p.isSet("copy") && !aiText.empty() && !copyAndConfirm(aiText, error)) {
         std::cerr << "logictracer-cli analyze: " << error << std::endl;
         return rc == ExitOk ? ExitError : rc;
@@ -1399,8 +1492,11 @@ int finishSessionCall(const Output& o, const lt::session::CallResult& r, const s
     }
     if (o.json) {
         json doc = r.result;
+        doc["schema_version"] = lt::kCaptureSchemaVersion;
         doc["command"] = o.command;
         doc["status"] = "OK";
+        if (!doc.contains("warnings"))
+            doc["warnings"] = json::array();
         std::cout << doc.dump(2) << std::endl;
     } else {
         text(r.result);
@@ -1603,8 +1699,11 @@ int cmdView(const QStringList& args, Output o)
         }
         if (o.json) {
             json doc = sr.result;
+            doc["schema_version"] = lt::kCaptureSchemaVersion;
             doc["command"] = o.command;
             doc["status"] = "OK";
+            if (!doc.contains("warnings"))
+                doc["warnings"] = json::array();
             const std::string dumped = doc.dump(2);
             std::cout << dumped << std::endl;
             if (p.isSet("copy") && !copyAndConfirm(dumped + "\n", error)) {
@@ -1623,8 +1722,11 @@ int cmdView(const QStringList& args, Output o)
     const auto sr = lt::session::call(socket, "get_state", guard);
     if (p.isSet("copy") && sr.ok && o.json) {
         json doc = sr.result;
+        doc["schema_version"] = lt::kCaptureSchemaVersion;
         doc["command"] = o.command;
         doc["status"] = "OK";
+        if (!doc.contains("warnings"))
+            doc["warnings"] = json::array();
         const std::string dumped = doc.dump(2);
         std::cout << dumped << std::endl;
         if (!copyAndConfirm(dumped + "\n", error)) {

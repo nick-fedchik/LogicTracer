@@ -3,8 +3,11 @@
 
 #include "mcp/McpServer.hpp"
 
+#include "core/AiReport.hpp"
 #include "core/ArgParsing.hpp"
+#include "core/CaptureDiff.hpp"
 #include "core/Exporters.hpp"
+#include "core/ProtocolDecoder.hpp"
 #include "services/Operations.hpp"
 #include "services/SelfTest.hpp"
 #include "services/Session.hpp"
@@ -99,8 +102,8 @@ json McpServer::toolList()
         {"samples", quantity("Total samples (pre+post trigger), e.g. 10000 or \"100k\" (default 10k).")},
         {"pre_samples", quantity("Samples kept before the trigger (default 10% of samples).")},
         {"trigger", prop("string", "\"CH:rising\" or \"CH:falling\" (a real edge with LogicTracer firmware, level-sensitive on older "
-                                   "firmware; CH 25 = external "
-                                   "input); \"none\" = immediate capture (default).")},
+                                   "firmware; CH 25 = external input), \"pattern:<base_ch>:<bits>\" or \"<ch>=0|1,...\" "
+                                   "for 1..16 contiguous channels, or \"none\" = immediate capture (default).")},
         {"timeout_ms", prop("integer", "How long to wait for the trigger (default 5000). The firmware adds ~2.2 s.")},
         {"summary", prop("boolean", "Include per-channel analytics (default true).")},
         {"edges", prop("boolean", "Include every edge timestamp in the result (default false).")},
@@ -114,6 +117,10 @@ json McpServer::toolList()
                                      "never(EXPR[,settle=T]), always(EXPR[,settle=T]), onehot(A,B,...), onehot0(...), "
                                      "within(A[:edge],B[:edge],T), stable(D...,CLK[:edge],setup=T,hold=T), "
                                      "bus(D...,settle=T). EXPR uses channel names with ! & | ( ).")},
+        {"decode", {{"type", json::array({"string", "array"})},
+                    {"description", "Optional bus protocol decoder spec(s), e.g. \"uart:tx=1,baud=115200\", "
+                                    "\"spi:clk=1,mosi=2,miso=3,cs=4\", \"i2c:scl=1,sda=2\", or "
+                                    "\"can:rx=1,bitrate=500k\"."}}},
         {"meta", prop("object", "Optional test-setup metadata recorded with the result, string values only, e.g. "
                                 "{\"dut.board\": \"PYNQ-Z1\", \"dut.bitstream_sha256\": \"...\"}.")},
         {"out_vcd", prop("string", "Write the waveform to this .vcd file (confined to allowed output directory).")},
@@ -181,7 +188,9 @@ json McpServer::toolList()
              schema({{"capture_id", prop("integer", "Refuse with StaleCapture unless this capture is on screen.")},
                      {"report", prop("boolean", "Include the report for the visible range (default true).")},
                      {"mode", prop("string", "Report detail: 'brief' (compact, no raw JSON), 'cursors' (A..B only), or 'full'.")},
-                     {"latency", prop("string", "Optional cross-channel STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")}})),
+                     {"latency", prop("string", "Optional cross-channel STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")},
+                     {"decode", {{"type", json::array({"string", "array"})},
+                                 {"description", "Optional bus protocol decoder spec(s) for the visible range."}}}})),
         tool("lt_set_view",
              "Steer the engineer's GUI view so they see what you describe: zoom to a window, fit the whole capture, "
              "place cursors A/B, toggle hiding of inactive channels. Times are microseconds relative to the trigger. "
@@ -204,11 +213,48 @@ json McpServer::toolList()
              "show them to the engineer.",
              schema({{"capture_id", prop("integer", "Capture id from lt_get_view; refused with StaleCapture on mismatch.")},
                      {"latency", prop("string", "Optional STIM..REACT latency spec, e.g. '1..2' or '24:falling..2:rising'.")},
+                     {"decode", {{"type", json::array({"string", "array"})},
+                                 {"description", "Optional bus protocol decoder spec(s) to surface protocol errors as anomalies."}}},
                      {"max_count", prop("integer", "Maximum incidents to return (default 20, max 1000).")}})),
         tool("lt_clear_annotations",
              "Remove every annotation from the GUI timeline of the capture on screen.",
              schema({{"capture_id", prop("integer", "Capture id from lt_get_view; refused with StaleCapture on mismatch, "
                                                     "so annotations of a newer capture are never wiped.")}})),
+        tool("lt_analyze_file",
+             "Analyze a saved capture file (.json, .vcd, or legacy .lac) offline without a connected device: "
+             "compute per-channel analytics, cross-channel latency, bus protocol decoding (UART/SPI/I2C/CAN), "
+             "verify --expect and --invariant rules, and optionally convert/export to VCD, JSON, or CSV.",
+             schema({{"file", prop("string", "Input capture file path (.json, .vcd, or .lac).")},
+                     {"channels", {{"type", json::array({"string", "array"})},
+                                   {"description", "Optional channel labels to apply or verify, e.g. \"1:TX,2:RX\"."}}},
+                     {"summary", prop("boolean", "Include per-channel analytics (default true).")},
+                     {"edges", prop("boolean", "Include every edge timestamp in the result (default false).")},
+                     {"latency", prop("string", "Optional cross-channel STIM->REACT latency spec, e.g. \"1->2\".")},
+                     {"expect", prop("string", "Optional pass/fail assertions, e.g. \"p99_ns<=60,drops==0,frames>=1\".")},
+                     {"invariant", prop("string", "Optional protocol rules checked over the capture, separated by ';'.")},
+                     {"decode", {{"type", json::array({"string", "array"})},
+                                 {"description", "Optional bus protocol decoder spec(s), e.g. \"uart:tx=1,baud=115200\", "
+                                                 "\"spi:clk=1,mosi=2,miso=3,cs=4\", \"i2c:scl=1,sda=2\", or "
+                                                 "\"can:rx=1,bitrate=500k\"."}}},
+                     {"meta", prop("object", "Optional test-setup metadata recorded with the result, string values only.")},
+                     {"ai", prop("boolean", "Also include a 'report' field with the Markdown + ASCII AI report (default false).")},
+                     {"ai_mode", prop("string", "AI report detail when ai=true: 'brief' (default) or 'full'.")},
+                     {"note", prop("string", "Context or question prepended to the AI report when ai=true.")},
+                     {"out_vcd", prop("string", "Write the waveform to this .vcd file (confined to allowed output directory).")},
+                     {"out_json", prop("string", "Write the lossless capture JSON v1 to this .json file.")},
+                     {"out_csv", prop("string", "Write sample-by-sample CSV to this .csv file.")},
+                     {"out_events_csv", prop("string", "Write paired STIM->REACT latency events to this .csv file.")}},
+                    {"file"})),
+        tool("lt_diff_captures",
+             "Compare two saved capture files (A = baseline, B = candidate) and return latency distribution deltas, "
+             "drops/spurious reactions, anomaly changes, per-channel activity deltas, and an overall verdict "
+             "('equivalent', 'improved', or 'regression').",
+             schema({{"a", prop("string", "Baseline capture file path (.json, .vcd, or .lac).")},
+                     {"b", prop("string", "Candidate capture file path (.json, .vcd, or .lac).")},
+                     {"latency", prop("string", "Optional STIM[:edge]..REACT[:edge] pair compared in both captures, e.g. \"1..2\".")},
+                     {"strict", prop("boolean", "Mark the tool result as an error when verdict is 'regression' (default false).")},
+                     {"ai", prop("boolean", "Also include a 'markdown' field with the Markdown diff report (default false).")}},
+                    {"a", "b"})),
     });
 }
 
@@ -410,7 +456,7 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
             params["capture_id"] = args["capture_id"];
         if (!args.value("report", true))
             return sessionOrError("get_state", params);
-        for (const char* key : {"mode", "latency", "note"})
+        for (const char* key : {"mode", "latency", "note", "decode"})
             if (args.contains(key))
                 params[key] = args[key];
         return sessionOrError("get_report", params);
@@ -418,7 +464,7 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
     if (name == "lt_set_view" || name == "lt_get_anomalies") {
         json params = json::object();
         for (const char* key : {"capture_id", "fit", "start_us", "end_us", "center_us", "span_us", "cursor_a_us",
-                                "cursor_b_us", "clear_cursors", "hide_inactive", "latency", "max_count"})
+                                "cursor_b_us", "clear_cursors", "hide_inactive", "latency", "decode", "max_count"})
             if (args.contains(key))
                 params[key] = args[key];
         return sessionOrError(name == "lt_set_view" ? "set_view" : "get_anomalies", params);
@@ -428,6 +474,232 @@ json McpServer::dispatchTool(const std::string& name, const json& args)
         if (args.contains("capture_id"))
             params["capture_id"] = args["capture_id"];
         return sessionOrError("clear_annotations", params);
+    }
+    if (name == "lt_analyze_file") {
+        const std::string fileKey = args.contains("file") ? "file" : (args.contains("path") ? "path" : "file");
+        if (!args.contains(fileKey) || !args[fileKey].is_string() || args[fileKey].get<std::string>().empty())
+            return errorResult("file is required and must be a non-empty string");
+        const std::string inputPath = args[fileKey].get<std::string>();
+
+        std::string error;
+        static constexpr std::array<std::string_view, 1> kVcdExt{".vcd"};
+        static constexpr std::array<std::string_view, 1> kJsonExt{".json"};
+        static constexpr std::array<std::string_view, 1> kCsvExt{".csv"};
+
+        const auto vcdPath =
+            resolveSafeOutputPath(args.value("out_vcd", std::string{}), kVcdExt, m_options.outputDir, &error);
+        if (!vcdPath)
+            return errorResult(error);
+        const auto jsonPath =
+            resolveSafeOutputPath(args.value("out_json", std::string{}), kJsonExt, m_options.outputDir, &error);
+        if (!jsonPath)
+            return errorResult(error);
+        const auto csvPath =
+            resolveSafeOutputPath(args.value("out_csv", std::string{}), kCsvExt, m_options.outputDir, &error);
+        if (!csvPath)
+            return errorResult(error);
+        const auto eventsCsvPath = resolveSafeOutputPath(args.value("out_events_csv", std::string{}), kCsvExt,
+                                                         m_options.outputDir, &error);
+        if (!eventsCsvPath)
+            return errorResult(error);
+
+        const OutputPaths requestedOutputs{*vcdPath, *jsonPath, *csvPath, *eventsCsvPath, true};
+        if (const auto duplicate = duplicateOutputPath(requestedOutputs))
+            return errorResult(*duplicate);
+
+        LoadedCapture loaded;
+        if (!loadCaptureFile(inputPath, loaded, &error))
+            return errorResult(error);
+        if (loaded.segments && (!vcdPath->empty() || !csvPath->empty()))
+            return errorResult(kSegmentedTimelineError);
+
+        if (args.contains("channels") && !args["channels"].is_null()) {
+            std::string chText;
+            if (args["channels"].is_string()) {
+                chText = args["channels"].get<std::string>();
+            } else if (args["channels"].is_array()) {
+                for (const auto& item : args["channels"]) {
+                    if (!chText.empty())
+                        chText += ',';
+                    if (item.is_string())
+                        chText += item.get<std::string>();
+                    else if (item.is_number_integer())
+                        chText += std::to_string(item.get<int64_t>());
+                    else
+                        return errorResult("channels must be a string or array of channel specs");
+                }
+            } else {
+                return errorResult("channels must be a string or array of channel specs");
+            }
+            const auto parsedCh = cli::parseChannelList(chText, 32, &error);
+            if (!parsedCh)
+                return errorResult(error);
+            for (const auto& reqCh : *parsedCh) {
+                bool found = false;
+                for (std::size_t i = 0; i < loaded.buffer.channels().size(); ++i) {
+                    if (loaded.buffer.channels()[i].number == reqCh.number) {
+                        found = true;
+                        if (!reqCh.name.empty())
+                            loaded.buffer.setChannelName(i, reqCh.name);
+                        break;
+                    }
+                }
+                if (!found)
+                    return errorResult("channel " + std::to_string(reqCh.displayNumber()) + " is not present in " +
+                                       inputPath);
+            }
+        }
+
+        auto options = documentOptionsFromJson(args, true, 32, loaded.buffer.channels(), error);
+        if (!options)
+            return errorResult(error);
+        if (!eventsCsvPath->empty() && !options->latency)
+            return errorResult("out_events_csv requires 'latency' (e.g. \"1->2\")");
+
+        SetupInfo mergedSetup = loaded.setup;
+        for (const auto& [k, v] : options->setup)
+            cli::setSetupEntry(mergedSetup, k, v);
+        options->setup = std::move(mergedSetup);
+        options->collectEdges = !jsonPath->empty() || options->summaryEdges;
+        options->collectLatencyEvents = !eventsCsvPath->empty();
+
+        CaptureDocument capDoc;
+        capDoc.doc = {
+            {"schema_version", kCaptureSchemaVersion},
+            {"command", "analyze"},
+            {"status", "OK"},
+            {"source_file", inputPath},
+            {"trigger_description", loaded.triggerDescription},
+            {"warnings", json::array()},
+            {"outputs", json::object()},
+        };
+        for (const auto& w : loaded.warnings)
+            capDoc.doc["warnings"].push_back(w);
+        if (!options->setup.empty())
+            capDoc.doc["setup"] = toJson(options->setup);
+
+        analyzeIntoDocument(capDoc, loaded.buffer, loaded.segments, *options, loaded.board);
+
+        if (!loaded.deviceVersion.empty() || !loaded.board.empty())
+            capDoc.fileOnly["device"] = {{"version", loaded.deviceVersion}, {"board", loaded.board}};
+        if (!loaded.annotations.empty()) {
+            auto notes = json::array();
+            for (const auto& a : loaded.annotations)
+                notes.push_back({{"id", a.id},
+                                 {"time_us", a.timeSeconds * 1e6},
+                                 {"duration_us", a.durationSeconds * 1e6},
+                                 {"label", a.label},
+                                 {"color", a.color},
+                                 {"author", a.author}});
+            capDoc.fileOnly["annotations"] = std::move(notes);
+        }
+
+        CaptureResult fakeRes;
+        fakeRes.status = CaptureStatus::Ok;
+        fakeRes.buffer = loaded.buffer;
+        const bool outputsWritten =
+            writeCaptureOutputs(capDoc.doc, fakeRes, capDoc, requestedOutputs, loaded.board);
+
+        if (args.value("ai", false)) {
+            ReportOptions repOpts;
+            if (args.contains("ai_mode") && !args["ai_mode"].is_null()) {
+                if (!args["ai_mode"].is_string())
+                    return errorResult("ai_mode must be 'brief' or 'full'");
+                const auto m = args["ai_mode"].get<std::string>();
+                if (m == "brief")
+                    repOpts.mode = CopyMode::Brief;
+                else if (m == "full")
+                    repOpts.mode = CopyMode::Full;
+                else
+                    return errorResult("ai_mode must be 'brief' or 'full'");
+            } else {
+                repOpts.mode = CopyMode::Brief;
+            }
+            repOpts.title = "LogicTracer analyze: " + inputPath;
+            repOpts.triggerDescription = loaded.triggerDescription;
+            repOpts.deviceVersion = loaded.deviceVersion;
+            repOpts.board = loaded.board;
+            repOpts.userNote = args.value("note", std::string{});
+            repOpts.annotations = loaded.annotations;
+            repOpts.setup = options->setup;
+            repOpts.warnings = loaded.warnings;
+            repOpts.decoders = options->decoders;
+            if (options->latency) {
+                std::optional<std::size_t> stimIdx, reactIdx;
+                for (std::size_t i = 0; i < loaded.buffer.channels().size(); ++i) {
+                    if (loaded.buffer.channels()[i].number == options->latency->stimChannel)
+                        stimIdx = i;
+                    if (loaded.buffer.channels()[i].number == options->latency->reactChannel)
+                        reactIdx = i;
+                }
+                if (stimIdx && reactIdx)
+                    repOpts.latency = LatencyPairSpec{*stimIdx, options->latency->stimFalling, *reactIdx,
+                                                      options->latency->reactFalling, std::nullopt};
+            }
+            capDoc.doc["report"] =
+                capDoc.segments ? segmentsForAi(*capDoc.segments, repOpts) : copyForAi(loaded.buffer, repOpts);
+        }
+
+        const bool failed = !outputsWritten || !capDoc.expectationsPassed;
+        return textResult(capDoc.doc, failed);
+    }
+    if (name == "lt_diff_captures") {
+        const std::string keyA = args.contains("a") ? "a" : (args.contains("path_a") ? "path_a" : "a");
+        const std::string keyB = args.contains("b") ? "b" : (args.contains("path_b") ? "path_b" : "b");
+        if (!args.contains(keyA) || !args[keyA].is_string() || args[keyA].get<std::string>().empty() ||
+            !args.contains(keyB) || !args[keyB].is_string() || args[keyB].get<std::string>().empty())
+            return errorResult("both 'a' (baseline) and 'b' (candidate) file paths are required");
+        const std::string fileA = args[keyA].get<std::string>();
+        const std::string fileB = args[keyB].get<std::string>();
+
+        std::string error;
+        DiffOptions options;
+        const std::string latKey =
+            args.contains("latency") ? "latency" : (args.contains("measure_latency") ? "measure_latency" : "");
+        if (!latKey.empty() && !args[latKey].is_null()) {
+            if (!args[latKey].is_string())
+                return errorResult("latency must be a string like \"1..2\" or \"1->2\"");
+            const auto lat = cli::parseLatencyArg(args[latKey].get<std::string>(), 32, &error);
+            if (!lat)
+                return errorResult(error);
+            options.latency =
+                DiffOptions::Latency{lat->stimChannel, lat->stimFalling, lat->reactChannel, lat->reactFalling};
+        }
+        LoadedCapture a, b;
+        if (!loadCaptureFile(fileA, a, &error))
+            return errorResult("A: " + error);
+        if (!loadCaptureFile(fileB, b, &error))
+            return errorResult("B: " + error);
+        if (options.latency) {
+            const auto has = [](const CaptureBuffer& buf, uint8_t ch) {
+                return std::any_of(buf.channels().begin(), buf.channels().end(),
+                                   [ch](const ChannelInfo& c) { return c.number == ch; });
+            };
+            for (const auto& [side, buf] : {std::pair<const char*, const CaptureBuffer*>{"A", &a.buffer},
+                                            std::pair<const char*, const CaptureBuffer*>{"B", &b.buffer}})
+                for (const uint8_t ch : {options.latency->stimChannel, options.latency->reactChannel})
+                    if (!has(*buf, ch))
+                        return errorResult("latency: channel " + std::to_string(ch + 1) +
+                                           " is not present in capture " + side);
+        }
+        options.segmentsA = a.segments;
+        options.segmentsB = b.segments;
+        json doc = diffCaptures(a.buffer, b.buffer, options);
+        auto loadWarnings = json::array();
+        for (const auto& w : a.warnings)
+            loadWarnings.push_back("A: " + w);
+        for (const auto& w : b.warnings)
+            loadWarnings.push_back("B: " + w);
+        doc["schema_version"] = kCaptureSchemaVersion;
+        doc["command"] = "diff";
+        doc["status"] = "OK";
+        doc["warnings"] = std::move(loadWarnings);
+        doc["a"]["file"] = fileA;
+        doc["b"]["file"] = fileB;
+        if (args.value("ai", false))
+            doc["markdown"] = diffToMarkdown(doc, fileA, fileB);
+        const bool strictFailed = args.value("strict", false) && doc.value("verdict", std::string{}) == "regression";
+        return textResult(doc, strictFailed);
     }
 
     return errorResult("unknown tool '" + name + "'");

@@ -54,7 +54,7 @@ std::string str(const QString& s) { return s.toStdString(); }
 
 QString describeTrigger(const std::optional<lt::EdgeTrigger>& t)
 {
-    return t ? QString("CH%1 %2").arg(t->channel + 1).arg(t->inverted ? "falling" : "rising") : QString();
+    return t ? QString::fromStdString(t->describe()) : QString();
 }
 
 }  // namespace
@@ -89,8 +89,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
     connect(m_waveform, &WaveformWidget::contextMenuRequested, this, &MainWindow::showWaveformContextMenu);
     connect(m_aiNote, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_latencySpec, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
+    connect(m_decodeSpec, &QLineEdit::textChanged, m_reportTimer, qOverload<>(&QTimer::start));
     connect(m_copyMode, &QComboBox::currentIndexChanged, this, [this](int) { updateReport(); });
-    for (auto* field : {m_channels, m_rate, m_samples, m_trigger, m_latencySpec})
+    for (auto* field : {m_channels, m_rate, m_samples, m_trigger, m_latencySpec, m_decodeSpec})
         connect(field, &QLineEdit::textChanged, this, [this] { updatePreflight(); });
     connect(m_timeout, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
     connect(m_windows, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
@@ -231,6 +232,13 @@ void MainWindow::buildUi()
     m_latencySpec->setMaximumWidth(170);
     m_latencySpec->setPlaceholderText(tr("Latency: 1..2"));
     m_latencySpec->setToolTip(tr("Optional paired STIM..REACT latency in report, e.g. 1..2 or 24:falling..2:rising"));
+    m_decodeSpec = new QLineEdit;
+    m_decodeSpec->setObjectName("decodeSpec");
+    m_decodeSpec->setClearButtonEnabled(true);
+    m_decodeSpec->setMaximumWidth(210);
+    m_decodeSpec->setPlaceholderText(tr("Decode: uart:tx=1,baud=115200"));
+    m_decodeSpec->setToolTip(tr("Optional bus decoder(s) (; separated): uart:tx=1,baud=115200 | spi:clk=1,mosi=2 | "
+                                "i2c:scl=1,sda=2 | can:rx=1,bitrate=500k"));
     m_copyMode = new QComboBox;
     m_copyMode->setObjectName("copyMode");
     m_copyMode->addItem(tr("Full (MD + ASCII + JSON)"), static_cast<int>(lt::CopyMode::Full));
@@ -254,6 +262,7 @@ void MainWindow::buildUi()
     aiBar->addWidget(withBuilder(m_latencySpec, "latencyBuilderButton", [this] {
         lt::gui::showLatencyBuilder(m_latencySpec, m_latencySpec, builderChannels());
     }));
+    aiBar->addWidget(m_decodeSpec);
     aiBar->addWidget(new QLabel(tr("Mode:")));
     aiBar->addWidget(m_copyMode);
     aiBar->addWidget(m_reportSize);
@@ -628,6 +637,21 @@ void MainWindow::updatePreflight()
         }
     }
     setFieldError(m_latencySpec, latencyError);
+
+    QString decodeError;
+    if (m_decodeSpec) {
+        if (const QString dec = m_decodeSpec->text().trimmed(); !dec.isEmpty()) {
+            if (const auto specs = lt::parseDecoderSpecs(str(dec), &err)) {
+                if (m_waveform->hasCapture()) {
+                    if (!lt::validateDecoderChannels(*specs, m_waveform->capture().channels(), &err))
+                        decodeError = QString::fromStdString(err);
+                }
+            } else {
+                decodeError = QString::fromStdString(err);
+            }
+        }
+        setFieldError(m_decodeSpec, decodeError);
+    }
 
     if (bad) {
         m_preflight->setText(tr("Pre-flight: fix the highlighted fields"));
@@ -1138,6 +1162,12 @@ void MainWindow::setLatencySpec(const QString& spec)
         m_latencySpec->setText(spec);
 }
 
+void MainWindow::setDecodeSpec(const QString& spec)
+{
+    if (m_decodeSpec)
+        m_decodeSpec->setText(spec);
+}
+
 lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> modeOverride) const
 {
     auto options = m_waveform->reportOptions();
@@ -1175,6 +1205,16 @@ lt::ReportOptions MainWindow::buildReportOptions(std::optional<lt::CopyMode> mod
                 }
                 if (sIdx && rIdx)
                     options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
+            }
+        }
+    }
+    if (m_decodeSpec && m_waveform->hasCapture()) {
+        const QString decText = m_decodeSpec->text().trimmed();
+        if (!decText.isEmpty()) {
+            std::string err;
+            if (auto specs = lt::parseDecoderSpecs(str(decText), &err)) {
+                if (lt::validateDecoderChannels(*specs, m_waveform->capture().channels(), &err))
+                    options.decoders = std::move(*specs);
             }
         }
     }
@@ -1217,8 +1257,12 @@ void MainWindow::updateReport()
         auto options = buildReportOptions(lt::CopyMode::Full);
         options.first = 0;
         options.last = std::numeric_limits<std::size_t>::max();
+        m_waveform->setDecodedBuses(
+            options.decoders.empty() ? std::vector<lt::DecodedBus>{}
+                                     : lt::decodeProtocols(m_waveform->capture(), options.decoders, m_segments));
         m_waveform->setAnomalies(findAllAnomalies(options));
     } else {
+        m_waveform->setDecodedBuses({});
         m_waveform->setAnomalies({});
     }
     const QString text = aiReport();
@@ -1622,7 +1666,7 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                 return;
             }
             auto ignored = json::array();
-            for (const char* key : {"mode", "latency"})
+            for (const char* key : {"mode", "latency", "decode"})
                 if (params.contains(key))
                     ignored.push_back(key);
             std::optional<QString> note;
@@ -1665,6 +1709,16 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
                 return;
             }
             options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
+        }
+        if (params.contains("decode") && !params["decode"].is_null()) {
+            std::string err;
+            const auto docOpts = lt::documentOptionsFromJson(json{{"decode", params["decode"]}}, false, kMaxProtocolChannels,
+                                                             m_waveform->capture().channels(), err);
+            if (!docOpts) {
+                reply.fail(sess::error::InvalidParams, err);
+                return;
+            }
+            options.decoders = docOpts->decoders;
         }
         if (!params.contains("note"))  // the GUI note was handed to an agent: the next capture clears it
             m_consumedNote = m_aiNote->text();
@@ -1888,6 +1942,16 @@ void MainWindow::sessionGetAnomalies(const json& p, sess::Responder reply)
             return;
         }
         options.latency = lt::LatencyPairSpec{*sIdx, parsed->stimFalling, *rIdx, parsed->reactFalling, {}};
+    }
+    if (p.contains("decode") && !p["decode"].is_null()) {
+        std::string err;
+        const auto docOpts = lt::documentOptionsFromJson(json{{"decode", p["decode"]}}, false, kMaxProtocolChannels,
+                                                         m_waveform->capture().channels(), err);
+        if (!docOpts) {
+            reply.fail(sess::error::InvalidParams, err);
+            return;
+        }
+        options.decoders = docOpts->decoders;
     }
     auto list = findAllAnomalies(options);  // most severe first
     const auto total = list.size();

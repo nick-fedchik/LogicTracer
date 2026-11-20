@@ -227,6 +227,8 @@ std::optional<std::string> PynqConnection::validate(const CaptureConfig& c) cons
         if (ch.number >= m_info.channels)
             return "channel " + std::to_string(ch.displayNumber()) + " out of range 1.." + std::to_string(m_info.channels) +
                    " (probe bits of the core)";
+    if (c.trigger && c.trigger->isPattern())
+        return "pattern triggers are not supported by the in-design capture core";
     if (c.trigger && c.trigger->channel > m_info.channels)
         return std::string("trigger channel out of range (") + std::to_string(m_info.channels + 1) +
                " = the core's external trigger input)";

@@ -967,6 +967,14 @@ bool readCaptureJsonImpl(const nlohmann::json& doc, LoadedCapture& out, std::str
             const auto trChannel = tr.contains("channel") ? integerIn(tr["channel"], 1, 1'000'000) : std::optional<int64_t>(1);
             out.triggerDescription = "CH" + std::to_string(trChannel.value_or(1)) + " " +
                                      tr.value("edge", std::string("rising"));
+        } else if (tr.is_object() && tr.value("type", "") == "pattern") {
+            const auto trChannel = tr.contains("channel") ? integerIn(tr["channel"], 1, 16) : std::optional<int64_t>(1);
+            const auto bitCount = tr.contains("bit_count") ? integerIn(tr["bit_count"], 1, 16) : std::optional<int64_t>(1);
+            std::string desc = "CH" + std::to_string(trChannel.value_or(1));
+            if (bitCount.value_or(1) > 1)
+                desc += "-CH" + std::to_string(trChannel.value_or(1) + bitCount.value_or(1) - 1);
+            desc += "==" + tr.value("pattern", std::string("1"));
+            out.triggerDescription = std::move(desc);
         }
     }
 

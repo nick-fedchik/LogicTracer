@@ -179,6 +179,86 @@ std::optional<TriggerArg> parseTrigger(std::string_view text, int maxChannels, s
     if (t.empty() || t == "none" || t == "immediate")
         return TriggerArg{};
 
+    // Multi-channel pattern trigger: "pattern:<base_ch>:<bits>" (e.g. "pattern:1:1010")
+    // or "<ch>=<0|1>[,<ch2>=<0|1>,...]" for 1..16 contiguous channels starting at 1..16.
+    if (t.starts_with("pattern:")) {
+        std::string_view rest = std::string_view(t).substr(8);
+        auto sep = rest.find(':');
+        if (sep == std::string_view::npos)
+            sep = rest.find('=');
+        if (sep == std::string_view::npos)
+            return fail("invalid pattern trigger '" + std::string(text) + "' (expected pattern:<base_ch>:<bits>, e.g. pattern:1:1010)");
+        const auto baseCh = parseInt(trim(rest.substr(0, sep)));
+        const std::string_view bits = trim(rest.substr(sep + 1));
+        if (!baseCh || *baseCh < 1 || *baseCh > 16 || *baseCh > maxChannels)
+            return fail("pattern trigger base channel must be in 1.." + std::to_string(std::min(16, maxChannels)));
+        if (bits.empty() || bits.size() > 16)
+            return fail("pattern trigger bit width must be 1..16 bits");
+        if ((*baseCh - 1) + static_cast<int>(bits.size()) > 16 ||
+            (*baseCh - 1) + static_cast<int>(bits.size()) > maxChannels)
+            return fail("pattern trigger channels must fit within 1.." + std::to_string(std::min(16, maxChannels)));
+        uint16_t mask = 0;
+        for (std::size_t i = 0; i < bits.size(); ++i) {
+            if (bits[i] == '1')
+                mask |= static_cast<uint16_t>(1u << i);
+            else if (bits[i] != '0')
+                return fail("pattern trigger bits in '" + std::string(text) + "' must be '0' or '1'");
+        }
+        TriggerArg arg;
+        arg.none = false;
+        arg.trigger.channel = static_cast<uint8_t>(*baseCh - 1);
+        arg.trigger.bitCount = static_cast<uint8_t>(bits.size());
+        arg.trigger.pattern = mask;
+        return arg;
+    }
+
+    if (t.find('=') != std::string::npos) {
+        std::vector<std::pair<int, int>> pairs;
+        std::size_t pos = 0;
+        while (pos <= t.size()) {
+            const auto comma = t.find(',', pos);
+            const std::string_view item =
+                trim(std::string_view(t).substr(pos, comma == std::string::npos ? std::string_view::npos : comma - pos));
+            pos = comma == std::string::npos ? t.size() + 1 : comma + 1;
+            const auto eq = item.find('=');
+            if (eq == std::string_view::npos)
+                return fail("invalid pattern trigger clause '" + std::string(item) + "' (expected CH=0 or CH=1)");
+            std::string_view lhs = trim(item.substr(0, eq));
+            if (lhs.starts_with("ch"))
+                lhs.remove_prefix(2);
+            const auto ch = parseInt(lhs);
+            const std::string_view rhs = trim(item.substr(eq + 1));
+            if (!ch || *ch < 1 || *ch > 16 || *ch > maxChannels)
+                return fail("pattern trigger channel must be in 1.." + std::to_string(std::min(16, maxChannels)));
+            int bit = -1;
+            if (rhs == "0" || rhs == "low")
+                bit = 0;
+            else if (rhs == "1" || rhs == "high")
+                bit = 1;
+            else
+                return fail("invalid pattern trigger bit '" + std::string(rhs) + "' (expected 0 or 1)");
+            pairs.emplace_back(*ch, bit);
+        }
+        std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (std::size_t i = 1; i < pairs.size(); ++i) {
+            if (pairs[i].first == pairs[i - 1].first)
+                return fail("channel " + std::to_string(pairs[i].first) + " specified twice in pattern trigger");
+            if (pairs[i].first != pairs[i - 1].first + 1)
+                return fail("pattern trigger channels must be contiguous (got gap between CH" +
+                            std::to_string(pairs[i - 1].first) + " and CH" + std::to_string(pairs[i].first) + ")");
+        }
+        uint16_t mask = 0;
+        for (std::size_t i = 0; i < pairs.size(); ++i)
+            if (pairs[i].second == 1)
+                mask |= static_cast<uint16_t>(1u << i);
+        TriggerArg arg;
+        arg.none = false;
+        arg.trigger.channel = static_cast<uint8_t>(pairs.front().first - 1);
+        arg.trigger.bitCount = static_cast<uint8_t>(pairs.size());
+        arg.trigger.pattern = mask;
+        return arg;
+    }
+
     const auto colon = t.find(':');
     const auto ch = parseInt(std::string_view(t).substr(0, colon));
     if (!ch || *ch < 1 || *ch > maxChannels)
@@ -294,7 +374,8 @@ std::optional<std::vector<ExpectationClause>> parseExpectations(std::string_view
 
 std::vector<ExpectationCheck> evaluateExpectations(const std::vector<ExpectationClause>& clauses,
                                                    const std::vector<ChannelStats>& channelStats,
-                                                   const std::optional<LatencyStats>& latencyStats)
+                                                   const std::optional<LatencyStats>& latencyStats,
+                                                   const std::vector<DecodedBus>& decoded)
 {
     auto compare = [](double a, CompareOp op, double b) {
         switch (op) {
@@ -316,143 +397,184 @@ std::vector<ExpectationCheck> evaluateExpectations(const std::vector<Expectation
         chk.expression = c.raw;
 
         if (c.target.empty()) {
-            if (!latencyStats) {
+            if (c.metric == "frames" || c.metric == "protocol_errors" || c.metric == "nacks") {
+                if (decoded.empty()) {
+                    chk.detail = "protocol metric '" + c.metric + "' requires --decode";
+                    results.push_back(std::move(chk));
+                    continue;
+                }
+                std::size_t sum = 0;
+                for (const auto& b : decoded) {
+                    if (c.metric == "frames")
+                        sum += b.frameCount;
+                    else if (c.metric == "protocol_errors")
+                        sum += b.errorCount;
+                    else
+                        sum += b.nackCount;
+                }
+                chk.actual = static_cast<double>(sum);
+            } else if (!latencyStats) {
                 chk.detail = "latency metric '" + c.metric + "' requires --measure-latency";
                 results.push_back(std::move(chk));
                 continue;
-            }
-            const auto& l = *latencyStats;
-            // *_ub_ns / *_lb_ns: guaranteed bounds of the true delay given +-1 sample quantization.
-            auto boundOf = [&](const std::string& base, bool upper) -> std::optional<double> {
-                uint32_t s = 0;
-                if (base == "min") s = l.minSamples;
-                else if (base == "max") s = l.maxSamples;
-                else if (base == "p50") s = l.p50Samples;
-                else if (base == "p90") s = l.p90Samples;
-                else if (base == "p95") s = l.p95Samples;
-                else if (base == "p99") s = l.p99Samples;
-                else if (base == "mean")
-                    return upper ? l.meanNs + l.uncertaintyNs() : std::max(0.0, l.meanNs - l.uncertaintyNs());
-                else
-                    return std::nullopt;
-                return upper ? l.upperBoundNs(s) : l.lowerBoundNs(s);
-            };
-            const bool isUb = c.metric.size() > 6 && c.metric.ends_with("_ub_ns");
-            const bool isLb = c.metric.size() > 6 && c.metric.ends_with("_lb_ns");
-            if (c.metric == "events" || c.metric == "count" || c.metric == "n")
-                chk.actual = static_cast<double>(l.count);
-            else if (c.metric == "drops" || c.metric == "unmatched")
-                chk.actual = static_cast<double>(l.unmatchedStimCount);
-            else if (c.metric == "spurious")
-                chk.actual = static_cast<double>(l.spuriousReactCount);
-            else if (c.metric == "censored")
-                chk.actual = static_cast<double>(l.censoredStimCount + l.censoredReactCount);
-            else if (c.metric == "coincident")
-                chk.actual = static_cast<double>(l.coincidentCount);
-            else if (c.metric == "outliers")
-                chk.actual = static_cast<double>(l.outlierCount);
-            else if (c.metric == "reacts_per_stim")
-                chk.actual = static_cast<double>(l.maxReactsPerStim);
-            else if (l.count == 0) {
-                chk.detail = "no paired latency events captured (count == 0)";
-                results.push_back(std::move(chk));
-                continue;
-            } else if (isUb || isLb) {
-                chk.actual = boundOf(c.metric.substr(0, c.metric.size() - 6), isUb);
-                if (!chk.actual) {
-                    chk.detail = "unknown latency bound metric '" + c.metric + "'";
+            } else {
+                const auto& l = *latencyStats;
+                // *_ub_ns / *_lb_ns: guaranteed bounds of the true delay given +-1 sample quantization.
+                auto boundOf = [&](const std::string& base, bool upper) -> std::optional<double> {
+                    uint32_t s = 0;
+                    if (base == "min") s = l.minSamples;
+                    else if (base == "max") s = l.maxSamples;
+                    else if (base == "p50") s = l.p50Samples;
+                    else if (base == "p90") s = l.p90Samples;
+                    else if (base == "p95") s = l.p95Samples;
+                    else if (base == "p99") s = l.p99Samples;
+                    else if (base == "mean")
+                        return upper ? l.meanNs + l.uncertaintyNs() : std::max(0.0, l.meanNs - l.uncertaintyNs());
+                    else
+                        return std::nullopt;
+                    return upper ? l.upperBoundNs(s) : l.lowerBoundNs(s);
+                };
+                const bool isUb = c.metric.size() > 6 && c.metric.ends_with("_ub_ns");
+                const bool isLb = c.metric.size() > 6 && c.metric.ends_with("_lb_ns");
+                if (c.metric == "events" || c.metric == "count" || c.metric == "n")
+                    chk.actual = static_cast<double>(l.count);
+                else if (c.metric == "drops" || c.metric == "unmatched")
+                    chk.actual = static_cast<double>(l.unmatchedStimCount);
+                else if (c.metric == "spurious")
+                    chk.actual = static_cast<double>(l.spuriousReactCount);
+                else if (c.metric == "censored")
+                    chk.actual = static_cast<double>(l.censoredStimCount + l.censoredReactCount);
+                else if (c.metric == "coincident")
+                    chk.actual = static_cast<double>(l.coincidentCount);
+                else if (c.metric == "outliers")
+                    chk.actual = static_cast<double>(l.outlierCount);
+                else if (c.metric == "reacts_per_stim")
+                    chk.actual = static_cast<double>(l.maxReactsPerStim);
+                else if (l.count == 0) {
+                    chk.detail = "no paired latency events captured (count == 0)";
+                    results.push_back(std::move(chk));
+                    continue;
+                } else if (isUb || isLb) {
+                    chk.actual = boundOf(c.metric.substr(0, c.metric.size() - 6), isUb);
+                    if (!chk.actual) {
+                        chk.detail = "unknown latency bound metric '" + c.metric + "'";
+                        results.push_back(std::move(chk));
+                        continue;
+                    }
+                } else if (c.metric == "min_ns") chk.actual = l.minNs;
+                else if (c.metric == "max_ns") chk.actual = l.maxNs;
+                else if (c.metric == "mean_ns") chk.actual = l.meanNs;
+                else if (c.metric == "stdev_ns" || c.metric == "jitter_ns") chk.actual = l.stdevNs;
+                else if (c.metric == "p50_ns") chk.actual = l.p50Ns;
+                else if (c.metric == "p90_ns") chk.actual = l.p90Ns;
+                else if (c.metric == "p95_ns") chk.actual = l.p95Ns;
+                else if (c.metric == "p99_ns") chk.actual = l.p99Ns;
+                else {
+                    chk.detail = "unknown latency metric '" + c.metric + "'";
                     results.push_back(std::move(chk));
                     continue;
                 }
-            } else if (c.metric == "min_ns") chk.actual = l.minNs;
-            else if (c.metric == "max_ns") chk.actual = l.maxNs;
-            else if (c.metric == "mean_ns") chk.actual = l.meanNs;
-            else if (c.metric == "stdev_ns" || c.metric == "jitter_ns") chk.actual = l.stdevNs;
-            else if (c.metric == "p50_ns") chk.actual = l.p50Ns;
-            else if (c.metric == "p90_ns") chk.actual = l.p90Ns;
-            else if (c.metric == "p95_ns") chk.actual = l.p95Ns;
-            else if (c.metric == "p99_ns") chk.actual = l.p99Ns;
-            else {
-                chk.detail = "unknown latency metric '" + c.metric + "'";
-                results.push_back(std::move(chk));
-                continue;
             }
         } else {
-            const ChannelStats* match = nullptr;
             const std::string tLow = lower(c.target);
-            for (const auto& st : channelStats) {
-                const std::string numStr = std::to_string(st.channel.displayNumber());
-                if (c.target == st.channel.name || c.target == st.channel.label() || tLow == "ch" + numStr ||
-                    c.target == numStr) {
-                    match = &st;
-                    break;
+            const bool isProtoMetric =
+                (c.metric == "frames" || c.metric == "errors" || c.metric == "protocol_errors" || c.metric == "nacks");
+            if (isProtoMetric && (tLow == "uart" || tLow == "spi" || tLow == "i2c" || tLow == "can")) {
+                bool anyMatched = false;
+                std::size_t sum = 0;
+                for (const auto& b : decoded) {
+                    if (b.protocol == tLow) {
+                        anyMatched = true;
+                        if (c.metric == "frames")
+                            sum += b.frameCount;
+                        else if (c.metric == "nacks")
+                            sum += b.nackCount;
+                        else
+                            sum += b.errorCount;
+                    }
                 }
-            }
-            if (!match) {
-                chk.detail = "channel '" + c.target + "' is not in the capture";
-                results.push_back(std::move(chk));
-                continue;
-            }
-            if (c.metric == "edges" || c.metric == "transitions") chk.actual = static_cast<double>(match->transitions);
-            else if (c.metric == "rising_edges") chk.actual = static_cast<double>(match->risingEdges);
-            else if (c.metric == "falling_edges") chk.actual = static_cast<double>(match->fallingEdges);
-            else if (c.metric == "pulses")
-                chk.actual = static_cast<double>(match->pulseCountHigh + match->pulseCountLow);
-            else if (c.metric == "high_pulses") chk.actual = static_cast<double>(match->pulseCountHigh);
-            else if (c.metric == "low_pulses") chk.actual = static_cast<double>(match->pulseCountLow);
-            else if (c.metric == "glitches" || c.metric == "unresolved_pulses")
-                chk.actual = static_cast<double>(match->glitchCount);
-            else if (c.metric == "bursts")
-                chk.actual = match->period ? static_cast<double>(match->period->burstCount) : 0.0;
-            else if (c.metric == "irregular_periods")
-                chk.actual = match->period ? static_cast<double>(match->period->irregularCount) : 0.0;
-            else if (c.metric == "period_cv") {
-                if (!match->period) {
-                    chk.detail = "channel '" + c.target + "' has fewer than 2 same-direction edges (no period)";
+                if (!anyMatched) {
+                    chk.detail = "protocol '" + tLow + "' is not decoded (use --decode " + tLow + ":...)";
                     results.push_back(std::move(chk));
                     continue;
                 }
-                chk.actual = match->period->cv;
-            }
-            else if (c.metric == "idle" || c.metric == "idle_level") chk.actual = match->idleLevel;
-            else if (c.metric == "final" || c.metric == "final_level") chk.actual = match->finalLevel;
-            else if (c.metric == "high_pct") chk.actual = match->highTimePercent;
-            else if (c.metric == "trailing_us")
-                chk.actual = match->samplesToSeconds(static_cast<double>(match->trailingSamples)) * 1e6;
-            else if (c.metric == "freq_hz") {
-                if (!match->meanFrequencyHz) {
-                    chk.detail = "channel '" + c.target + "' has fewer than 2 same-direction edges (no frequency)";
-                    results.push_back(std::move(chk));
-                    continue;
-                }
-                chk.actual = *match->meanFrequencyHz;
-            } else if (c.metric == "duty_pct") {
-                if (!match->dutyCyclePercent) {
-                    chk.detail = "channel '" + c.target + "' has no full period (no duty_pct)";
-                    results.push_back(std::move(chk));
-                    continue;
-                }
-                chk.actual = *match->dutyCyclePercent;
-            } else if (c.metric == "min_width_us" || c.metric == "max_width_us") {
-                std::optional<double> minW, maxW;
-                for (const auto& w : {match->highWidth, match->lowWidth}) {
-                    if (!w)
-                        continue;
-                    const double mn = match->samplesToSeconds(static_cast<double>(w->minSamples)) * 1e6;
-                    const double mx = match->samplesToSeconds(static_cast<double>(w->maxSamples)) * 1e6;
-                    minW = minW ? std::min(*minW, mn) : mn;
-                    maxW = maxW ? std::max(*maxW, mx) : mx;
-                }
-                if (!minW) {
-                    chk.detail = "channel '" + c.target + "' has no complete bounded pulse";
-                    results.push_back(std::move(chk));
-                    continue;
-                }
-                chk.actual = c.metric == "min_width_us" ? *minW : *maxW;
+                chk.actual = static_cast<double>(sum);
             } else {
-                chk.detail = "unknown channel metric '" + c.metric + "'";
-                results.push_back(std::move(chk));
-                continue;
+                const ChannelStats* match = nullptr;
+                for (const auto& st : channelStats) {
+                    const std::string numStr = std::to_string(st.channel.displayNumber());
+                    if (c.target == st.channel.name || c.target == st.channel.label() || tLow == "ch" + numStr ||
+                        c.target == numStr) {
+                        match = &st;
+                        break;
+                    }
+                }
+                if (!match) {
+                    chk.detail = "channel '" + c.target + "' is not in the capture";
+                    results.push_back(std::move(chk));
+                    continue;
+                }
+                if (c.metric == "edges" || c.metric == "transitions") chk.actual = static_cast<double>(match->transitions);
+                else if (c.metric == "rising_edges") chk.actual = static_cast<double>(match->risingEdges);
+                else if (c.metric == "falling_edges") chk.actual = static_cast<double>(match->fallingEdges);
+                else if (c.metric == "pulses")
+                    chk.actual = static_cast<double>(match->pulseCountHigh + match->pulseCountLow);
+                else if (c.metric == "high_pulses") chk.actual = static_cast<double>(match->pulseCountHigh);
+                else if (c.metric == "low_pulses") chk.actual = static_cast<double>(match->pulseCountLow);
+                else if (c.metric == "glitches" || c.metric == "unresolved_pulses")
+                    chk.actual = static_cast<double>(match->glitchCount);
+                else if (c.metric == "bursts")
+                    chk.actual = match->period ? static_cast<double>(match->period->burstCount) : 0.0;
+                else if (c.metric == "irregular_periods")
+                    chk.actual = match->period ? static_cast<double>(match->period->irregularCount) : 0.0;
+                else if (c.metric == "period_cv") {
+                    if (!match->period) {
+                        chk.detail = "channel '" + c.target + "' has fewer than 2 same-direction edges (no period)";
+                        results.push_back(std::move(chk));
+                        continue;
+                    }
+                    chk.actual = match->period->cv;
+                }
+                else if (c.metric == "idle" || c.metric == "idle_level") chk.actual = match->idleLevel;
+                else if (c.metric == "final" || c.metric == "final_level") chk.actual = match->finalLevel;
+                else if (c.metric == "high_pct") chk.actual = match->highTimePercent;
+                else if (c.metric == "trailing_us")
+                    chk.actual = match->samplesToSeconds(static_cast<double>(match->trailingSamples)) * 1e6;
+                else if (c.metric == "freq_hz") {
+                    if (!match->meanFrequencyHz) {
+                        chk.detail = "channel '" + c.target + "' has fewer than 2 same-direction edges (no frequency)";
+                        results.push_back(std::move(chk));
+                        continue;
+                    }
+                    chk.actual = *match->meanFrequencyHz;
+                } else if (c.metric == "duty_pct") {
+                    if (!match->dutyCyclePercent) {
+                        chk.detail = "channel '" + c.target + "' has no full period (no duty_pct)";
+                        results.push_back(std::move(chk));
+                        continue;
+                    }
+                    chk.actual = *match->dutyCyclePercent;
+                } else if (c.metric == "min_width_us" || c.metric == "max_width_us") {
+                    std::optional<double> minW, maxW;
+                    for (const auto& w : {match->highWidth, match->lowWidth}) {
+                        if (!w)
+                            continue;
+                        const double mn = match->samplesToSeconds(static_cast<double>(w->minSamples)) * 1e6;
+                        const double mx = match->samplesToSeconds(static_cast<double>(w->maxSamples)) * 1e6;
+                        minW = minW ? std::min(*minW, mn) : mn;
+                        maxW = maxW ? std::max(*maxW, mx) : mx;
+                    }
+                    if (!minW) {
+                        chk.detail = "channel '" + c.target + "' has no complete bounded pulse";
+                        results.push_back(std::move(chk));
+                        continue;
+                    }
+                    chk.actual = c.metric == "min_width_us" ? *minW : *maxW;
+                } else {
+                    chk.detail = "unknown channel metric '" + c.metric + "'";
+                    results.push_back(std::move(chk));
+                    continue;
+                }
             }
         }
 

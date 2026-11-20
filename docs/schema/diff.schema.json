@@ -225,6 +225,9 @@
         "type": "string"
       }
     },
+    "markdown": {
+      "type": "string"
+    },
     "latency": {
       "type": "object",
       "properties": {

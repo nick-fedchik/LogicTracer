@@ -1,0 +1,809 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/view.schema.json",
+  "title": "logictracer-cli view --json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "view"
+    },
+    "status": {
+      "const": "OK"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "app": {
+      "const": "logictracer-gui"
+    },
+    "connected": {
+      "type": "boolean"
+    },
+    "busy": {
+      "type": "boolean"
+    },
+    "has_capture": {
+      "type": "boolean"
+    },
+    "capture_id": {
+      "type": "integer"
+    },
+    "display_state": {
+      "enum": [
+        "live",
+        "armed",
+        "stale"
+      ]
+    },
+    "history_size": {
+      "type": "integer"
+    },
+    "annotation_count": {
+      "type": "integer"
+    },
+    "anomaly_count": {
+      "type": "integer"
+    },
+    "hide_inactive": {
+      "type": "boolean"
+    },
+    "device": {
+      "$ref": "common.schema.json#/$defs/device"
+    },
+    "capture": {
+      "type": "object",
+      "properties": {
+        "sample_rate_hz": {
+          "type": "integer"
+        },
+        "total_samples": {
+          "type": "integer"
+        },
+        "trigger_sample": {
+          "type": "integer"
+        },
+        "trigger": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segments": {
+          "$ref": "common.schema.json#/$defs/segments"
+        }
+      },
+      "required": [
+        "sample_rate_hz",
+        "total_samples",
+        "trigger_sample",
+        "trigger"
+      ],
+      "additionalProperties": false
+    },
+    "visible": {
+      "$ref": "#/$defs/visible"
+    },
+    "cursors": {
+      "$ref": "#/$defs/cursors"
+    },
+    "total": {
+      "type": "integer"
+    },
+    "incidents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/incident"
+      }
+    },
+    "report": {
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    }
+  },
+  "required": [
+    "schema_version",
+    "command",
+    "status",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "visible": {
+      "type": "object",
+      "properties": {
+        "first_sample": {
+          "type": "integer"
+        },
+        "end_sample": {
+          "type": "integer"
+        },
+        "samples": {
+          "type": "integer"
+        },
+        "clamped_to_cursors": {
+          "type": "boolean"
+        },
+        "start_us": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "end_us": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "first_sample",
+        "end_sample",
+        "samples",
+        "clamped_to_cursors",
+        "start_us",
+        "end_us"
+      ],
+      "additionalProperties": false
+    },
+    "cursorPoint": {
+      "type": "object",
+      "properties": {
+        "sample": {
+          "type": "integer"
+        },
+        "us": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "sample",
+        "us"
+      ],
+      "additionalProperties": false
+    },
+    "cursors": {
+      "type": "object",
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/cursorPoint"
+        },
+        "b": {
+          "$ref": "#/$defs/cursorPoint"
+        },
+        "delta_us": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cross_window": {
+          "type": "object",
+          "properties": {
+            "window_a": {
+              "type": "integer"
+            },
+            "window_b": {
+              "type": "integer"
+            },
+            "elapsed_known": {
+              "type": "boolean"
+            },
+            "resolution_us": {
+              "type": "number"
+            },
+            "note": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "window_a",
+            "window_b",
+            "elapsed_known",
+            "resolution_us",
+            "note"
+          ],
+          "additionalProperties": false
+        },
+        "between": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "level_at_a": {
+                "type": "integer"
+              },
+              "level_at_b": {
+                "type": "integer"
+              },
+              "edges_between": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "channel",
+              "name",
+              "level_at_a",
+              "level_at_b",
+              "edges_between"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "incident": {
+      "type": "object",
+      "properties": {
+        "sample": {
+          "type": "integer"
+        },
+        "time_us": {
+          "type": "number"
+        },
+        "severity": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sample",
+        "time_us",
+        "severity",
+        "kind",
+        "detail"
+      ],
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "mode": {
+          "enum": [
+            "brief",
+            "cursors",
+            "full"
+          ]
+        },
+        "time_unit": {
+          "const": "us"
+        },
+        "time_origin": {
+          "const": "trigger (t=0)"
+        },
+        "sample_rate_hz": {
+          "type": "integer"
+        },
+        "quantization_step_ns": {
+          "type": "number"
+        },
+        "total_samples": {
+          "type": "integer"
+        },
+        "trigger_sample": {
+          "type": "integer"
+        },
+        "trigger": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visible": {
+          "$ref": "#/$defs/visible"
+        },
+        "capture_id": {
+          "type": "integer"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "banner": {
+          "type": "string"
+        },
+        "device_version": {
+          "type": "string"
+        },
+        "board": {
+          "type": "string"
+        },
+        "user_note": {
+          "type": "string"
+        },
+        "setup": {
+          "$ref": "common.schema.json#/$defs/setup"
+        },
+        "cursors": {
+          "$ref": "#/$defs/cursors"
+        },
+        "latency": {
+          "$ref": "common.schema.json#/$defs/latency"
+        },
+        "decoded": {
+          "$ref": "common.schema.json#/$defs/decoded"
+        },
+        "motif": {
+          "type": "object",
+          "properties": {
+            "cycle_transitions": {
+              "type": "integer"
+            },
+            "repetitions": {
+              "type": "integer"
+            },
+            "unexpected_transitions": {
+              "type": "integer"
+            },
+            "timing_deviations": {
+              "type": "integer"
+            },
+            "burst_gaps": {
+              "type": "integer"
+            },
+            "positions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "channel": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "edge": {
+                    "type": "string"
+                  },
+                  "delta_prev_samples_median": {
+                    "type": "integer"
+                  },
+                  "delta_prev_samples_min": {
+                    "type": "integer"
+                  },
+                  "delta_prev_samples_max": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "channel",
+                  "name",
+                  "edge",
+                  "delta_prev_samples_median",
+                  "delta_prev_samples_min",
+                  "delta_prev_samples_max"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "cycle_transitions",
+            "repetitions",
+            "unexpected_transitions",
+            "timing_deviations",
+            "burst_gaps",
+            "positions"
+          ],
+          "additionalProperties": false
+        },
+        "anomalies_total": {
+          "type": "integer"
+        },
+        "anomalies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/incident"
+          }
+        },
+        "chronological_edges": {
+          "type": "object",
+          "properties": {
+            "total": {
+              "type": "integer"
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "events": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "sample": {
+                    "type": "integer"
+                  },
+                  "time_us": {
+                    "type": "number"
+                  },
+                  "channel": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "edge": {
+                    "type": "string"
+                  },
+                  "delta_prev_ns": {
+                    "type": "number"
+                  },
+                  "gpio": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sample",
+                  "time_us",
+                  "channel",
+                  "name",
+                  "edge"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "total",
+            "truncated",
+            "events"
+          ],
+          "additionalProperties": false
+        },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "time_us": {
+                "type": "number"
+              },
+              "duration_us": {
+                "type": "number"
+              },
+              "label": {
+                "type": "string"
+              },
+              "color": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "visible": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "time_us",
+              "label",
+              "color",
+              "author",
+              "visible"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "channel": {
+                "type": "integer"
+              },
+              "duty_cycle_percent": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "falling_edges": {
+                "type": "integer"
+              },
+              "final_level": {
+                "type": "integer"
+              },
+              "first_edge_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "glitch_detection": {
+                "type": "object",
+                "properties": {
+                  "count": {
+                    "type": "integer"
+                  },
+                  "detected": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "count",
+                  "detected"
+                ],
+                "additionalProperties": false
+              },
+              "high_pulse_width_us": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "max": {
+                    "type": "number"
+                  },
+                  "mean": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "max",
+                  "mean",
+                  "min"
+                ],
+                "additionalProperties": false
+              },
+              "high_time_percent": {
+                "type": "number"
+              },
+              "idle_level": {
+                "type": "integer"
+              },
+              "initial_level": {
+                "type": "integer"
+              },
+              "last_edge_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "low_pulse_width_us": {
+                "type": [
+                  "null",
+                  "object"
+                ],
+                "properties": {
+                  "max": {
+                    "type": "number"
+                  },
+                  "mean": {
+                    "type": "number"
+                  },
+                  "min": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "max",
+                  "mean",
+                  "min"
+                ],
+                "additionalProperties": false
+              },
+              "max_pulse_width_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "mean_frequency_hz": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "min_pulse_width_us": {
+                "type": [
+                  "null",
+                  "number"
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "pulse_count_high": {
+                "type": "integer"
+              },
+              "pulse_count_low": {
+                "type": "integer"
+              },
+              "rising_edges": {
+                "type": "integer"
+              },
+              "samples": {
+                "type": "integer"
+              },
+              "trailing_level_us": {
+                "type": "number"
+              },
+              "transitions": {
+                "type": "integer"
+              },
+              "periodicity": {
+                "type": "object",
+                "properties": {
+                  "burst_gap_threshold_samples": {
+                    "type": "integer"
+                  },
+                  "bursts": {
+                    "type": "integer"
+                  },
+                  "cv": {
+                    "type": "number"
+                  },
+                  "edge": {
+                    "type": "string"
+                  },
+                  "irregular_edge_samples": {
+                    "type": "array",
+                    "items": {}
+                  },
+                  "irregular_periods": {
+                    "type": "integer"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "max_gap_samples": {
+                    "type": "integer"
+                  },
+                  "max_samples": {
+                    "type": "integer"
+                  },
+                  "median_period_ns": {
+                    "type": "number"
+                  },
+                  "median_samples": {
+                    "type": "integer"
+                  },
+                  "min_gap_samples": {
+                    "type": "integer"
+                  },
+                  "min_samples": {
+                    "type": "integer"
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "periods": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "burst_gap_threshold_samples",
+                  "bursts",
+                  "cv",
+                  "edge",
+                  "irregular_edge_samples",
+                  "irregular_periods",
+                  "kind",
+                  "max_gap_samples",
+                  "max_samples",
+                  "median_period_ns",
+                  "median_samples",
+                  "min_gap_samples",
+                  "min_samples",
+                  "note",
+                  "periods"
+                ],
+                "additionalProperties": false
+              },
+              "edge_times_us": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "edges_shown": {
+                "type": "integer"
+              },
+              "edges_note": {
+                "type": "string"
+              },
+              "edges_truncated": {
+                "type": "boolean"
+              },
+              "gpio": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "channel",
+              "duty_cycle_percent",
+              "falling_edges",
+              "final_level",
+              "first_edge_us",
+              "glitch_detection",
+              "high_pulse_width_us",
+              "high_time_percent",
+              "idle_level",
+              "initial_level",
+              "last_edge_us",
+              "low_pulse_width_us",
+              "max_pulse_width_us",
+              "mean_frequency_hz",
+              "min_pulse_width_us",
+              "name",
+              "pulse_count_high",
+              "pulse_count_low",
+              "rising_edges",
+              "samples",
+              "trailing_level_us",
+              "transitions",
+              "edge_times_us",
+              "edges_shown",
+              "edges_note",
+              "edges_truncated"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "display_state": {
+          "enum": [
+            "live",
+            "armed",
+            "stale"
+          ]
+        },
+        "viewing_history": {
+          "type": "boolean"
+        },
+        "segments": {
+          "$ref": "common.schema.json#/$defs/segments"
+        },
+        "status": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "ignored_params": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "display_state"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

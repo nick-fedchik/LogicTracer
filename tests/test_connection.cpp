@@ -1399,6 +1399,71 @@ private Q_SLOTS:
         QCOMPARE(run({"analyze", savedJson, "--meta", "bad key=x", "--json"}, &j), 64);
         QCOMPARE(run({"analyze", savedJson, "--meta", "novalue", "--json"}, &j), 64);
     }
+
+    void patternTriggersFastComplexAndReplayDecode()
+    {
+        Device dev(device("V6_5", true, answerWith(0x05)));
+        LT_REQUIRE_PTY(dev);
+        nlohmann::json j;
+        QString raw;
+
+        // 4-bit Fast pattern trigger on CH1..CH4: wire packet carries triggerType=2, count=4, triggerValue=0b0101.
+        int rc = run({"capture", "--port", QString::fromStdString(dev.port()), "--no-session",
+                      "--channels", "1-4", "--samples", "40", "--trigger", "pattern:1:1010", "--json"},
+                     &j, &raw);
+        QVERIFY2(rc == 0, qPrintable(raw));
+        QCOMPARE(dev.requests().size(), std::size_t{1});
+        QCOMPARE(dev.requests().back().triggerType, static_cast<uint8_t>(lt::TriggerType::Fast));
+        QCOMPARE(dev.requests().back().trigger, uint8_t{0});
+        QCOMPARE(dev.requests().back().invertedOrCount, uint8_t{4});
+        QCOMPARE(dev.requests().back().triggerValue, uint16_t{0b0101});
+        QCOMPARE(j["config"]["trigger"]["type"].get<std::string>(), std::string("pattern"));
+        QCOMPARE(j["config"]["trigger"]["mode"].get<std::string>(), std::string("fast"));
+        QCOMPARE(j["config"]["trigger"]["pattern"].get<std::string>(), std::string("1010"));
+        bool hasJumperWarning = false;
+        for (const auto& w : j["warnings"])
+            if (w.get<std::string>().find("GP0") != std::string::npos)
+                hasJumperWarning = true;
+        QVERIFY(hasJumperWarning);
+
+        // 6-bit Complex pattern trigger on CH2..CH7: wire packet carries triggerType=1, trigger=1, count=6.
+        rc = run({"capture", "--port", QString::fromStdString(dev.port()), "--no-session",
+                  "--channels", "2-7", "--samples", "40", "--trigger", "2=1,3=0,4=1,5=1,6=0,7=1", "--json"},
+                 &j, &raw);
+        QVERIFY2(rc == 0, qPrintable(raw));
+        QCOMPARE(dev.requests().back().triggerType, static_cast<uint8_t>(lt::TriggerType::Complex));
+        QCOMPARE(dev.requests().back().trigger, uint8_t{1});
+        QCOMPARE(dev.requests().back().invertedOrCount, uint8_t{6});
+        QCOMPARE(dev.requests().back().triggerValue, uint16_t{0b101101});
+        QCOMPARE(j["config"]["trigger"]["mode"].get<std::string>(), std::string("complex"));
+
+        // Segmented capture + pattern trigger is rejected (exit 64).
+        QCOMPARE(run({"capture", "--port", QString::fromStdString(dev.port()), "--no-session",
+                      "--channels", "1-4", "--samples", "40", "--segments", "2",
+                      "--trigger", "pattern:1:1010", "--json"},
+                     &j),
+                 64);
+
+        // ReplayDevice rejects pattern trigger channels absent from --channels (64) or recording (1), and matches present ones.
+        QTemporaryDir dir;
+        const QString rec = writeRecording(dir);
+        QCOMPARE(run({"capture", "--port", "replay:" + rec, "--no-session", "--freq", "1M", "--samples", "60",
+                      "--pre-samples", "5", "--channels", "1:STIM,3:REACT", "--trigger", "1=1,2=0,3=1", "--json"},
+                     &j),
+                 64);
+        QCOMPARE(run({"capture", "--port", "replay:" + rec, "--no-session", "--freq", "1M", "--samples", "60",
+                      "--pre-samples", "5", "--channels", "1,2,3", "--trigger", "1=1,2=0,3=1", "--json"},
+                     &j),
+                 64);
+        rc = run({"capture", "--port", "replay:" + rec, "--no-session", "--freq", "1M", "--samples", "60",
+                  "--pre-samples", "5", "--channels", "1:STIM,3:REACT", "--trigger", "pattern:1:1",
+                  "--decode", "uart:tx=1,baud=500k", "--expect", "uart:frames>=1", "--json"},
+                 &j, &raw);
+        QVERIFY2(rc == 0, qPrintable(raw));
+        QCOMPARE(j["config"]["trigger"]["type"].get<std::string>(), std::string("pattern"));
+        QVERIFY(j.contains("decoded") && !j["decoded"].empty());
+        QVERIFY(j["assertions"]["passed"].get<bool>());
+    }
 };
 
 int main(int argc, char** argv)

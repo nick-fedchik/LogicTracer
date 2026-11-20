@@ -213,6 +213,10 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
         error = "a segmented capture needs a trigger (every window starts on a trigger edge)";
         return std::nullopt;
     }
+    if (spec.segments > 1 && spec.trigger->isPattern()) {
+        error = "segmented captures are not supported with a pattern trigger (Fast/Complex PIO programs record a single window)";
+        return std::nullopt;
+    }
     if (info.dutClock) {  // in-design capture (PYNQ lt_capture): one clock, no segments
         if (spec.frequency != info.maxFrequency) {
             error = "the in-design capture core samples at the DUT clock: use a rate of " +
@@ -317,8 +321,15 @@ void analyzeIntoDocument(CaptureDocument& out, const CaptureBuffer& buffer, cons
     if (out.latency)
         out.doc["latency"] = toJson(*out.latency, false);
 
+    if (!options.decoders.empty()) {
+        out.decoded = decodeProtocols(buffer, options.decoders, segments);
+        out.doc["decoded"] = toJson(*out.decoded);
+    }
+
     if (options.expectations) {
-        const auto checks = cli::evaluateExpectations(*options.expectations, *stats, out.latency);
+        const std::vector<DecodedBus> emptyDecoded;
+        const auto checks = cli::evaluateExpectations(*options.expectations, *stats, out.latency,
+                                                      out.decoded ? *out.decoded : emptyDecoded);
         bool allOk = !checks.empty();
         auto arr = json::array();
         for (const auto& c : checks) {
@@ -349,10 +360,16 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
         numbers.push_back(ch.number);
         channels.push_back(channelBrief(ch, info.version.board));
     }
-    json trigger = cfg.trigger ? json{{"type", "edge"},
-                                      {"channel", cfg.trigger->channel + 1},
-                                      {"edge", cfg.trigger->inverted ? "falling" : "rising"}}
-                               : json{{"type", "immediate"}};
+    json trigger = !cfg.trigger ? json{{"type", "immediate"}}
+                   : cfg.trigger->isPattern()
+                       ? json{{"type", "pattern"},
+                              {"channel", cfg.trigger->channel + 1},
+                              {"bit_count", cfg.trigger->bitCount},
+                              {"pattern", cfg.trigger->patternBits()},
+                              {"mode", cfg.trigger->patternTriggerType() == TriggerType::Fast ? "fast" : "complex"}}
+                       : json{{"type", "edge"},
+                              {"channel", cfg.trigger->channel + 1},
+                              {"edge", cfg.trigger->inverted ? "falling" : "rising"}};
     if (cfg.trigger)
         trigger["sensitivity"] = result.edgeSensitive ? "edge" : "level";
     if (cfg.trigger && !info.version.board.empty()) {
@@ -361,7 +378,8 @@ CaptureDocument captureDocument(const DeviceInfo& info, const CaptureRequestSpec
     }
 
     // Warn when a level-sensitive PIO trigger fired immediately because the line was already active.
-    if (cfg.trigger && !result.edgeSensitive && result.status == CaptureStatus::Ok && result.buffer && result.buffer->size() > 0) {
+    if (cfg.trigger && !cfg.trigger->isPattern() && !result.edgeSensitive && result.status == CaptureStatus::Ok &&
+        result.buffer && result.buffer->size() > 0) {
         for (std::size_t idx = 0; idx < cfg.channels.size(); ++idx) {
             if (cfg.channels[idx].number == cfg.trigger->channel) {
                 const bool expectedIdle = cfg.trigger->inverted;  // falling needs HIGH idle; rising needs LOW idle
@@ -758,6 +776,31 @@ std::optional<DocumentOptions> documentOptionsFromJson(const json& p, bool defau
             return std::nullopt;
         }
         o.invariants = std::move(*rules);
+    }
+    if (p.contains("decode") && !p["decode"].is_null()) {
+        std::string combined;
+        if (p["decode"].is_string()) {
+            combined = p["decode"].get<std::string>();
+        } else if (p["decode"].is_array()) {
+            for (const auto& item : p["decode"]) {
+                if (!item.is_string()) {
+                    error = "decode array items must be strings like \"uart:1:baud=115200\"";
+                    return std::nullopt;
+                }
+                if (!combined.empty())
+                    combined += ';';
+                combined += item.get<std::string>();
+            }
+        } else {
+            error = "decode must be a string or an array of strings like \"uart:1:baud=115200\"";
+            return std::nullopt;
+        }
+        auto specs = parseDecoderSpecs(combined, &error);
+        if (!specs)
+            return std::nullopt;
+        if (!validateDecoderChannels(*specs, capturedChannels, &error))
+            return std::nullopt;
+        o.decoders = std::move(*specs);
     }
     return o;
 }

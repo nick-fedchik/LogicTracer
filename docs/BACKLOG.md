@@ -15,7 +15,7 @@ open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not p
       (`schema_version`, `command`, `status`, `warnings`) for every document; exit-code table; conformance
       tests on every platform through replay devices, including documents without data (no edges, no pairs).
 - [x] Determinism: identical runs give identical JSON and AI reports apart from `x-volatile` fields.
-- [ ] Schemas for the GUI session responses (`annotate`, `view`).
+- [x] Schemas for the GUI session responses (`annotate`, `view`).
 
 ## B-11. Firmware self-test without external hardware — done
 - [x] Test-signal generator in the firmware (GP0/GP1, exact clock cycles, PIO + DMA), advertised in

@@ -17,7 +17,7 @@ capture, and timing measurements are reported with their sampling uncertainty an
 |---|---|
 | **Human–AI shared session** | `logictracer-gui`, `logictracer-cli` and `logictracer-mcp` share one IPC session: an AI agent reads the active capture (`capture_id` prevents stale-read races), steers the view or cursors, and places annotations directly on the engineer's waveform. |
 | **Sampling uncertainty & bounds** | Cross-channel stimulus→reaction latency with a Δs histogram, nearest-rank percentiles, asynchronous `((d−1)T, (d+1)T)` bounds, constant-delay consistency check, burst-aware frequency, and separation of censored window-edge events from real drops. |
-| **Automated verdicts & contracts** | `--expect`, temporal rules (`--invariant`), segmented captures (`--segments` with hardware burst timestamps), and `diff --strict` for regression checks. All `--json` outputs follow versioned JSON schemas ([docs/CONTRACTS.md](docs/CONTRACTS.md)) with deterministic exit codes. |
+| **Automated verdicts & contracts** | `--expect` (latency and decoded protocol metrics), temporal rules (`--invariant`), built-in protocol decoders (`--decode` for UART, SPI, I²C and CAN 2.0A/B), multi-channel pattern triggers (`Fast` 1–5 bits, `Complex` 6–16 bits), segmented captures (`--segments` with hardware burst timestamps), and `diff --strict` for regression checks. All `--json` outputs follow versioned JSON schemas ([docs/CONTRACTS.md](docs/CONTRACTS.md)) with deterministic exit codes. |
 | **Capture integrity (firmware)** | Real edge-sensitive trigger (waiting for the opposite level before arming), exact `t = 0` edge alignment, DMA wrap tracking so unwritten pre-trigger buffer zero-fill is omitted instead of shown as `LOW`, and ~15 ms polling/cancel turnaround (vs ~2.2 s on upstream firmware). |
 | **Closed-loop self-test** | Onboard PIO1 + DMA test-signal generator (`GP0`/`GP1`) looped back with two jumpers: `selftest` (CLI, GUI, MCP) verifies triggers, pre-trigger trimming, pulse widths, latency bounds, segments and timeouts against known clock-cycle ground truth. |
 | **Open formats** | Lossless capture JSON (`logictracer-capture-v1`), VCD, CSV, paired latency-events CSV, and `.lac` import; any saved file can be replayed as a virtual device (`--port replay:<file>`). |
@@ -46,8 +46,17 @@ To measure bit timing, connect a Pico input to the CAN transceiver’s **RXD** o
 Connect Pico GND to the transceiver’s logic-side ground. A second channel can capture a device output on the same timebase to measure its response delay.
 If only CAN_H and CAN_L are accessible, use an external CAN transceiver with a 3.3 V RXD output in silent (listen-only) mode.
 
-LogicTracer captures the digital waveform; it does not decode CAN frames or read SocketCAN interfaces.
-For frame IDs and payload bytes on Linux, use a SocketCAN-compatible USB–CAN adapter instead. Configure it for the bus bitrate and listen-only mode, then run `candump can0`.
+LogicTracer decodes CAN 2.0A (11-bit) and CAN 2.0B (29-bit) frames from the captured digital waveform
+(bit-destuffing, CRC-15 `0x4599`, ACK slot, and stuff/CRC/form/ACK errors):
+
+```bash
+build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 10M --samples 50k \
+    --channels 1:CAN_RX,2:IRQ --trigger 1:falling --decode "can:rx=1,bitrate=500k" \
+    --expect "can:frames>=1,can:errors==0,can:nacks==0" --ai
+```
+
+It does not read SocketCAN interfaces directly; for continuous OS-level bus logging on Linux, use a
+SocketCAN USB–CAN adapter (`candump can0`).
 
 ## Components
 
@@ -189,7 +198,12 @@ build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 
     --invariant "within(STIM, REACT, 100ns); never(STIM & !REACT, settle=200ns)" \
     --out-json run.json --out-vcd run.vcd --ai --copy
 
-build/src/cli/logictracer-cli analyze run.json --measure-latency 1:falling..2:falling --ai
+build/src/cli/logictracer-cli analyze run.json --measure-latency 1:falling..2:falling \
+    --decode "uart:tx=1,baud=115200;spi:clk=1,mosi=2;i2c:scl=1,sda=2" \
+    --expect "frames>=1,protocol_errors==0" --ai
+# Multi-channel pattern trigger (Fast 1..5 bits at full rate, Complex 6..16 bits with GP0->GP1 jumper)
+build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 10k \
+    --channels 1-4 --trigger "1=1,2=0,3=1,4=0" --ai
 # One trigger window per pulse: 100 windows of 2 us in one run (time between windows not recorded)
 build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 100M --samples 220 --pre-samples 20 \
     --segments 100 --channels 1:STIM,2:REACT --trigger 2:rising --measure-latency 2..1 --expect "drops==0"
@@ -247,11 +261,12 @@ bits + 1; the next number is the core's external trigger input.
 { "mcpServers": { "logictracer": { "command": "/path/to/logictracer-mcp" } } }
 ```
 
-Tools: `lt_detect_devices`, `lt_probe_inputs`, `lt_configure_and_capture`, `lt_self_test`, `lt_get_view`,
-`lt_set_view`, `lt_get_anomalies`, `lt_add_annotation`, `lt_clear_annotations`. While `logictracer-gui` is
-open, device calls are routed through it so the engineer sees what the agent requested. `lt_self_test` lets
-an agent check the analyzer itself (two jumpers, see [docs/SELFTEST.md](docs/SELFTEST.md)) before it
-trusts a measurement.
+Tools: `lt_detect_devices`, `lt_probe_inputs`, `lt_configure_and_capture`, `lt_analyze_file`,
+`lt_diff_captures`, `lt_self_test`, `lt_get_view`, `lt_set_view`, `lt_get_anomalies`, `lt_add_annotation`,
+`lt_clear_annotations`. While `logictracer-gui` is open, device calls are routed through it so the engineer
+sees what the agent requested; `lt_analyze_file` and `lt_diff_captures` run directly on saved `.json`, `.vcd`
+and `.lac` traces without a device or GUI session. `lt_self_test` lets an agent check the analyzer itself
+(two jumpers, see [docs/SELFTEST.md](docs/SELFTEST.md)) before it trusts a measurement.
 
 ## Firmware
 

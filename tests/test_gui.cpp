@@ -1275,6 +1275,45 @@ private Q_SLOTS:
         QTRY_VERIFY(!win.device().isConnected());
         QVERIFY(!repeat->isChecked());
     }
+
+    void decodeFieldUpdatesWaveformOverlayAndAnomalies()
+    {
+        MainWindow win;
+        win.resize(1200, 700);
+        win.show();
+        // Build a 1 MHz capture on CH1 with one valid UART byte (0x55 @ 100 kbaud) and one framing error.
+        std::vector<uint32_t> s(300, 1u);
+        auto putBit = [&](std::size_t bitIdx, std::size_t startSample, bool high) {
+            for (std::size_t k = 0; k < 10; ++k) {
+                if (high)
+                    s[startSample + bitIdx * 10 + k] |= 1u;
+                else
+                    s[startSample + bitIdx * 10 + k] &= ~1u;
+            }
+        };
+        putBit(0, 20, false);
+        for (int b = 0; b < 8; ++b)
+            putBit(static_cast<std::size_t>(b + 1), 20, ((0x55 >> b) & 1) != 0);
+        putBit(9, 20, true);
+        for (int b = 0; b <= 9; ++b)
+            putBit(static_cast<std::size_t>(b), 150, false);
+
+        win.setCapture(lt::CaptureBuffer({{0, "TX"}}, 1'000'000, 0, s), "CH1 falling");
+        auto* dec = field(win, "decodeSpec");
+        QVERIFY(dec);
+        win.setDecodeSpec("uart:tx=1,baud=100k");
+        QTRY_VERIFY(!win.waveform()->decodedBuses().empty());
+        QCOMPARE(win.waveform()->decodedBuses()[0].frameCount, std::size_t{2});
+        QCOMPARE(win.waveform()->decodedBuses()[0].errorCount, std::size_t{1});
+        QVERIFY(win.aiReport().contains("Decoded bus protocols"));
+        QTRY_VERIFY(!win.waveform()->anomalies().empty());
+        QVERIFY(win.waveform()->anomalies().front().kind.find("uart_framing_error") != std::string::npos);
+
+        // Invalid decoder spec marks the field without crashing.
+        win.setDecodeSpec("uart:tx=99");
+        QTRY_VERIFY(win.waveform()->decodedBuses().empty());
+        QVERIFY(!dec->styleSheet().isEmpty());
+    }
 };
 
 QTEST_MAIN(GuiTests)

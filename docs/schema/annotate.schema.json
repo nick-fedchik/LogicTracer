@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/annotate.schema.json",
+  "title": "logictracer-cli annotate --json",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "command": {
+      "const": "annotate"
+    },
+    "status": {
+      "const": "OK"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "id": {
+      "type": "integer"
+    },
+    "time_us": {
+      "type": "number"
+    },
+    "label": {
+      "type": "string"
+    },
+    "color": {
+      "type": "string"
+    },
+    "capture_id": {
+      "type": "integer"
+    },
+    "annotations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "time_us": {
+            "type": "number"
+          },
+          "duration_us": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "time_us",
+          "duration_us",
+          "label",
+          "color",
+          "author"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "cleared": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "command",
+    "status",
+    "warnings"
+  ],
+  "additionalProperties": false
+}

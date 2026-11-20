@@ -34,6 +34,11 @@ public:
                                  CaptureMode mode, std::span<const uint8_t> raw);
 
     [[nodiscard]] const std::vector<ChannelInfo>& channels() const noexcept { return m_channels; }
+    void setChannelName(std::size_t channelIndex, std::string name)
+    {
+        if (channelIndex < m_channels.size())
+            m_channels[channelIndex].name = std::move(name);
+    }
     [[nodiscard]] const std::vector<uint32_t>& samples() const noexcept { return m_samples; }
     [[nodiscard]] std::size_t size() const noexcept { return m_samples.size(); }
     [[nodiscard]] uint32_t frequency() const noexcept { return m_frequency; }

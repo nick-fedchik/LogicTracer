@@ -17,13 +17,32 @@
     "invariants": {
       "$ref": "common.schema.json#/$defs/invariants"
     },
+    "decoded": {
+      "$ref": "common.schema.json#/$defs/decoded"
+    },
     "latency": {
       "$ref": "common.schema.json#/$defs/latency"
     },
     "outputs": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "csv": {
+          "type": "string"
+        },
+        "events_csv": {
+          "type": "string"
+        },
+        "json": {
+          "type": "string"
+        },
+        "vcd": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false
+    },
+    "report": {
+      "type": "string"
     },
     "schema_version": {
       "const": 1

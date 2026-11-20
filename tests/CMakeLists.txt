@@ -51,7 +51,7 @@ if(TARGET LogicTracer::Gui)
     logictracer_add_test(logictracer-session-tests
         SOURCES test_session.cpp FakeDevice.hpp
         LIBS LogicTracer::Gui
-        DEFINES LT_CLI_PATH="$<TARGET_FILE:logictracer-cli>"
+        DEFINES LT_CLI_PATH="$<TARGET_FILE:logictracer-cli>" LT_SCHEMA_DIR="${PROJECT_SOURCE_DIR}/docs/schema"
         ENV "QT_QPA_PLATFORM=offscreen")
     add_dependencies(logictracer-session-tests logictracer-cli)
 

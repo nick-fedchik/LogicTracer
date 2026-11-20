@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Mykola Fedchyk
 
 #include "FakeDevice.hpp"
+#include "core/Exporters.hpp"
 #include "gui/MainWindow.hpp"
 #include "mcp/McpServer.hpp"
 
@@ -124,9 +125,17 @@ private Q_SLOTS:
             QCOMPARE(t["inputSchema"]["type"].get<std::string>(), std::string("object"));
             QVERIFY(!t["description"].get<std::string>().empty());
         }
-        const std::set<std::string> expected{"lt_detect_devices", "lt_probe_inputs", "lt_configure_and_capture",
-                                             "lt_add_annotation", "lt_get_view", "lt_clear_annotations", "lt_set_view",
-                                             "lt_get_anomalies", "lt_self_test"};
+        const std::set<std::string> expected{"lt_detect_devices",
+                                             "lt_probe_inputs",
+                                             "lt_configure_and_capture",
+                                             "lt_analyze_file",
+                                             "lt_diff_captures",
+                                             "lt_add_annotation",
+                                             "lt_get_view",
+                                             "lt_clear_annotations",
+                                             "lt_set_view",
+                                             "lt_get_anomalies",
+                                             "lt_self_test"};
         QVERIFY(names == expected);
     }
 
@@ -295,6 +304,85 @@ private Q_SLOTS:
         const auto badExt = client.tool("lt_configure_and_capture",
                                         {{"channels", "1"}, {"samples", 100}, {"out_json", "/tmp/evil.sh"}});
         QVERIFY(badExt["result"]["isError"].get<bool>());
+    }
+
+    void offlineAnalyzeAndDiffTools()
+    {
+        // Build two saved capture files in the current working directory (within the MCP sandbox).
+        const QString fileA = "mcp_test_a.json";
+        const QString fileB = "mcp_test_b.json";
+        const QString outVcd = "mcp_test_out.vcd";
+        std::vector<uint32_t> sA(200, 1u);
+        // Put a valid UART byte 0x55 @ 100 kbaud (10 samples/bit) on CH1 and a delayed edge on CH2.
+        for (int k = 0; k < 10; ++k)
+            sA[20 + k] = 0u;  // start bit
+        for (int b = 0; b < 8; ++b)
+            for (int k = 0; k < 10; ++k)
+                sA[30 + b * 10 + k] = ((0x55 >> b) & 1) ? 1u : 0u;
+        for (int k = 100; k < 150; ++k)
+            sA[k] |= 1u;
+        for (int k = 102; k < 152; ++k)
+            sA[k] |= 2u;  // CH2 rises 2 samples after CH1
+
+        std::vector<uint32_t> sB = sA;
+        for (int k = 102; k < 110; ++k)
+            sB[k] &= ~2u;  // shift CH2 rising edge to sample 110 (8 us latency instead of 2 us)
+
+        const lt::CaptureBuffer bufA({{0, "TX"}, {1, "REACT"}}, 1'000'000, 0, sA);
+        const lt::CaptureBuffer bufB({{0, "TX"}, {1, "REACT"}}, 1'000'000, 0, sB);
+        lt::SignalAnalyzer::Options opts;
+        opts.collectEdges = true;
+        QVERIFY(lt::writeJsonFile(fileA.toStdString(), lt::captureToJson(bufA, lt::SignalAnalyzer(opts).analyze(bufA), true)));
+        QVERIFY(lt::writeJsonFile(fileB.toStdString(), lt::captureToJson(bufB, lt::SignalAnalyzer(opts).analyze(bufB), true)));
+
+        lt::mcp::McpServer server;
+        const auto analyzed = server.callTool(
+            "lt_analyze_file",
+            {{"file", fileA.toStdString()},
+             {"decode", "uart:tx=1,baud=100k"},
+             {"expect", "uart:frames>=1,uart:errors==0"},
+             {"out_vcd", outVcd.toStdString()},
+             {"ai", true}});
+        QVERIFY2(!analyzed["isError"].get<bool>(), analyzed.dump().c_str());
+        const auto& docA = analyzed["structuredContent"];
+        QCOMPARE(docA["command"].get<std::string>(), std::string("analyze"));
+        QVERIFY(docA["assertions"]["passed"].get<bool>());
+        QVERIFY(docA["decoded"][0]["frames"].get<int>() >= 1);
+        QVERIFY(docA["report"].get<std::string>().find("Decoded bus protocols") != std::string::npos);
+        QVERIFY(QFile::exists(outVcd));
+
+        // Failing --expect sets isError=true while returning the structured analyze document.
+        const auto failedExpect = server.callTool(
+            "lt_analyze_file", {{"file", fileA.toStdString()}, {"decode", "uart:tx=1,baud=100k"}, {"expect", "uart:frames==99"}});
+        QVERIFY(failedExpect["isError"].get<bool>());
+        QCOMPARE(failedExpect["structuredContent"]["command"].get<std::string>(), std::string("analyze"));
+        QVERIFY(!failedExpect["structuredContent"]["assertions"]["passed"].get<bool>());
+
+        // lt_diff_captures compares the two files; strict=true sets isError=true on regression.
+        const auto diffOk = server.callTool(
+            "lt_diff_captures", {{"a", fileA.toStdString()}, {"b", fileB.toStdString()}, {"latency", "1..2"}});
+        QVERIFY2(!diffOk["isError"].get<bool>(), diffOk.dump().c_str());
+        QCOMPARE(diffOk["structuredContent"]["verdict"].get<std::string>(), std::string("regression"));
+
+        const auto diffStrict = server.callTool(
+            "lt_diff_captures",
+            {{"a", fileA.toStdString()}, {"b", fileB.toStdString()}, {"latency", "1..2"}, {"strict", true}});
+        QVERIFY(diffStrict["isError"].get<bool>());
+        QCOMPARE(diffStrict["structuredContent"]["verdict"].get<std::string>(), std::string("regression"));
+
+        // Missing latency channel in lt_diff_captures is rejected as a tool error.
+        QVERIFY(server.callTool("lt_diff_captures",
+                                {{"a", fileA.toStdString()}, {"b", fileB.toStdString()}, {"latency", "1..9"}})["isError"]
+                    .get<bool>());
+
+        // Output path traversal is rejected by the MCP sandbox.
+        QVERIFY(server.callTool("lt_analyze_file",
+                                {{"file", fileA.toStdString()}, {"out_vcd", "../outside.vcd"}})["isError"]
+                    .get<bool>());
+
+        QFile::remove(fileA);
+        QFile::remove(fileB);
+        QFile::remove(outVcd);
     }
 };
 

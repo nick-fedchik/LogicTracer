@@ -9,6 +9,7 @@
 
 #include "core/CaptureBuffer.hpp"
 #include "core/CaptureTypes.hpp"
+#include "core/ProtocolDecoder.hpp"
 #include "core/SignalAnalyzer.hpp"
 
 #include <nlohmann/json.hpp>
@@ -70,6 +71,7 @@ struct ReportOptions {
     SetupInfo setup;                          // test setup recorded with the capture (DUT, bitstream, wiring)
     std::string userNote;                     // optional engineer context / question to AI
     std::optional<LatencyPairSpec> latency;   // optional paired STIM -> REACT measurement
+    std::vector<DecoderSpec> decoders;        // optional bus protocol decoders
     uint64_t captureId = 0;                   // identifies the capture on screen (0 = unknown)
     std::string banner;                       // warning shown above the report, e.g. "ARMED: new capture pending"
     std::vector<std::string> warnings;        // warnings the device layer raised for this capture

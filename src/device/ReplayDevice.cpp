@@ -100,8 +100,19 @@ std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) c
             return "channel " + std::to_string(ch.displayNumber()) + " is not in the recording (available: " +
                    channelList(m_recording) + ")";
     }
-    if (config.trigger && !sourceIndex(config.trigger->channel))
-        return "trigger channel " + std::to_string(config.trigger->channel + 1) + " is not in the recording";
+    if (config.trigger) {
+        if (config.trigger->isPattern()) {
+            if (config.segments > 1)
+                return "segmented captures are not supported with a pattern trigger";
+            for (uint8_t k = 0; k < config.trigger->bitCount; ++k) {
+                if (!sourceIndex(config.trigger->channel + k))
+                    return "trigger channel " + std::to_string(config.trigger->channel + k + 1) +
+                           " is not in the recording";
+            }
+        } else if (!sourceIndex(config.trigger->channel)) {
+            return "trigger channel " + std::to_string(config.trigger->channel + 1) + " is not in the recording";
+        }
+    }
     if (config.frequency == 0 || m_recording.frequency() % config.frequency != 0)
         return "the recording was sampled at " + std::to_string(m_recording.frequency()) +
                " Hz; replay supports that rate or an integer divisor of it";
@@ -183,31 +194,54 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
     }
 
     r.triggerUsed = config.trigger;
-    r.edgeSensitive = true;  // replay searches for a real transition
+    r.edgeSensitive = !config.trigger->isPattern();  // edge replay searches for a real transition
     report(CaptureStage::WaitingForTrigger);
-    const std::size_t trigIdx = *sourceIndex(config.trigger->channel);
-    const bool rising = !config.trigger->inverted;
     const std::size_t lastStart = m_recording.size() - post * step;  // trigger sample + post must fit
-    // Like the firmware: window k > 0 starts on the next trigger edge after window k - 1 (the line must first
-    // return to the opposite level), and only complete series are delivered.
-    auto nextEdge = [&](std::size_t from) -> std::optional<std::size_t> {
-        for (std::size_t i = std::max<std::size_t>(from, 1); i <= lastStart; ++i) {
-            if ((i & 0xFFFF) == 0 && m_cancelRequested)
-                return std::nullopt;
-            const bool before = m_recording.bit(i - 1, trigIdx), now = m_recording.bit(i, trigIdx);
-            if (before != now && now == rising)
-                return i;
-        }
-        return std::nullopt;
-    };
     std::vector<std::size_t> starts;
-    std::size_t from = std::max<std::size_t>({m_cursor, pre * step, 1});
-    while (starts.size() < config.segments) {
-        const auto edge = nextEdge(from);
-        if (!edge)
-            break;
-        starts.push_back(*edge);
-        from = *edge + post * step;
+    if (config.trigger->isPattern()) {
+        std::vector<std::size_t> trigIndices;
+        for (uint8_t k = 0; k < config.trigger->bitCount; ++k)
+            trigIndices.push_back(*sourceIndex(config.trigger->channel + k));
+        const std::size_t from = std::max<std::size_t>(m_cursor, pre * step);
+        for (std::size_t i = from; i <= lastStart; ++i) {
+            if ((i & 0xFFFF) == 0 && m_cancelRequested)
+                break;
+            bool match = true;
+            for (uint8_t k = 0; k < config.trigger->bitCount; ++k) {
+                const bool want = ((config.trigger->pattern >> k) & 1u) != 0;
+                if (m_recording.bit(i, trigIndices[k]) != want) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                starts.push_back(i);
+                break;
+            }
+        }
+    } else {
+        const std::size_t trigIdx = *sourceIndex(config.trigger->channel);
+        const bool rising = !config.trigger->inverted;
+        // Like the firmware: window k > 0 starts on the next trigger edge after window k - 1 (the line must first
+        // return to the opposite level), and only complete series are delivered.
+        auto nextEdge = [&](std::size_t from) -> std::optional<std::size_t> {
+            for (std::size_t i = std::max<std::size_t>(from, 1); i <= lastStart; ++i) {
+                if ((i & 0xFFFF) == 0 && m_cancelRequested)
+                    return std::nullopt;
+                const bool before = m_recording.bit(i - 1, trigIdx), now = m_recording.bit(i, trigIdx);
+                if (before != now && now == rising)
+                    return i;
+            }
+            return std::nullopt;
+        };
+        std::size_t from = std::max<std::size_t>({m_cursor, pre * step, 1});
+        while (starts.size() < config.segments) {
+            const auto edge = nextEdge(from);
+            if (!edge)
+                break;
+            starts.push_back(*edge);
+            from = *edge + post * step;
+        }
     }
     if (m_cancelRequested)
         return finish(CaptureStatus::Cancelled, "capture cancelled");
@@ -217,8 +251,10 @@ CaptureResult ReplayDevice::capture(const CaptureConfig& config)
             r.lineDump = extract(config.channels, m_recording.size() - n * step, n, 0);
         }
         m_cursor = m_recording.size();
-        std::string what = std::string("no further ") + (rising ? "rising" : "falling") + " edge on CH" +
-                           std::to_string(config.trigger->channel + 1) + " in the recording";
+        std::string what = config.trigger->isPattern()
+                               ? "pattern " + config.trigger->describe() + " not found in the recording"
+                               : std::string("no further ") + (!config.trigger->inverted ? "rising" : "falling") +
+                                     " edge on CH" + std::to_string(config.trigger->channel + 1) + " in the recording";
         if (config.segments > 1)
             what += " (" + std::to_string(starts.size()) + " of " + std::to_string(config.segments) + " windows found)";
         return finish(CaptureStatus::Timeout, what);
