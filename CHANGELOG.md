@@ -5,6 +5,8 @@ All notable changes are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-21
+
 ### Added
 - Session JSON contracts (`#23`, `B-10`): `logictracer-cli view --json` and `annotate --json` now include
   the standard `schema_version` and `warnings` envelope fields and are validated against
@@ -228,6 +230,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.7.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.7.0
 [0.6.2]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.2
 [0.6.1]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.1
 [0.6.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.0
