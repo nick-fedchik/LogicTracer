@@ -482,7 +482,7 @@ int cmdProbe(const QStringList& args, Output o)
         {"note", "Context or question prepended to the AI report.", "text"},
         {"copy", "Copy the AI report (or JSON when --json is set) to the system clipboard."},
         {"port", "Serial port (default: first detected device).", "path"},
-        {"channels", "1-based channels, e.g. 1,2,24 or 1-8 or 1:SDA,2:SCL (default: all).", "list"},
+        {"channels", "1-based channels, e.g. 1:SDA,2:SCL or 1-8 (default: all). Names: 1..16 ASCII [A-Za-z0-9_.-].", "list"},
         {"window", "Observation window in ms (default 10).", "ms", "10"},
         {"rate", "Sample rate, e.g. 1M, 100k (default 1M).", "Hz", "1M"},
         {"timeout", "Connection/handshake timeout in ms (default 3000).", "ms", "3000"},
@@ -671,7 +671,7 @@ int cmdCapture(const QStringList& args, Output o)
         {"pre-samples", "Samples kept before the trigger (default: 10% of --samples).", "n"},
         {"segments", "Record N trigger windows in one run (segmented memory): --samples is one window, the "
                      "firmware re-arms on the next edge, pre-trigger samples precede window 1 only.", "n"},
-        {"channels", "1-based channels with optional names, e.g. 1:STIM,2:REACT,24:DO1 or 1-8 (default 1).",
+        {"channels", "1-based channels, e.g. 1:STIM,2:REACT,24:DO1 or 1-8 (default 1). Names: 1..16 ASCII [A-Za-z0-9_.-].",
          "list", "1"},
         {"trigger", "Trigger CH:rising|falling, pattern:<base_ch>:<bits> / <ch>=0|1,... (1..16 contiguous channels), "
          "or 'none' for an immediate capture.",

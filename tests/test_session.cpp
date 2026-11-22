@@ -252,6 +252,18 @@ private Q_SLOTS:
         QVERIFY(!r.error.empty());
     }
 
+    void sessionClientsCannotEnableGuiDiagnosticSharing()
+    {
+        lt::gui::MainWindow win;
+        const auto path = socket("diag.sock");
+        QVERIFY(win.startSession(path));
+        const auto forge = callInThread(path, "get_gui_diagnostics", {{"share", true}});
+        QCOMPARE(forge.errorCode, sess::error::InvalidParams);
+        const auto read = callInThread(path, "get_gui_diagnostics");
+        QVERIFY(read.connected && !read.ok && read.result.is_null());
+        QVERIFY(read.error.find("private") != std::string::npos);
+    }
+
     void annotationsFlowFromCliIntoTheGui()
     {
         lt::gui::MainWindow win;

@@ -65,7 +65,7 @@ public:
     [[nodiscard]] std::optional<TestSignalInfo> setTestSignal(const TestSignalRequest& request,
                                                               std::string& error) override;
 
-    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config) const override;
+    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config, CaptureField* field = nullptr) const override;
     [[nodiscard]] CaptureResult capture(const CaptureConfig& config) override;
 
     // Short untriggered snapshot (default 10 ms @ 1 MHz) of the current pin levels.

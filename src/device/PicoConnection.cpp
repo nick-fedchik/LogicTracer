@@ -231,8 +231,9 @@ std::optional<TestSignalInfo> PicoConnection::setTestSignal(const TestSignalRequ
     return std::nullopt;
 }
 
-std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) const
+std::optional<std::string> PicoConnection::validate(const CaptureConfig& c, CaptureField* field) const
 {
+    if (field) *field = CaptureField::Channels;
     if (!isOpen())
         return "device is not open";
     if (c.channels.empty())
@@ -251,6 +252,7 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
         numbers.push_back(ch.number);
     }
     // channel == device channel count selects the external trigger input.
+    if (field) *field = CaptureField::Trigger;
     if (c.trigger) {
         if (c.trigger->isPattern()) {
             if (c.trigger->channel > 15 || c.trigger->bitCount < 1 || c.trigger->bitCount > 16 ||
@@ -264,6 +266,7 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
         }
     }
 
+    if (field) *field = CaptureField::Rate;
     if (c.frequency < m_info.minFrequency() || c.frequency > m_info.maxFrequency)
         return "frequency " + std::to_string(c.frequency) + " Hz out of range " +
                std::to_string(m_info.minFrequency()) + ".." + std::to_string(m_info.maxFrequency) + " Hz";
@@ -271,6 +274,11 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
     const auto mode = captureModeFor(numbers);
     const auto lim = m_info.limits(mode);
     const std::string modeStr(toString(mode));
+    if (field) *field = CaptureField::Samples;
+    const uint64_t total = static_cast<uint64_t>(c.preSamples) + static_cast<uint64_t>(c.postSamples) * c.segments;
+    if (c.trigger && c.segments == 1 && total > lim.maxTotalSamples)
+        return "requested " + std::to_string(total) + " samples; maximum " + std::to_string(lim.maxTotalSamples) +
+               " in " + modeStr + " mode";
     if (c.preSamples < lim.minPreSamples || c.preSamples > lim.maxPreSamples)
         return "pre-trigger samples " + std::to_string(c.preSamples) + " out of range " +
                std::to_string(lim.minPreSamples) + ".." + std::to_string(lim.maxPreSamples) + " (" + modeStr +
@@ -279,13 +287,13 @@ std::optional<std::string> PicoConnection::validate(const CaptureConfig& c) cons
         return "post-trigger samples " + std::to_string(c.postSamples) + " out of range " +
                std::to_string(lim.minPostSamples) + ".." + std::to_string(lim.maxPostSamples) + " (" + modeStr +
                " mode)";
+    if (field) *field = CaptureField::Windows;
     if (c.segments == 0 || c.segments > 65536)
         return "segments must be 1..65536";
     if (c.segments > 1 && !c.trigger)
         return "a segmented capture needs a trigger";
     if (c.segments > 256 && m_info.generation == ProtocolGeneration::V5)
         return "this firmware accepts at most 256 segments";
-    const uint64_t total = static_cast<uint64_t>(c.preSamples) + static_cast<uint64_t>(c.postSamples) * c.segments;
     if (total > lim.maxTotalSamples)
         return "total samples (" + std::to_string(total) + ") exceed device buffer: max " +
                std::to_string(lim.maxTotalSamples) + " in " + modeStr + " mode";

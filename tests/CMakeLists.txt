@@ -42,6 +42,21 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 if(TARGET LogicTracer::Gui)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND Python3_Interpreter_FOUND AND NOT CMAKE_CROSSCOMPILING)
+        add_test(NAME logictracer-desktop-icon-tests
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_desktop_icon.py"
+                    "${CMAKE_COMMAND}" "${PROJECT_BINARY_DIR}/src/gui"
+                    "${CMAKE_INSTALL_DATADIR}" "$<CONFIG>")
+        set_tests_properties(logictracer-desktop-icon-tests PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+
+    logictracer_add_test(logictracer-profile-tests
+        SOURCES test_profiles.cpp FakeDevice.hpp
+        LIBS LogicTracer::Gui
+        DEFINES LT_GUI_PATH="$<TARGET_FILE:logictracer-gui>"
+        ENV "QT_QPA_PLATFORM=offscreen")
+    add_dependencies(logictracer-profile-tests logictracer-gui)
+
     logictracer_add_test(logictracer-gui-tests
         SOURCES test_gui.cpp FakeDevice.hpp
         LIBS LogicTracer::Gui

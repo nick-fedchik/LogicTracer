@@ -4,6 +4,8 @@
 #pragma once
 
 #include "device/AsyncDevice.hpp"
+#include "gui/CaptureFields.hpp"
+#include "gui/CaptureProfiles.hpp"
 #include "services/Operations.hpp"
 #include "services/SelfTest.hpp"
 #include "services/Session.hpp"
@@ -11,6 +13,7 @@
 
 #include <QMainWindow>
 
+#include <array>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -26,13 +29,21 @@ class QTimer;
 
 namespace lt::gui {
 
+class DiagnosticsDialog;
+class GuiDiagnostics;
+class PicoPinout;
+class ProfileSelector;
+class SerialPortPicker;
+struct PicoWiring;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
     // Rich text of Help > About (version, author, licence, links).
     [[nodiscard]] static QString aboutText();
-    explicit MainWindow(QWidget* parent = nullptr);
+    // The optional process stderr recorder outlives this window.
+    explicit MainWindow(QWidget* parent = nullptr, GuiDiagnostics* diagnostics = nullptr);
 
     [[nodiscard]] WaveformWidget* waveform() noexcept { return m_waveform; }
     [[nodiscard]] lt::AsyncDevice& device() noexcept { return m_device; }
@@ -64,6 +75,7 @@ public:
     void setHistoryLimits(std::size_t entries, std::size_t bytes);
     // Synthetic capture so the UI can be explored without hardware.
     void loadDemo();
+    void applyStartupProfile(const profiles::Profile& profile);
 
     void setPortText(const QString& port);
 
@@ -179,27 +191,44 @@ private:
     void onTaskFinished();
     [[nodiscard]] nlohmann::json stateJson() const;
     void buildUi();
+    QWidget* buildCaptureFields();
+    QWidget* buildProfileBar(QWidget* parent);
+    CaptureFields switchCapturePlan();
     void buildMenus();
+    void showPinout(bool capture);
+    void refreshPinout();
+    void applyPinout();
+    [[nodiscard]] PicoWiring picoWiring(bool capture) const;
     void showAbout();
     void updateControls();
-    void updateSetupButton();
+    void updatePortControls();
+    bool demoSelected() const;
+    int setupChannelLimit() const;
+    void updateDeviceSetup();
+    void updateMetadataButton();
     void stopRepeat(const QString& why = {});
     QCheckBox* m_repeat = nullptr;
-    QPushButton* m_setupButton = nullptr;
+    QPushButton* m_metadataButton = nullptr;
     QWidget* withBuilder(QLineEdit* field, const char* buttonName, const std::function<void()>& open);
     std::vector<int> builderChannels() const;
     void showStatus(const QString& text, bool error = false);
     [[nodiscard]] lt::ReportOptions buildReportOptions(std::optional<lt::CopyMode> modeOverride = std::nullopt) const;
     void copyWithMode(lt::CopyMode mode);
-    [[nodiscard]] bool buildSpec(lt::CaptureRequestSpec& spec, QString& error) const;
-    [[nodiscard]] bool buildConfig(lt::CaptureConfig& config, QString& triggerText, QString& error,
-                                   std::vector<std::string>* warnings = nullptr) const;
+    [[nodiscard]] bool buildSpec(lt::CaptureRequestSpec& spec, QString& error, CaptureField& field) const;
+    [[nodiscard]] bool buildConfig(const CaptureRequestSpec& spec, CaptureConfig& config, QString& error,
+                                   std::vector<std::string>& warnings, CaptureField& field) const;
     void updatePreflight();
-    void setFieldError(QLineEdit* field, const QString& message);
+    void setFieldError(QWidget* field, const QString& message);
+    QWidget* captureControl(CaptureField field) const;
+    [[nodiscard]] CaptureFields captureFields() const;
+    void setCaptureFields(const CaptureFields& fields);
 
     lt::AsyncDevice m_device;
     WaveformWidget* m_waveform = nullptr;
+    PicoPinout* m_pinout = nullptr;
     QPlainTextEdit* m_report = nullptr;
+    GuiDiagnostics* m_diagnostics;
+    DiagnosticsDialog* m_diagnosticsDialog = nullptr;
     QLineEdit* m_aiNote = nullptr;
     QLineEdit* m_latencySpec = nullptr;
     QLineEdit* m_decodeSpec = nullptr;
@@ -208,13 +237,24 @@ private:
     QLabel* m_reportSize = nullptr;
     QTimer* m_reportTimer = nullptr;
 
-    QComboBox* m_port = nullptr;
+    SerialPortPicker* m_port = nullptr;
     QPushButton* m_refresh = nullptr;
     QPushButton* m_connect = nullptr;
+    QPushButton* m_deviceSetup = nullptr;
+    uint64_t m_demoPreviewId = 0;
+    bool m_usingDemoFields = false;
+    CaptureFields m_otherFields = CaptureFields::defaults(true);
+    ProfileSelector* m_profiles = nullptr;
+    QString m_otherProfilePath;
+    std::optional<profiles::Profile> m_disconnectedProfileBase;
     QLineEdit* m_channels = nullptr;
     QLineEdit* m_rate = nullptr;
     QLineEdit* m_samples = nullptr;
     QLineEdit* m_trigger = nullptr;
+    QLabel* m_triggerSummary = nullptr;
+    QPushButton* m_fixSetup = nullptr;
+    CaptureField m_invalidField = CaptureField::Channels;
+    std::array<QLabel*, 5> m_fieldHints{};
     QSpinBox* m_timeout = nullptr;
     QSpinBox* m_windows = nullptr;  // segmented capture: trigger windows per run
     QPushButton* m_capture = nullptr;
@@ -224,6 +264,7 @@ private:
     QLabel* m_hover = nullptr;
     QLabel* m_deviceInfo = nullptr;
     QLabel* m_preflight = nullptr;
+    QLabel* m_settingsPreflight = nullptr;
     std::vector<std::string> m_pendingWarnings;
     std::vector<std::string> m_warnings;  // device-layer warnings for the capture on screen
     QCheckBox* m_notePin = nullptr;

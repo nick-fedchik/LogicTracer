@@ -45,6 +45,7 @@ The schemas ([JSON Schema 2020-12](https://json-schema.org/)) are in [`docs/sche
 | `annotate --json` (add, `--list`, `--clear`) | [`annotate.schema.json`](schema/annotate.schema.json) |
 | an error before the command could run (usage, missing file, ...) | [`error.schema.json`](schema/error.schema.json) |
 | the lossless capture file (`--out-json`) | [`capturefile.schema.json`](schema/capturefile.schema.json) |
+| a saved next-capture plan (`*.ltprofile`, GUI Setup) | [`profile.schema.json`](schema/profile.schema.json) |
 | shared parts: latency, invariants, assertions, segments, device, per-channel summary, setup | [`common.schema.json`](schema/common.schema.json) |
 
 The schemas list **every** field (`additionalProperties: false`): a field that is not in the schema is a bug,

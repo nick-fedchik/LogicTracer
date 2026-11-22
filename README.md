@@ -39,6 +39,65 @@ In the entry-level class, the main architectural alternative is the **Infineon (
 | **Mid-range FPGA analyzers** (DreamSourceLab **DSLogic Plus / U3Pro**, Digilent **Digital Discovery**, ~$100–$300) | **FPGA + SDRAM buffer + USB 2.0/3.0**; 400 MS/s – 1 GS/s, 256 Mbit–2 Gbit RAM | 16–32 ch, programmable thresholds (1.2–5 V), shielded probes | Deep hardware memory, adjustable logic thresholds (1.8 V / 2.5 V / 3.3 V / 5 V), input protection and impedance control. |
 | **Professional USB 3.0 analyzers** (**Saleae Logic Pro 8 / 16**, ~$500–$1,500) | Up to 500 MS/s digital + 50 MS/s analog, USB 3.0 continuous streaming | 8–16 ch, programmable thresholds + analog | Simultaneous analog/digital capture, multi-gigabyte streaming, mature protocol analyzers and SDK. |
 
+### Planning the probe connections
+
+Connect a Pico and click **Setup** to edit **Channels, Rate, Samples, Windows, Trigger** and **Timeout**
+alongside its pin map. These fields configure the next capture, not the recording on screen. To try this
+without hardware, choose **Demo Pico (simulated)** in the port list and click **Connect**. **File → Load
+Demo Capture** previews the four demo signals and enables Setup without connecting.
+
+On Linux, **Refresh** marks serial ports held by another visible process as **[in use]** without
+opening them. Select the port to see the process name and PID. Disconnect it in the other application,
+then click **Refresh → Connect**. An unmarked port is not guaranteed free: Linux may hide another
+user's descriptors, and a process can open the port after the check.
+
+**View → Pico pinout and wiring…** also opens the map for a recording or as an offline reference.
+Use the **Next capture setup** and **Displayed capture** tabs to switch between the plan and the recording.
+The drawing is the **board header**, not the RP2040 package. Look at the component side with USB at the top.
+Pin 1 is at the top left, pin 40 at the top right. Pin numbers face the board edges; GPIO names face the center.
+For a 3.3 V I²C bus, for example:
+
+| DUT signal | Physical pin on Pico | GPIO | LogicTracer |
+|---|---:|---|---|
+| SDA | 6 | GP4 | CH3, name `SDA` |
+| SCL | 7 | GP5 | CH4, name `SCL` |
+| Logic ground | 3 | GND | Not a capture channel |
+
+Check the bus pull-up voltage first. In **Next capture setup**, click a numbered pad to select it (bright
+green); click it again to deselect. Enter signal names, then press **Apply pin edits** to update **Channels**.
+Use `--decode "i2c:scl=4,sda=3"` for these assignments. **Copy wiring for AI** copies the applied
+connections, orientation and voltage warning.
+With the GUI open, MCP `lt_get_pinout` reads the same map without probing hardware. `offline_reference`
+means a Pico template, **not** a detected board or verified wiring.
+
+Use **↑** or **↓** beside a pin to trigger on one edge, or select **0** / **1** on consecutive
+channels within CH1–CH16 to trigger when all those levels match. These buttons do **not** change
+which channels are recorded. **Clear** returns to immediate capture. On a physical Pico, pattern
+triggers need a GP0 (pin 1) to GP1 (pin 2) jumper; **EXT TRIG** can be an edge source.
+
+**Rate** sets the sample interval (`1 / Rate`); **Samples / Rate** gives the nominal duration of one
+window. Leave **Windows** at `1` unless collecting several edge-triggered segments in one run.
+Only the first segment has pre-trigger samples, so `pre + Windows × post` must fit. The highest
+recorded channel determines the Pico's buffer capacity; on replay, the available samples also depend
+on the recording and the chosen rate. **Timeout** is in milliseconds. An invalid plan disables
+**Capture**, not **Probe**. Select and copy the error, or click **Open Setup** to reach the field.
+
+**Reset** restores the device's defaults without changing the displayed recording or any saved profile.
+To reuse a plan, save a named **Profile** in Setup, then select it after switching experiments, even
+on the same USB port. Each [`~/.logictracer/profiles/*.ltprofile`](docs/schema/profile.schema.json)
+stores all six settings including signal names and channel order. The list shows the 100 most recently
+modified files, five rows at a time. Use **Load…** for an older one, or pass a name or path at startup:
+`logictracer-gui I2C` or `logictracer-gui ./bench/UART.ltprofile`. Loading a profile does not start a
+capture. **Delete profile** asks for confirmation and removes only the selected file in the profiles
+directory; external files are not deleted.
+
+**Displayed capture** shows the board and channels of the recording, even when viewing history. Here
+renaming changes only the displayed recording; **Save JSON** to keep it. Unknown board layouts are not
+guessed. New aliases accept 1–16 ASCII letters, digits, `_`, `.` or `-`; clear the field to use `CHn`.
+Legacy file labels are not rewritten on import.
+
+[See the wiring window with SDA and SCL assigned](docs/pico-pinout.png).
+
 ### Monitoring a CAN device
 
 **Do not connect CAN_H or CAN_L directly to Pico GPIOs.** They are differential bus lines, not 3.3 V logic signals.
@@ -70,7 +129,9 @@ SocketCAN USB–CAN adapter (`candump can0`).
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
 | `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
 | `hdl/` | `lt_capture`: in-design FPGA capture core, exact clock-cycle timing (CERN-OHL-W-2.0) |
-| `docs/` | Specification and backlog |
+| `docs/` | Specification, contracts and JSON schemas |
+
+Track planned work and bugs in [GitHub Issues](https://github.com/nick-fedchik/LogicTracer/issues).
 
 ## Platform support
 
@@ -262,11 +323,18 @@ bits + 1; the next number is the core's external trigger input.
 ```
 
 Tools: `lt_detect_devices`, `lt_probe_inputs`, `lt_configure_and_capture`, `lt_analyze_file`,
-`lt_diff_captures`, `lt_self_test`, `lt_get_view`, `lt_set_view`, `lt_get_anomalies`, `lt_add_annotation`,
+`lt_diff_captures`, `lt_self_test`, `lt_get_pinout`, `lt_get_view`, `lt_get_gui_diagnostics`, `lt_set_view`, `lt_get_anomalies`, `lt_add_annotation`,
 `lt_clear_annotations`. While `logictracer-gui` is open, device calls are routed through it so the engineer
 sees what the agent requested; `lt_analyze_file` and `lt_diff_captures` run directly on saved `.json`, `.vcd`
 and `.lac` traces without a device or GUI session. `lt_self_test` lets an agent check the analyzer itself
 (two jumpers, see [docs/SELFTEST.md](docs/SELFTEST.md)) before it trusts a measurement.
+
+To show Copilot a Qt warning, open **Ask AI → Diagnostics…** in the running GUI and review the
+preview. **Copy report + this preview** copies it once; **Allow GUI-session / MCP clients to read
+this preview** makes just that snapshot available to `lt_get_gui_diagnostics`. Uncheck it or
+refresh to revoke access. Nothing is sent automatically. The preview covers only this GUI’s recent
+stderr, not your terminal history. Common credentials and process addresses are masked; review other
+private text yourself. A Wayland focus warning does not by itself mean a capture failed.
 
 ## Firmware
 

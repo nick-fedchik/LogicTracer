@@ -7,6 +7,7 @@ add_library(logictracer_device STATIC
     PicoConnection.cpp PicoConnection.hpp
     PynqConnection.cpp PynqConnection.hpp
     ReplayDevice.cpp ReplayDevice.hpp
+    SerialPortOwners.cpp SerialPortOwners.hpp
 )
 add_library(LogicTracer::Device ALIAS logictracer_device)
 set_target_properties(logictracer_device PROPERTIES POSITION_INDEPENDENT_CODE ON)

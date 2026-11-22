@@ -215,7 +215,7 @@ complex/fast triggers and the external trigger (which use GP0/GP1) stop it first
 ```text
 logictracer/
 ├── CMakeLists.txt, CMakePresets.json, cmake/LogicTracerOptions.cmake
-├── docs/            # SPECIFICATION.md (this document), BACKLOG.md
+├── docs/            # SPECIFICATION.md (this document), CONTRACTS.md, schema/
 ├── firmware/rp2040/ # LogicTracer firmware, derived from LogicAnalyzer V2 (GPL-3.0)
 ├── hdl/             # lt_capture in-design FPGA capture core (CERN-OHL-W-2.0)
 ├── packaging/       # desktop entry
@@ -265,7 +265,7 @@ For scripts, CI and HIL rigs, and for AI agents calling it directly. Commands: `
 
 ```bash
 logictracer-cli capture \
-  --port /dev/ttyACM0 --freq 1M --samples 500k \
+  --port /dev/ttyACM0 --freq 1M --samples 10k \
   --channels 1:STIM,2:REACT,24:JETSON_DO1 \
   --trigger 24:falling --timeout 5000 \
   --out-json capture.json --out-vcd waveform.vcd --summary
@@ -277,11 +277,33 @@ the Wayland/X11 clipboard (`wl-copy`, `xclip`, `xsel`). While `logictracer-gui` 
 
 ### 4.3. GUI (`logictracer-gui`)
 Qt 6 Widgets (`WaveformWidget`, `MainWindow`):
+* **Setup** opens **Next capture setup** for a connected Pico or a demo. Channels, Rate, Samples, Windows,
+  Trigger and Timeout live in this window, not on the main toolbar. Typed field values update the next
+  capture immediately; **Apply pin edits** transfers the pin selections and labels to Channels.
+  Neither operation alters a displayed recording. A replay without a known header has fields but no pin map.
+  Pico triggers are chosen directly beside pins (one edge, including external on hardware, or a
+  contiguous pattern of levels on CH1–CH16). They do not select capture channels. Only an edge trigger
+  permits multiple windows. Before enabling Capture the GUI checks the plan against the device's own
+  limits. Its copyable diagnostic links back to the controls; Probe is independent.
+* **Reset** restores the next plan to device defaults. Named `.ltprofile` files store the channel
+  selection and names, rate, samples, windows, trigger and timeout independently of the USB port.
+  See [Planning the probe connections](../README.md#planning-the-probe-connections) for storage
+  and startup examples. Loading, resetting or deleting a profile does not touch a displayed capture.
+* **View → Pico pinout and wiring…** shows the 40 header contacts, looking down on the component side with
+  USB at the top. Physical numbers face the header edges and GPIO names face inward. In the next-capture
+  plan, clicking a numbered data pad toggles its selection; selected pads are bright green. Applying the
+  edits updates Channels with the inputs and their aliases. **Displayed capture** shows the board from
+  that history entry. Only its aliases can change, not its channel numbers, bit order or samples.
+  New aliases match `[A-Za-z0-9_.-]{1,16}`;
+  an absent alias uses `CHn`. Legacy aliases outside this set are omitted from wiring guidance, not
+  changed in the recording.
 * Ctrl + wheel zooms around the mouse pointer, dragging pans, double-click or `Home` fits all,
   `+` / `-` zoom.
 * Click sets cursor A; Shift + click or right click sets cursor B (Δt and 1/Δt shown). Cursors snap
   to the nearest edge (hold `Alt` to disable); `Z` zooms to A..B.
-* `--demo` opens a synthetic capture; `--port /dev/ttyACM0` connects on start; `--open <file>` loads
+* `--demo` previews four synthetic signals and selects the demo port without connecting. **Connect** to
+  **Demo Pico (simulated)** (`--port demo:pico`) to capture or probe them using a separate demo plan.
+  `--port /dev/ttyACM0` connects on start; `--open <file>` loads
   a saved capture. Build without the GUI with `-DLOGICTRACER_BUILD_GUI=OFF`.
 * **AI grounding bar** above the report pane: an *Ask AI* field (context / question placed at the
   top of the report), a latency pair (`1..2`), a character/token counter and three detail levels:
@@ -290,7 +312,12 @@ Qt 6 Widgets (`WaveformWidget`, `MainWindow`):
      anomaly incidents.
   2. **Cursors A..B** (`Ctrl+Shift+R`, `--ai-mode cursors`): the same, restricted to `[A..B]`.
   3. **Full** (`Ctrl+Shift+C`, `--ai-mode full`): the visible window including JSON edge arrays.
-  The report pane always shows exactly the text that will be copied.
+  The report pane always shows exactly the text that will be copied. `_` hides the entire Ask AI panel;
+  **Show Ask AI** in the status bar restores its default split without discarding the note or report.
+  **Diagnostics…** previews up to 100 lines / 16 KiB of sanitized GUI stderr without changing the report
+  or capture status. It can be explicitly copied with the report or shared as a fixed snapshot with
+  session clients. Refreshing, unchecking sharing or exiting the GUI revokes access. New messages are
+  never added to an already shared snapshot.
 * **AI markers:** through the IPC session an agent can call
   `logictracer-cli annotate --time 50.12ms --label "Jetson pulse start" --color red`, and the marker
   appears on the engineer's waveform immediately.
@@ -310,6 +337,8 @@ stderr); protocol versions 2024-11-05, 2025-03-26 and 2025-06-18.
 | `lt_probe_inputs` | Current pin levels with a diagnosis |
 | `lt_configure_and_capture` | Capture with trigger and timeout; compact analytics, latency, assertions, optional files |
 | `lt_get_view` | What the engineer sees in the GUI (range, cursors, annotations), optionally the AI report |
+| `lt_get_gui_diagnostics` | Read the stderr preview explicitly shared by the GUI operator; no arguments or direct-device fallback. |
+| `lt_get_pinout` | Read the GUI's applied Pico wiring plan (`source: "setup"`, default) or a recording's pin assignments (`source: "capture"`, optional `capture_id` guard). No hardware I/O. |
 | `lt_add_annotation` / `lt_clear_annotations` | Markers on the engineer's timeline |
 | `lt_set_view` / `lt_get_anomalies` | Steer the engineer's view; list the anomalies of the capture on screen |
 | `lt_self_test` | Check the analyzer against its own test-signal generator before trusting a measurement (§2.7) |
@@ -324,9 +353,15 @@ Client configuration (e.g. Claude Desktop / Claude Code):
 `{"mcpServers": {"logictracer": {"command": "/path/to/logictracer-mcp"}}}`; options `--socket`,
 `--port`, `--no-session`, `--output-dir`.
 
+`lt_get_pinout` returns `board`, `source`, `orientation`, `safety` and `pins` in physical header order.
+For example, `{"pin":6,"gpio":4,"channel":3,"selected":true,"name":"SDA"}` identifies a selected input;
+`{"pin":3,"function":"GND"}` cannot be selected. `source: "offline_reference"` is a disconnected plan;
+`source: "capture"` describes the displayed recording and includes `capture_id`. Unsupported or unknown
+boards return an error rather than a plausible-looking Pico pin number.
+
 **IPC session socket** (`$LOGICTRACER_SOCKET`, else `$XDG_RUNTIME_DIR/logictracer.sock`, else a
 private `/tmp/logictracer-<uid>/` directory; owner-only access): JSON lines
-`{"id","method","params"}` → `{"id","result"|"error"}`; methods `ping`, `get_state`, `get_report`,
+`{"id","method","params"}` → `{"id","result"|"error"}`; methods `ping`, `get_state`, `get_report`, `get_pinout`, `get_gui_diagnostics`,
 `annotate`, `list_annotations`, `clear_annotations`, `capture`, `probe`. Annotation times are
 relative to the trigger (`time_us`, `time_s` or `time: "50.12ms"`) with text, colour and an optional
 duration; they are cleared by a new capture.
@@ -354,5 +389,5 @@ version; firmware images are named `LogicTracer-firmware-<version>-<board>-<vari
   turnaround); 100 MHz and 200 MHz Turbo UF2 images via `scripts/build_firmware.sh`; test-signal generator
   and `logictracer-cli selftest` (§2.7) as the firmware regression check.
 * **Hardware validation:** verified live with an RP2040 against a Digilent PYNQ-Z1 (100-transaction
-  burst, stimulus → reaction latency, `--expect` PASS). Pending: NVIDIA Jetson AGX Orin `DO1` →
-  RP2040 `GP28` (needs an external pull-up), see [BACKLOG.md](BACKLOG.md).
+  burst, stimulus → reaction latency, `--expect` PASS). The NVIDIA Jetson AGX Orin `DO1` → RP2040 `GP28`
+  bench check (external pull-up required) is tracked in [#30](https://github.com/nick-fedchik/LogicTracer/issues/30).

@@ -50,7 +50,8 @@ struct CaptureRequestSpec {
 // Splits samples into pre/post and applies the device limits. On failure returns nullopt and a message
 // in `error`; non-fatal remarks are appended to `warnings`.
 std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const CaptureRequestSpec& spec,
-                                                std::vector<std::string>& warnings, std::string& error);
+                                                std::vector<std::string>& warnings, std::string& error,
+                                                CaptureField* field = nullptr);
 
 struct DocumentOptions {
     bool collectEdges = false;  // keep every edge timestamp in the analysis (needed for edge output)

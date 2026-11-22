@@ -7,7 +7,12 @@
 
 #include "core/ArgParsing.hpp"
 #include "core/Exporters.hpp"
+#include "device/ReplayDevice.hpp"
 #include "gui/Builders.hpp"
+#include "gui/DiagnosticsDialog.hpp"
+#include "gui/PicoPinout.hpp"
+#include "gui/ProfileSelector.hpp"
+#include "gui/SerialPortPicker.hpp"
 #include "services/Operations.hpp"
 #include "core/Format.hpp"
 #include "core/SignalAnalyzer.hpp"
@@ -30,6 +35,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStatusBar>
@@ -59,7 +65,7 @@ QString describeTrigger(const std::optional<lt::EdgeTrigger>& t)
 
 }  // namespace
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
+MainWindow::MainWindow(QWidget* parent, GuiDiagnostics* diagnostics) : QMainWindow(parent), m_diagnostics(diagnostics)
 {
     setWindowTitle(tr("LogicTracer"));
     buildUi();
@@ -95,13 +101,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent)
         connect(field, &QLineEdit::textChanged, this, [this] { updatePreflight(); });
     connect(m_timeout, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
     connect(m_windows, qOverload<int>(&QSpinBox::valueChanged), this, [this](int) { updatePreflight(); });
-    connect(&m_device, &lt::AsyncDevice::opened, this, [this](bool, const QString&) { updatePreflight(); });
     connect(m_waveform, &WaveformWidget::captureChanged, this, [this] { updatePreflight(); });
+    connect(m_channels, &QLineEdit::textChanged, this, [this] {
+        if (m_pinout && !m_pinout->showsCapture())
+            refreshPinout();
+    });
+    connect(m_waveform, &WaveformWidget::captureChanged, this, [this] {
+        if (m_pinout && m_pinout->showsCapture())
+            refreshPinout();
+    });
 
     refreshPorts();
     updateControls();
-    updateSetupButton();
-    updatePreflight();
+    updateMetadataButton();
     updateReport();
     showStatus(tr("Not connected"));
     resize(1180, 760);
@@ -113,78 +125,45 @@ void MainWindow::buildUi()
     auto* root = new QVBoxLayout(central);
     root->setContentsMargins(6, 6, 6, 6);
 
-    // Connection and capture settings.
-    auto* grid = new QGridLayout;
-    m_port = new QComboBox;
-    m_port->setEditable(true);
-    m_port->setMinimumWidth(220);
+    auto* toolbar = new QHBoxLayout;
+    m_port = new SerialPortPicker;
     m_refresh = new QPushButton(tr("Refresh"));
     m_connect = new QPushButton(tr("Connect"));
-    m_channels = new QLineEdit("1-8");
-    m_channels->setToolTip(tr("1-based channels with optional names: 1:STIM,2:REACT,24:DO1 or 1-8"));
-    m_rate = new QLineEdit("1M");
-    m_rate->setToolTip(tr("Sample rate in Hz: 1M, 250k, 100000"));
-    m_samples = new QLineEdit("10k");
-    m_samples->setToolTip(tr("Total samples (pre + post trigger)"));
-    m_trigger = new QLineEdit("none");
-    m_trigger->setToolTip(tr("CH:rising|falling, 'none' = immediate. LogicTracer firmware fires on a real edge; "
-                             "older firmware is level sensitive"));
-    m_port->setObjectName("port");
-    m_channels->setObjectName("channels");
-    m_rate->setObjectName("rate");
-    m_samples->setObjectName("samples");
-    m_trigger->setObjectName("trigger");
-    m_windows = new QSpinBox;
-    m_windows->setObjectName("windows");
-    m_windows->setRange(1, 65536);
-    m_windows->setValue(1);
-    m_windows->setToolTip(tr("Trigger windows per run (segmented capture, needs a trigger): Samples is one window, "
-                             "the firmware re-arms on the next edge; pre-trigger samples precede window 1 only"));
-    m_timeout = new QSpinBox;
-    m_timeout->setRange(0, 600000);
-    m_timeout->setValue(5000);
-    m_timeout->setSuffix(" ms");
+    m_deviceSetup = new QPushButton(tr("Setup"));
+    m_deviceSetup->setObjectName("deviceSetup");
+    m_deviceSetup->setToolTip(tr("Configure the next capture on the selected device"));
+    m_pinout = new PicoPinout(buildCaptureFields(), this);
+    connect(m_deviceSetup, &QPushButton::clicked, this, [this] { showPinout(false); });
+    connect(m_pinout, &PicoPinout::sourceChanged, this, &MainWindow::refreshPinout);
+    connect(m_pinout, &PicoPinout::applyRequested, this, &MainWindow::applyPinout);
+    connect(m_pinout, &PicoPinout::triggerEdited, m_trigger, &QLineEdit::setText);
+    connect(m_trigger, &QLineEdit::textChanged, m_pinout, &PicoPinout::setTriggerText);
+    connect(m_trigger, &QLineEdit::textChanged, m_triggerSummary, &QLabel::setText);
     m_capture = new QPushButton(tr("Capture"));
     m_probe = new QPushButton(tr("Probe"));
     m_probe->setToolTip(tr("Snapshot of the current input levels (~10 ms, no trigger)"));
     m_cancel = new QPushButton(tr("Cancel"));
 
-    int col = 0;
-    grid->addWidget(new QLabel(tr("Port")), 0, col++);
-    grid->addWidget(m_port, 0, col++);
-    grid->addWidget(m_refresh, 0, col++);
-    grid->addWidget(m_connect, 0, col++);
-    grid->addWidget(new QLabel(tr("Channels")), 0, col++);
-    grid->addWidget(withBuilder(m_channels, "channelsBuilderButton", [this] {
-        const int maxCh = m_device.isConnected() ? std::min<int>(kMaxProtocolChannels, m_device.info().channels)
-                                                 : static_cast<int>(kMaxProtocolChannels);
-        lt::gui::showChannelsBuilder(m_channels, m_channels, m_lastBoard, maxCh);
-    }), 0, col++);
-    grid->addWidget(new QLabel(tr("Rate")), 0, col++);
-    grid->addWidget(m_rate, 0, col++);
-    grid->addWidget(new QLabel(tr("Samples")), 0, col++);
-    grid->addWidget(m_samples, 0, col++);
-    grid->addWidget(new QLabel(tr("Windows")), 0, col++);
-    grid->addWidget(m_windows, 0, col++);
-    grid->addWidget(new QLabel(tr("Trigger")), 0, col++);
-    grid->addWidget(withBuilder(m_trigger, "triggerBuilderButton", [this] {
-        lt::gui::showTriggerBuilder(m_trigger, m_trigger, builderChannels());
-    }), 0, col++);
-    grid->addWidget(new QLabel(tr("Timeout")), 0, col++);
-    grid->addWidget(m_timeout, 0, col++);
+    toolbar->addWidget(new QLabel(tr("Port")));
+    toolbar->addWidget(m_port, 1);
+    toolbar->addWidget(m_refresh);
+    toolbar->addWidget(m_connect);
+    toolbar->addWidget(m_deviceSetup);
     m_repeat = new QCheckBox(tr("Repeat"));
     m_repeat->setObjectName("repeat");
     connect(m_repeat, &QCheckBox::toggled, this, [this](bool) { ++m_repeatGeneration; });
     m_repeat->setToolTip(tr("Re-arm automatically after each successful capture; stops on Cancel, timeout, error or disconnect"));
-    grid->addWidget(m_capture, 0, col++);
-    grid->addWidget(m_repeat, 0, col++);
-    grid->addWidget(m_probe, 0, col++);
-    grid->addWidget(m_cancel, 0, col++);
-    grid->setColumnStretch(1, 2);
-    grid->setColumnStretch(5, 3);
-    root->addLayout(grid);
+    toolbar->addWidget(m_capture);
+    toolbar->addWidget(m_repeat);
+    toolbar->addWidget(m_probe);
+    toolbar->addWidget(m_cancel);
+    root->addLayout(toolbar);
 
     m_deviceInfo = new QLabel;
+    m_deviceInfo->setObjectName("deviceInfo");
+    m_deviceInfo->setWordWrap(true);
+    m_deviceInfo->setTextFormat(Qt::PlainText);
+    m_deviceInfo->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     m_prev = new QPushButton(tr("Prev"));
     m_prev->setObjectName("historyPrev");
     m_prev->setToolTip(tr("Show the previous capture (Alt+Left)"));
@@ -204,7 +183,18 @@ void MainWindow::buildUi()
     m_preflight->setObjectName("preflight");
     m_preflight->setWordWrap(true);
     m_preflight->setTextFormat(Qt::PlainText);
-    root->addWidget(m_preflight);
+    m_preflight->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    auto* preflightRow = new QHBoxLayout;
+    preflightRow->addWidget(m_preflight, 1);
+    m_fixSetup = new QPushButton(tr("Open Setup"));
+    m_fixSetup->setObjectName("fixCaptureSetup");
+    preflightRow->addWidget(m_fixSetup);
+    root->addLayout(preflightRow);
+    connect(m_fixSetup, &QPushButton::clicked, this, [this] {
+        showPinout(false);
+        if (m_invalidField != CaptureField::Trigger || !m_pinout->focusTrigger())
+            captureControl(m_invalidField)->setFocus(Qt::OtherFocusReason);
+    });
 
     // Waveform on top, AI grounding bar + live AI report preview below it.
     auto* splitter = new QSplitter(Qt::Vertical);
@@ -252,11 +242,11 @@ void MainWindow::buildUi()
     m_copyButton->setToolTip(tr("Copy the report below to the clipboard (Ctrl+Shift+C)"));
 
     aiBar->addWidget(new QLabel(tr("Ask AI:")));
-    m_setupButton = new QPushButton;
-    m_setupButton->setObjectName("setupButton");
-    m_setupButton->setToolTip(tr("Edit test-setup metadata attached to the report"));
-    connect(m_setupButton, &QPushButton::clicked, this, &MainWindow::editSetupMetadata);
-    aiBar->addWidget(m_setupButton);
+    m_metadataButton = new QPushButton;
+    m_metadataButton->setObjectName("metadataButton");
+    m_metadataButton->setToolTip(tr("Edit test-setup metadata attached to the report"));
+    connect(m_metadataButton, &QPushButton::clicked, this, &MainWindow::editSetupMetadata);
+    aiBar->addWidget(m_metadataButton);
     aiBar->addWidget(m_aiNote, 1);
     aiBar->addWidget(m_notePin);
     aiBar->addWidget(withBuilder(m_latencySpec, "latencyBuilderButton", [this] {
@@ -267,6 +257,31 @@ void MainWindow::buildUi()
     aiBar->addWidget(m_copyMode);
     aiBar->addWidget(m_reportSize);
     aiBar->addWidget(m_copyButton);
+    auto* diagnostics = new QPushButton(tr("Diagnostics…"));
+    diagnostics->setObjectName("showGuiDiagnostics");
+    diagnostics->setToolTip(tr("Privately preview recent GUI stderr and choose whether to share it"));
+    diagnostics->setEnabled(m_diagnostics != nullptr);
+    aiBar->addWidget(diagnostics);
+    connect(diagnostics, &QPushButton::clicked, this, [this, diagnostics] {
+        if (!m_diagnosticsDialog) {
+            m_diagnosticsDialog = new DiagnosticsDialog(*m_diagnostics, this);
+            connect(m_diagnosticsDialog, &DiagnosticsDialog::sharingChanged, this, [diagnostics](bool shared) {
+                diagnostics->setText(shared ? tr("Diagnostics (shared)…") : tr("Diagnostics…"));
+            });
+            connect(m_diagnosticsDialog, &DiagnosticsDialog::copyWithPreview, this, [this](const QString& preview) {
+                m_consumedNote = m_aiNote->text();
+                QGuiApplication::clipboard()->setText(aiReport() + tr("\n\nGUI diagnostics (sanitized stderr):\n") + preview);
+                showStatus(tr("Copied report and reviewed GUI diagnostics for AI"));
+            });
+        }
+        m_diagnosticsDialog->openPreview();
+    });
+    auto* hideAi = new QToolButton;
+    hideAi->setObjectName("hideAskAi");
+    hideAi->setText("_");
+    hideAi->setAccessibleName(tr("Hide Ask AI"));
+    hideAi->setToolTip(tr("Hide Ask AI"));
+    aiBar->addWidget(hideAi);
     aiLayout->addLayout(aiBar);
 
     m_report = new QPlainTextEdit;
@@ -279,17 +294,36 @@ void MainWindow::buildUi()
     splitter->addWidget(aiPane);
     splitter->setStretchFactor(0, 3);
     splitter->setStretchFactor(1, 2);
+    splitter->setCollapsible(1, false);
+    const auto defaultSplit = [splitter] { splitter->setSizes({600, 400}); };
+    defaultSplit();
     root->addWidget(splitter, 1);
     setCentralWidget(central);
 
     m_status = new QLabel;
     m_status->setObjectName("status");
+    m_status->setTextFormat(Qt::PlainText);
+    m_status->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     m_hover = new QLabel;
     m_hover->setMinimumWidth(260);
     statusBar()->addWidget(m_status, 1);
     statusBar()->addPermanentWidget(m_hover);
+    auto* restoreAi = new QPushButton(tr("Show Ask AI"));
+    restoreAi->setToolTip(tr("Restore Ask AI at its default size"));
+    statusBar()->addPermanentWidget(restoreAi);
+    restoreAi->hide();
+    connect(hideAi, &QToolButton::clicked, this, [aiPane, restoreAi] {
+        aiPane->hide();
+        restoreAi->show();
+    });
+    connect(restoreAi, &QPushButton::clicked, this, [aiPane, restoreAi, defaultSplit] {
+        restoreAi->hide();
+        aiPane->show();
+        defaultSplit();
+    });
 
     connect(m_refresh, &QPushButton::clicked, this, &MainWindow::refreshPorts);
+    connect(m_port, &SerialPortPicker::availabilityChanged, this, &MainWindow::updatePortControls);
     connect(m_connect, &QPushButton::clicked, this, &MainWindow::connectOrDisconnect);
     connect(m_capture, &QPushButton::clicked, this, &MainWindow::startCapture);
     connect(m_probe, &QPushButton::clicked, this, &MainWindow::startProbe);
@@ -298,6 +332,95 @@ void MainWindow::buildUi()
     connect(m_copyButton, &QPushButton::clicked, this, &MainWindow::copyForAi);
     connect(m_prev, &QPushButton::clicked, this, &MainWindow::showPreviousCapture);
     connect(m_next, &QPushButton::clicked, this, &MainWindow::showNextCapture);
+}
+
+QWidget* MainWindow::buildCaptureFields()
+{
+    auto* fields = new QWidget;
+    auto* grid = new QGridLayout(fields);
+    grid->setContentsMargins(0, 0, 0, 0);
+    const auto add = [this, grid](int row, int col, const QString& text, QWidget* editor,
+                                  std::optional<CaptureField> field = {}) {
+        grid->addWidget(new QLabel(text), row, 2 * col);
+        auto* cell = new QVBoxLayout;
+        cell->setSpacing(1);
+        cell->addWidget(editor);
+        if (field) {
+            auto* hint = new QLabel;
+            hint->setObjectName(text.toLower() + "Error");
+            hint->setTextFormat(Qt::PlainText);
+            hint->setWordWrap(true);
+            hint->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+            hint->hide();
+            m_fieldHints[static_cast<size_t>(*field)] = hint;
+            cell->addWidget(hint);
+        }
+        grid->addLayout(cell, row, 2 * col + 1);
+    };
+    const auto defaults = CaptureFields::defaults(false);
+    m_channels = new QLineEdit(defaults.channels);
+    m_channels->setObjectName("channels");
+    m_channels->setToolTip(tr("1-based channels with optional names: 1:STIM,2:REACT,24:DO1 or 1-8. ")
+                           + QString::fromLatin1(kChannelNameRule.data()));
+    add(0, 0, tr("Channels"), withBuilder(m_channels, "channelsBuilderButton", [this] {
+        const auto board = m_device.isConnected() ? m_device.info().version.board : std::string("PICO");
+        showChannelsBuilder(m_channels, m_channels, board, setupChannelLimit());
+    }), CaptureField::Channels);
+    m_rate = new QLineEdit(defaults.rate);
+    m_rate->setObjectName("rate");
+    m_rate->setToolTip(tr("Sample rate in Hz: 1M, 250k, 100000"));
+    add(0, 1, tr("Rate"), m_rate, CaptureField::Rate);
+    m_samples = new QLineEdit(defaults.samples);
+    m_samples->setObjectName("samples");
+    m_samples->setToolTip(tr("Total samples (pre + post trigger)"));
+    add(0, 2, tr("Samples"), m_samples, CaptureField::Samples);
+    m_trigger = new QLineEdit(defaults.trigger);
+    m_trigger->setObjectName("trigger");
+    m_trigger->setToolTip(tr("CH:rising|falling, 'none' = immediate. LogicTracer firmware fires on a real edge; "
+                             "older firmware is level sensitive"));
+    auto* triggerBox = new QWidget;
+    auto* triggerRow = new QHBoxLayout(triggerBox);
+    triggerRow->setContentsMargins(0, 0, 0, 0);
+    m_triggerSummary = new QLabel(defaults.trigger);
+    m_triggerSummary->setObjectName("triggerSummary");
+    m_triggerSummary->setTextFormat(Qt::PlainText);
+    m_triggerSummary->setWordWrap(true);
+    triggerRow->addWidget(m_triggerSummary, 1);
+    triggerRow->addWidget(m_trigger, 1);  // generic replay devices have no physical pin map
+    auto* clearTrigger = new QPushButton(tr("Clear"));
+    clearTrigger->setObjectName("clearTrigger");
+    clearTrigger->setToolTip(tr("Use an immediate capture without a trigger"));
+    connect(clearTrigger, &QPushButton::clicked, this, [this] { m_trigger->setText("none"); });
+    triggerRow->addWidget(clearTrigger);
+    add(1, 0, tr("Trigger"), triggerBox, CaptureField::Trigger);
+    m_windows = new QSpinBox;
+    m_windows->setObjectName("windows");
+    m_windows->setRange(1, 65536);
+    m_windows->setToolTip(tr("Trigger windows per run (segmented capture, needs a trigger): Samples is one window, "
+                             "the firmware re-arms on the next edge; pre-trigger samples precede window 1 only"));
+    add(1, 1, tr("Windows"), m_windows, CaptureField::Windows);
+    m_timeout = new QSpinBox;
+    m_timeout->setObjectName("timeout");
+    m_timeout->setRange(0, 600000);
+    m_timeout->setValue(defaults.timeout);
+    m_timeout->setSuffix(" ms");
+    add(1, 2, tr("Timeout"), m_timeout);
+    auto* hint = new QLabel(tr("Changes to these fields take effect on the next capture."));
+    hint->setWordWrap(true);
+    grid->addWidget(hint, 2, 0, 1, 5);
+    auto* reset = new QPushButton(tr("Reset"));
+    reset->setObjectName("resetCaptureSetup");
+    reset->setToolTip(tr("Restore this device's defaults for the next capture"));
+    connect(reset, &QPushButton::clicked, this, [this] { setCaptureFields(CaptureFields::defaults(demoSelected())); });
+    grid->addWidget(reset, 2, 5);
+    m_settingsPreflight = new QLabel;
+    m_settingsPreflight->setObjectName("setupPreflight");
+    m_settingsPreflight->setWordWrap(true);
+    m_settingsPreflight->setTextFormat(Qt::PlainText);
+    m_settingsPreflight->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+    grid->addWidget(m_settingsPreflight, 3, 0, 1, 6);
+    grid->addWidget(buildProfileBar(fields), 4, 0, 1, 6);
+    return fields;
 }
 
 void MainWindow::buildMenus()
@@ -331,6 +454,8 @@ void MainWindow::buildMenus()
         ->setToolTip(tr("Forget the test-setup metadata (DUT, wiring, ...) attached to reports"));
 
     auto* view = menuBar()->addMenu(tr("&View"));
+    view->addAction(tr("Pico &pinout and wiring..."), this, [this] { showPinout(m_waveform->hasCapture()); })
+        ->setObjectName("showPinout");
     view->addAction(tr("&Previous capture"), QKeySequence(Qt::ALT | Qt::Key_Left), this, &MainWindow::showPreviousCapture);
     view->addAction(tr("&Next capture"), QKeySequence(Qt::ALT | Qt::Key_Right), this, &MainWindow::showNextCapture);
     view->addSeparator();
@@ -380,6 +505,97 @@ void MainWindow::showAbout()
     QMessageBox::about(this, tr("About LogicTracer"), aboutText());  // modeless on macOS
 }
 
+PicoWiring MainWindow::picoWiring(bool capture) const
+{
+    PicoWiring w;
+    if (capture && !m_waveform->hasCapture()) {
+        w.error = tr("No capture is displayed. Select Next capture setup to plan the wiring.");
+        return w;
+    }
+    w.simulated = !capture && demoSelected();
+    w.offlineReference = !capture && (!m_device.isConnected() || w.simulated);
+    w.board = capture ? m_stamp.board : w.offlineReference ? "PICO" : m_device.info().version.board;
+    if (picoHeaderPins(w.board).empty()) {
+        w.error = tr("No verified Pico header for this %1. No physical pin assignments are available.")
+                      .arg(capture ? tr("recording") : tr("device"));
+        return w;
+    }
+    if (capture) {
+        w.captureId = m_currentCaptureId;
+        for (const auto& ch : m_waveform->capture().channels()) {
+            if (ch.number >= w.inputCount) {
+                w.error = tr("The recorded channels do not match the Pico header.");
+                return w;
+            }
+        }
+        w.channels = m_waveform->capture().channels();
+    } else {
+        w.inputCount = std::min(w.inputCount, setupChannelLimit());
+        std::string error;
+        auto inputs = lt::cli::parseChannelList(str(m_channels->text()), w.inputCount, &error);
+        if (!inputs) {
+            w.error = tr("Fix the Channels field: %1").arg(QString::fromStdString(error));
+            return w;
+        }
+        w.channels = std::move(*inputs);
+    }
+    return w;
+}
+
+void MainWindow::showPinout(bool capture)
+{
+    m_pinout->selectSource(capture);
+    if (!m_pinout->isVisible()) {
+        m_pinout->show();
+        refreshPinout();
+    }
+    m_pinout->raise();
+    m_pinout->activateWindow();
+}
+
+void MainWindow::refreshPinout()
+{
+    if (!m_pinout || !m_pinout->isVisible())
+        return;
+    auto wiring = picoWiring(m_pinout->showsCapture());
+    const bool hasHeader = !picoHeaderPins(wiring.board).empty();
+    m_trigger->setVisible(!hasHeader);
+    m_triggerSummary->setVisible(hasHeader);
+    m_pinout->setWiring(std::move(wiring), m_device.isBusy(), m_device.isConnected() || demoSelected());
+    m_pinout->setTriggerText(m_trigger->text());
+}
+
+void MainWindow::applyPinout()
+{
+    if (m_device.isBusy())
+        return;
+    const auto edited = m_pinout->editedChannels();
+    if (!m_pinout->showsCapture()) {
+        std::vector<std::pair<int, QString>> pairs;
+        for (const auto& ch : edited)
+            pairs.emplace_back(ch.displayNumber(), QString::fromStdString(ch.name));
+        m_channels->setText(composeChannelList(pairs));
+        return;
+    }
+    if (m_viewIndex >= m_history.size())
+        return;
+    auto& buffer = m_history[m_viewIndex].buffer;
+    if (m_currentCaptureId != m_pinout->captureId() || edited.size() != buffer.channels().size() ||
+        !std::equal(edited.begin(), edited.end(), buffer.channels().begin(),
+                    [](const auto& a, const auto& b) { return a.number == b.number; })) {
+        refreshPinout();
+        return;
+    }
+    for (std::size_t i = 0; i < edited.size(); ++i) {
+        const auto& ch = edited[i];
+        if (buffer.channels()[i].name != ch.name && buffer.setChannelName(i, ch.name))
+            m_waveform->renameChannel(i, ch.name);
+    }
+    updatePreflight();
+    updateReport();
+    refreshPinout();
+}
+
 QString MainWindow::aboutText()
 {
     namespace a = lt::about;
@@ -415,12 +631,90 @@ QWidget* MainWindow::withBuilder(QLineEdit* field, const char* buttonName, const
 std::vector<int> MainWindow::builderChannels() const
 {
     std::vector<int> out;
-    const int maxCh = m_device.isConnected() ? std::min<int>(kMaxProtocolChannels, m_device.info().channels)
-                                             : static_cast<int>(kMaxProtocolChannels);
-    if (const auto parsed = lt::cli::parseChannelList(m_channels->text().toStdString(), maxCh, nullptr))
+    if (const auto parsed = lt::cli::parseChannelList(m_channels->text().toStdString(), setupChannelLimit(), nullptr))
         for (const auto& ch : *parsed)
             out.push_back(ch.number + 1);
     return out;
+}
+
+bool MainWindow::demoSelected() const
+{
+    return m_device.isConnected() ? m_device.info().port == ReplayDevice::kDemoPort
+                                  : m_demoPreviewId != 0 && m_demoPreviewId == m_currentCaptureId;
+}
+
+int MainWindow::setupChannelLimit() const
+{
+    if (m_device.isConnected())
+        return std::min<int>(kMaxProtocolChannels, m_device.info().channels);
+    return demoSelected() ? static_cast<int>(m_waveform->capture().channels().size()) : kMaxProtocolChannels;
+}
+
+CaptureFields MainWindow::captureFields() const
+{
+    return {m_channels->text(), m_rate->text(), m_samples->text(), m_trigger->text(), m_windows->value(), m_timeout->value()};
+}
+
+void MainWindow::setCaptureFields(const CaptureFields& fields)
+{
+    const QSignalBlocker a(m_channels), b(m_rate), c(m_samples), d(m_trigger), e(m_windows), f(m_timeout);
+    m_channels->setText(fields.channels);
+    m_rate->setText(fields.rate);
+    m_samples->setText(fields.samples);
+    m_trigger->setText(fields.trigger);
+    m_triggerSummary->setText(fields.trigger);
+    m_windows->setValue(fields.windows);
+    m_timeout->setValue(fields.timeout);
+    refreshPinout();
+    updatePreflight();
+}
+
+QWidget* MainWindow::buildProfileBar(QWidget* parent)
+{
+    m_profiles = new ProfileSelector([this] { return captureFields(); },
+                                     [this](const CaptureFields& f) { setCaptureFields(f); }, parent);
+    return m_profiles;
+}
+
+void MainWindow::applyStartupProfile(const profiles::Profile& profile)
+{
+    // --port handshakes asynchronously; install the plan after the physical/demo bank is known.
+    if (!m_device.isConnected() && m_device.isBusy()) {
+        connect(&m_device, &lt::AsyncDevice::opened, this, [this, profile] { applyStartupProfile(profile); },
+                Qt::SingleShotConnection);
+        return;
+    }
+    if (!m_device.isConnected() && !demoSelected() && !m_disconnectedProfileBase)
+        m_disconnectedProfileBase = profiles::Profile{m_profiles->selectedPath(), captureFields()};
+    m_profiles->setSelectedPath(profile.path);
+    setCaptureFields(profile.fields);
+}
+
+CaptureFields MainWindow::switchCapturePlan()
+{
+    if (m_disconnectedProfileBase) {
+        // The first device turned out to be the simulator. Carry the disconnected startup plan
+        // to it, restoring the original physical plan rather than changing both devices' plans.
+        m_otherFields = std::move(m_disconnectedProfileBase->fields);
+        m_otherProfilePath = std::move(m_disconnectedProfileBase->path);
+        m_disconnectedProfileBase.reset();
+        return captureFields();
+    }
+    m_profiles->setSelectedPath(std::exchange(m_otherProfilePath, m_profiles->selectedPath()));
+    return std::exchange(m_otherFields, captureFields());
+}
+
+void MainWindow::updateDeviceSetup()
+{
+    const bool demo = demoSelected();
+    if (demo != m_usingDemoFields) {
+        // Keep edits to the four-channel simulator out of the physical device's plan, and vice versa.
+        m_usingDemoFields = demo;
+        setCaptureFields(switchCapturePlan());
+    }
+    const bool supported = m_device.isConnected() && (!picoHeaderPins(m_device.info().version.board).empty() ||
+                                                     m_device.info().version.family == FirmwareFamily::Replay);
+    m_deviceSetup->setEnabled(!m_device.isBusy() && (demo || supported));
 }
 
 void MainWindow::updateControls()
@@ -429,42 +723,38 @@ void MainWindow::updateControls()
     const bool connected = m_device.isConnected();
     if (!connected)
         stopRepeat(tr("Repeat stopped: device disconnected"));
-    m_port->setEnabled(!connected && !busy);
-    m_refresh->setEnabled(!connected && !busy);
-    m_connect->setEnabled(!busy || connected);
-    m_connect->setText(connected ? tr("Disconnect") : tr("Connect"));
-    m_capture->setEnabled(connected && !busy);
+    updatePortControls();
     m_probe->setEnabled(connected && !busy);
     m_cancel->setEnabled(busy);
-    for (QWidget* w : {static_cast<QWidget*>(m_channels), static_cast<QWidget*>(m_rate),
-                       static_cast<QWidget*>(m_samples), static_cast<QWidget*>(m_trigger),
-                       static_cast<QWidget*>(m_timeout), static_cast<QWidget*>(m_windows)})
-        w->setEnabled(!busy);
+    updateDeviceSetup();
     updateHistoryUi();
-    m_deviceInfo->setText(connected ? QString("%1  |  %2 channels, max %3, buffer %4 KiB")
-                                          .arg(QString::fromStdString(m_device.info().version.raw))
-                                          .arg(m_device.info().channels)
-                                          .arg(QString::fromStdString(lt::formatHz(m_device.info().maxFrequency)))
-                                          .arg(m_device.info().bufferSize / 1024)
-                                    : tr("No device connected"));
+    updatePreflight();
+    refreshPinout();
 }
 
-void MainWindow::refreshPorts()
+void MainWindow::updatePortControls()
 {
-    const QString current = m_port->currentText();
-    m_port->clear();
-    int preferred = -1;
-    for (const auto& p : lt::PicoConnection::enumerate(true)) {
-        m_port->addItem(QString("%1  (%2)").arg(QString::fromStdString(p.port), QString::fromStdString(p.description)),
-                        QString::fromStdString(p.port));
-        if (p.vidPidMatch && preferred < 0)
-            preferred = m_port->count() - 1;
+    const bool connected = m_device.isConnected();
+    const bool idle = !connected && !m_device.isBusy();
+    const QString owner = m_port->owner();
+    m_port->setEnabled(idle);
+    m_refresh->setEnabled(idle);
+    m_connect->setEnabled(connected || (idle && owner.isEmpty()));
+    m_connect->setText(connected ? tr("Disconnect") : tr("Connect"));
+    if (connected) {
+        const auto& info = m_device.info();
+        m_deviceInfo->setText(QString("%1  |  %2 channels, max %3, buffer %4 KiB")
+                              .arg(QString::fromStdString(info.version.raw)).arg(info.channels)
+                              .arg(QString::fromStdString(lt::formatHz(info.maxFrequency))).arg(info.bufferSize / 1024));
+    } else if (!owner.isEmpty()) {
+        m_deviceInfo->setText(tr("%1 is in use by %2. Disconnect or close the port in that application, then click Refresh.")
+                              .arg(m_port->port(), owner));
+    } else {
+        m_deviceInfo->setText(tr("No device connected"));
     }
-    if (preferred >= 0)
-        m_port->setCurrentIndex(preferred);
-    else if (!current.isEmpty())
-        m_port->setEditText(current);
 }
+
+void MainWindow::refreshPorts() { m_port->refresh(); }
 
 void MainWindow::setPortText(const QString& port)
 {
@@ -479,10 +769,7 @@ void MainWindow::connectOrDisconnect()
         updateControls();
         return;
     }
-    // Items carry the bare path as data; a typed path is used as is.
-    QString port = m_port->currentData().toString();
-    if (port.isEmpty() || m_port->currentText() != m_port->itemText(m_port->currentIndex()))
-        port = m_port->currentText().trimmed();
+    const QString port = m_port->port();
     if (port.isEmpty()) {
         showStatus(tr("Select a serial port first"), true);
         return;
@@ -493,8 +780,11 @@ void MainWindow::connectOrDisconnect()
 
 void MainWindow::onOpened(bool ok, const QString& error)
 {
+    if (ok)
+        m_demoPreviewId = 0;
     updateControls();
     if (ok) {
+        m_disconnectedProfileBase.reset();
         const std::string board = m_device.info().version.board;
         if (!m_lastBoard.empty() && board != m_lastBoard)
             clearSetupMetadata();  // setup text describes wiring of another board
@@ -502,30 +792,35 @@ void MainWindow::onOpened(bool ok, const QString& error)
         showStatus(tr("Connected: %1").arg(QString::fromStdString(m_device.info().version.raw)));
     } else {
         showStatus(tr("Connection failed: %1").arg(error), true);
+        m_port->refreshOwners();
     }
 }
 
-bool MainWindow::buildSpec(lt::CaptureRequestSpec& spec, QString& error) const
+bool MainWindow::buildSpec(lt::CaptureRequestSpec& spec, QString& error, CaptureField& field) const
 {
     std::string err;
-    const int maxCh = std::min<int>(kMaxProtocolChannels, m_device.info().channels);
+    const int maxCh = setupChannelLimit();
     const auto channels = lt::cli::parseChannelList(str(m_channels->text()), maxCh, &err);
     if (!channels) {
+        field = CaptureField::Channels;
         error = QString::fromStdString(err);
         return false;
     }
     const auto rate = lt::cli::parseQuantity(str(m_rate->text()));
     const auto samples = lt::cli::parseQuantity(str(m_samples->text()));
     if (!rate || *rate == 0 || *rate > UINT32_MAX) {
-        error = tr("Invalid sample rate '%1'").arg(m_rate->text());
+        field = CaptureField::Rate;
+        error = tr("Enter a positive sample rate in Hz, e.g. 1M or 500k.");
         return false;
     }
     if (!samples || *samples < 4 || *samples > UINT32_MAX) {
-        error = tr("Invalid sample count '%1'").arg(m_samples->text());
+        field = CaptureField::Samples;
+        error = tr("Enter a sample count between 4 and %1 before applying device limits.").arg(UINT32_MAX);
         return false;
     }
     const auto trigger = lt::cli::parseTrigger(str(m_trigger->text()), maxCh + 1, &err);
     if (!trigger) {
+        field = CaptureField::Trigger;
         error = QString::fromStdString(err);
         return false;
     }
@@ -540,37 +835,48 @@ bool MainWindow::buildSpec(lt::CaptureRequestSpec& spec, QString& error) const
     return true;
 }
 
-bool MainWindow::buildConfig(lt::CaptureConfig& config, QString& triggerText, QString& error,
-                             std::vector<std::string>* warningsOut) const
+bool MainWindow::buildConfig(const CaptureRequestSpec& spec, CaptureConfig& config, QString& error,
+                             std::vector<std::string>& warnings, CaptureField& field) const
 {
-    lt::CaptureRequestSpec spec;
-    if (!buildSpec(spec, error))
-        return false;
-    std::vector<std::string> warnings;
+    // Validate a disconnected demo preview against the same recording as a connected Demo Pico.
+    const IDevice* preview = nullptr;
+    if (!m_device.isConnected() && demoSelected()) {
+        static const auto demo = [] {
+            auto device = createDevice(ReplayDevice::kDemoPort);
+            device->open(std::string(ReplayDevice::kDemoPort), std::chrono::milliseconds(0));
+            return device;
+        }();
+        preview = demo.get();
+    }
     std::string err;
-    const auto cfg = lt::buildCaptureConfig(m_device.info(), spec, warnings, err);
-    if (warningsOut)
-        *warningsOut = std::move(warnings);
+    const auto cfg = lt::buildCaptureConfig(preview ? preview->info() : m_device.info(), spec, warnings, err, &field);
     if (!cfg) {
         error = QString::fromStdString(err);
         return false;
     }
+    if (preview || !m_device.isBusy()) {
+        const auto invalid = preview ? preview->validate(*cfg, &field) : m_device.validate(*cfg, &field);
+        if (invalid) {
+            error = QString::fromStdString(*invalid);
+            return false;
+        }
+    }
     config = *cfg;
-    triggerText = describeTrigger(config.trigger);
     return true;
 }
 
 void MainWindow::startCapture()
 {
     lt::CaptureConfig config;
+    CaptureRequestSpec spec;
+    CaptureField field{};
     QString error;
-    QString trigger;
     std::vector<std::string> warnings;
-    if (!buildConfig(config, trigger, error, &warnings)) {
+    if (!buildSpec(spec, error, field) || !buildConfig(spec, config, error, warnings, field)) {
         showStatus(error, true);
         return;
     }
-    m_pendingTriggerDescription = trigger;
+    m_pendingTriggerDescription = describeTrigger(config.trigger);
     showStatus(tr("Starting capture..."));
     if (!m_device.startCapture(config)) {
         m_pendingTriggerDescription.clear();
@@ -584,7 +890,7 @@ void MainWindow::startCapture()
         showStatus(tr("Starting capture... Warning: %1").arg(QString::fromStdString(warnings.front())));
 }
 
-void MainWindow::setFieldError(QLineEdit* field, const QString& message)
+void MainWindow::setFieldError(QWidget* field, const QString& message)
 {
     if (!field->property("baseTip").isValid())
         field->setProperty("baseTip", field->toolTip());
@@ -593,31 +899,26 @@ void MainWindow::setFieldError(QLineEdit* field, const QString& message)
         field->setStyleSheet({});
         field->setToolTip(base);
     } else {
-        field->setStyleSheet(QStringLiteral("QLineEdit { border: 1px solid #c0392b; }"));
+        field->setStyleSheet(QStringLiteral("border: 1px solid #c0392b;"));
         field->setToolTip(base.isEmpty() ? message : base + "\n\n" + message);
     }
 }
 
+QWidget* MainWindow::captureControl(CaptureField field) const
+{
+    switch (field) {
+    case CaptureField::Rate: return m_rate;
+    case CaptureField::Samples: return m_samples;
+    case CaptureField::Trigger: return m_trigger;
+    case CaptureField::Windows: return m_windows;
+    case CaptureField::Channels: return m_channels;
+    }
+    return nullptr;
+}
+
 void MainWindow::updatePreflight()
 {
-    const int maxCh = m_device.isConnected() ? std::min<int>(kMaxProtocolChannels, m_device.info().channels) : static_cast<int>(kMaxProtocolChannels);
     std::string err;
-    QString text;
-    bool bad = false;
-
-    const auto channels = lt::cli::parseChannelList(str(m_channels->text()), maxCh, &err);
-    setFieldError(m_channels, channels ? QString{} : QString::fromStdString(err));
-    bad |= !channels;
-
-    const auto rate = lt::cli::parseQuantity(str(m_rate->text()));
-    const bool rateOk = rate && *rate > 0 && *rate <= UINT32_MAX;
-    setFieldError(m_rate, rateOk ? QString{} : tr("Invalid sample rate (e.g. 1M, 500k)"));
-    const auto samples = lt::cli::parseQuantity(str(m_samples->text()));
-    const bool samplesOk = samples && *samples >= 4 && *samples <= UINT32_MAX;
-    setFieldError(m_samples, samplesOk ? QString{} : tr("Invalid sample count (at least 4)"));
-    const auto trigger = lt::cli::parseTrigger(str(m_trigger->text()), maxCh + 1, &err);
-    setFieldError(m_trigger, trigger ? QString{} : QString::fromStdString(err));
-    bad |= !rateOk || !samplesOk || !trigger;
 
     QString latencyError;
     if (const QString lat = m_latencySpec->text().trimmed(); !lat.isEmpty()) {
@@ -653,44 +954,73 @@ void MainWindow::updatePreflight()
         setFieldError(m_decodeSpec, decodeError);
     }
 
-    if (bad) {
-        m_preflight->setText(tr("Pre-flight: fix the highlighted fields"));
+    CaptureRequestSpec spec;
+    CaptureConfig config;
+    CaptureField field{};
+    QString error;
+    std::vector<std::string> warnings;
+    const bool active = m_device.isConnected() || demoSelected();
+    const bool valid = buildSpec(spec, error, field) && (!active || buildConfig(spec, config, error, warnings, field));
+    m_capture->setEnabled(valid && m_device.isConnected() && !m_device.isBusy());
+    m_fixSetup->setVisible(!valid && active);
+    m_fixSetup->setEnabled(!m_device.isBusy());
+    const bool needsEdge = !valid && field == CaptureField::Trigger && spec.segments > 1 &&
+                           (!spec.trigger || spec.trigger->isPattern());
+    const QStringList names{tr("Channels"), tr("Rate"), tr("Samples"), tr("Trigger"), tr("Windows")};
+    const QStringList values{m_channels->text(), m_rate->text(), m_samples->text(), m_trigger->text(),
+                             QString::number(m_windows->value())};
+    if (needsEdge) {
+        error = tr("Windows=%1, Trigger=%2: a segmented capture needs a trigger on a rising or falling edge. "
+                   "Set Windows to 1, or keep %1 windows and select ↑ or ↓ on a channel.")
+                    .arg(spec.segments).arg(m_trigger->text());
+    } else if (!valid) {
+        const int i = static_cast<int>(field);
+        error = tr("%1=%2: %3").arg(names[i], values[i], error);
+    }
+    for (size_t i = 0; i < m_fieldHints.size(); ++i) {
+        const auto role = static_cast<CaptureField>(i);
+        const bool affected = !valid && (field == role || (needsEdge && role == CaptureField::Windows));
+        setFieldError(captureControl(role), affected ? error : QString{});
+        auto* hint = m_fieldHints[i];
+        hint->setText(affected && role == field ? error : QString{});
+        hint->setVisible(!hint->text().isEmpty());
+    }
+    setFieldError(m_triggerSummary, !valid && field == CaptureField::Trigger ? error : QString{});
+    if (!valid) {
+        m_invalidField = field;
+        const QString text = tr("%1\nOpen Setup → Next capture setup to fix %2.")
+                                 .arg(error, names[static_cast<int>(field)]);
+        m_preflight->setText(text);
+        m_settingsPreflight->setText(text);
         return;
     }
-    const double step = 1.0 / static_cast<double>(*rate);
-    text = tr("Window %1 | Step %2")
-               .arg(QString::fromStdString(lt::formatTime(step * static_cast<double>(*samples))),
+    const double step = 1.0 / spec.frequency;
+    QString text = tr("Window %1 | Step %2")
+               .arg(QString::fromStdString(lt::formatTime(step * static_cast<double>(spec.samples))),
                     QString::fromStdString(lt::formatTime(step)));
     if (m_windows->value() > 1)
         text += tr(" | %1 windows (time between them %2)")
                     .arg(m_windows->value())
-                    .arg(m_device.isConnected() &&
+                    .arg(demoSelected() || (m_device.isConnected() &&
                                  (m_device.info().version.family == lt::FirmwareFamily::Replay ||
-                                  (m_device.info().supportsEdgeBurstTimestamps() && m_windows->value() <= 254))
+                                  (m_device.info().supportsEdgeBurstTimestamps() && m_windows->value() <= 254)))
                              ? tr("timestamped")
                              : tr("not recorded"));
-    if (m_device.isConnected()) {
-        lt::CaptureConfig config;
-        QString trig;
-        QString error;
-        std::vector<std::string> warnings;
-        if (buildConfig(config, trig, error, &warnings)) {
-            text += tr(" | Pre %1 (%2)")
-                        .arg(config.trigger ? config.preSamples : 0)
-                        .arg(QString::fromStdString(lt::formatTime(
-                            step * static_cast<double>(config.trigger ? config.preSamples : 0))));
-            if (config.segments > 1)
-                text += tr(" | %1 samples stored").arg(config.preSamples +
-                                                         static_cast<uint64_t>(config.postSamples) * config.segments);
-            for (const auto& w : warnings)
-                text += "\n" + tr("Warning: %1").arg(QString::fromStdString(w));
-        } else {
-            text += "\n" + tr("Error: %1").arg(error);
-        }
+    if (active) {
+        const auto pre = config.trigger ? config.preSamples : 0;
+        text += tr(" | Pre %1 (%2)").arg(pre).arg(QString::fromStdString(lt::formatTime(step * pre)));
+        if (config.segments > 1)
+            text += tr(" | %1 samples stored").arg(pre + static_cast<uint64_t>(config.postSamples) * config.segments);
+        for (const auto& w : warnings)
+            text += "\n" + tr("Warning: %1").arg(QString::fromStdString(w));
+        if (config.trigger && config.trigger->isPattern() && m_device.isConnected() &&
+            m_device.info().version.family != FirmwareFamily::Replay && !picoHeaderPins(m_device.info().version.board).empty())
+            text += "\n" + tr("Pattern trigger: connect GP0 (pin 1) to GP1 (pin 2).");
     } else {
         text += tr(" | connect a device for Pre and limits");
     }
     m_preflight->setText(text);
+    m_settingsPreflight->setText(text);
 }
 
 void MainWindow::startProbe()
@@ -954,7 +1284,7 @@ void MainWindow::showEntry(std::size_t index)
     const auto& e = m_history[index];
     m_triggerDescription = e.trigger;
     m_setup = e.setup;
-    updateSetupButton();
+    updateMetadataButton();
     m_warnings = e.warnings;
     m_currentCaptureId = e.id;
     m_stamp = e.stamp;
@@ -971,6 +1301,7 @@ void MainWindow::showEntry(std::size_t index)
         m_waveform->setCursorB(*e.cursorB);
     restoreIdleState();
     updateHistoryUi();
+    updateDeviceSetup();
     updateReport();
 }
 
@@ -1093,14 +1424,13 @@ void MainWindow::setSetupMetadata(const lt::SetupInfo& setup)
         m_nextSetup = setup;
     if (m_viewIndex < m_history.size())
         m_history[m_viewIndex].setup = setup;
-    updateSetupButton();
+    updateMetadataButton();
     updateReport();
 }
 
-void MainWindow::updateSetupButton()
+void MainWindow::updateMetadataButton()
 {
-    if (m_setupButton)
-        m_setupButton->setText(tr("Setup (%1)").arg(m_setup.size()));
+    m_metadataButton->setText(tr("Metadata (%1)").arg(m_setup.size()));
 }
 
 void MainWindow::editSetupMetadata()
@@ -1510,17 +1840,16 @@ void MainWindow::saveCsv()
 
 void MainWindow::loadDemo()
 {
-    // 4 channels at 1 MHz: a 50 kHz clock, a delayed echo, a burst, and an idle-high line.
-    std::vector<uint32_t> samples(4000);
-    for (std::size_t i = 0; i < samples.size(); ++i) {
-        const bool clk = (i / 10) % 2;
-        const bool echo = i >= 205 && ((i - 205) / 10) % 2;
-        const bool burst = i >= 1000 && i < 1400 && ((i / 4) % 2);
-        samples[i] = (clk ? 1u : 0u) | (echo ? 2u : 0u) | (burst ? 4u : 0u) | 8u;
+    setCapture(ReplayDevice::demoRecording(), "CH1 rising");
+    if (!m_device.isConnected() && !m_device.isBusy()) {
+        m_demoPreviewId = m_currentCaptureId;
+        m_port->setCurrentIndex(m_port->findData(QString::fromLatin1(ReplayDevice::kDemoPort.data())));
+        updateDeviceSetup();
+        refreshPinout();
+        showStatus(tr("Demo preview: use Setup to configure, then Connect to capture on the simulated Pico"));
+    } else {
+        showStatus(tr("Demo capture (no hardware)"));
     }
-    setCapture(lt::CaptureBuffer({{0, "CLK"}, {1, "ECHO"}, {2, "BURST"}, {3, "IDLE_HI"}}, 1'000'000, 200, samples),
-               "CH1 rising");
-    showStatus(tr("Demo capture (no hardware)"));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1636,6 +1965,38 @@ void MainWindow::handleSession(const std::string& method, const json& params, se
         if (!checkCaptureId(params, reply))
             return;
         reply.ok(stateJson());
+    } else if (method == "get_gui_diagnostics") {
+        if (!params.empty()) {
+            reply.fail(sess::error::InvalidParams, "get_gui_diagnostics takes no parameters; only the GUI can enable sharing");
+            return;
+        }
+        const auto* preview = m_diagnosticsDialog ? m_diagnosticsDialog->sharedPreview() : nullptr;
+        if (!preview) {
+            reply.fail(sess::error::Failed, "GUI diagnostics are private. In Ask AI > Diagnostics, review the preview "
+                                            "and allow GUI-session / MCP clients to read it.");
+            return;
+        }
+        reply.ok({{"source", "gui_stderr"}, {"text", str(preview->text)}, {"omitted", preview->omitted}});
+    } else if (method == "get_pinout") {
+        if (params.contains("source") && (!params["source"].is_string() ||
+            (params["source"] != "setup" && params["source"] != "capture"))) {
+            reply.fail(sess::error::InvalidParams, "source must be 'setup' or 'capture'");
+            return;
+        }
+        const bool capture = params.value("source", std::string("setup")) == "capture";
+        if (!capture && params.contains("capture_id")) {
+            reply.fail(sess::error::InvalidParams, "capture_id only applies to source=capture");
+            return;
+        }
+        if (!checkCaptureId(params, reply))
+            return;
+        const auto w = picoWiring(capture);
+        if (!w.error.isEmpty()) {
+            reply.fail(capture && !m_waveform->hasCapture() ? sess::error::NoCapture : sess::error::InvalidParams,
+                       str(w.error));
+            return;
+        }
+        reply.ok(w.document());
     } else if (method == "get_report") {
         json bound = params;
         if (!bindAttempt(params, bound, reply))

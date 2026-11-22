@@ -91,6 +91,8 @@ struct SegmentLayout {
     }
 };
 
+enum class CaptureField { Channels, Rate, Samples, Trigger, Windows };
+
 struct CaptureConfig {
     std::vector<ChannelInfo> channels;
     uint32_t frequency = 1'000'000;
