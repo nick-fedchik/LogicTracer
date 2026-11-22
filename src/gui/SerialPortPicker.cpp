@@ -38,8 +38,8 @@ SerialPortPicker::SerialPortPicker()
 
 QString SerialPortPicker::port() const
 {
-    const QString data = currentData().toString();
-    return !data.isEmpty() && currentText() == itemText(currentIndex()) ? data : currentText().trimmed();
+    const QString itemPort = currentData().toString();
+    return !itemPort.isEmpty() && currentText() == itemText(currentIndex()) ? itemPort : currentText().trimmed();
 }
 
 void SerialPortPicker::refresh()

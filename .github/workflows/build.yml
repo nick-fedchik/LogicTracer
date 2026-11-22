@@ -14,7 +14,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build g++ qt6-base-dev qt6-serialport-dev nlohmann-json3-dev \
-            iverilog verilator yosys
+            iverilog verilator yosys python3-gi gir1.2-gtk-3.0 librsvg2-common
       - name: Configure (warnings as errors)
         run: cmake --preset debug
       - name: Build
