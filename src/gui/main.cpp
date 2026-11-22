@@ -24,7 +24,7 @@ int main(int argc, char* argv[])
     parser.addHelpOption();
     parser.addVersionOption();
     parser.addOption({"port", "Serial port to select and connect to (e.g. /dev/ttyACM0).", "path"});
-    parser.addOption({"open", "Open a saved capture file (.json or .vcd) on startup.", "file"});
+    parser.addOption({"open", "Open a saved capture or event recording (.json, .vcd, .lac, .ltevents) on startup.", "file"});
     parser.addOption({"demo", "Load a synthetic capture (no hardware needed)."});
     parser.addOption({"socket", "Session socket path (default: $LOGICTRACER_SOCKET or the per-user default).", "path"});
     parser.addOption({"no-session", "Do not open the local session endpoint (annotate/MCP integration)."});

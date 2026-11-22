@@ -37,6 +37,7 @@ The schemas ([JSON Schema 2020-12](https://json-schema.org/)) are in [`docs/sche
 | `analyze --json` | [`analyze.schema.json`](schema/analyze.schema.json) |
 | `diff --json` | [`diff.schema.json`](schema/diff.schema.json) |
 | `probe --json` | [`probe.schema.json`](schema/probe.schema.json) |
+| `events --json` / saved `.ltevents` (SocketCAN frames or GPIO edges) | [`events.schema.json`](schema/events.schema.json) / [`eventfile.schema.json`](schema/eventfile.schema.json) |
 | `detect --json` | [`detect.schema.json`](schema/detect.schema.json) |
 | `bootloader --json` | [`bootloader.schema.json`](schema/bootloader.schema.json) |
 | `about --json` | [`about.schema.json`](schema/about.schema.json) |
@@ -52,6 +53,16 @@ The schemas list **every** field (`additionalProperties: false`): a field that i
 and adding one changes the schema in the same commit. Fields that only appear in some cases (an `error`,
 `latency` statistics when there are pairs, the per-window latency of a segmented capture) are optional;
 values that can be unknown are typed `null` as well.
+
+## Native event recordings
+
+`events` reads exactly one explicit source (`--can IFACE`, `--gpio /dev/gpiochipN --line OFFSET`,
+or offline `--open FILE`). On Linux it stops at `--limit` events or `--duration-ms`, whichever comes
+first. An empty observation times out (exit 2); cancellation returns exit 1 / `error_kind: Cancelled`.
+Errors, cancellation and empty timeouts do not overwrite `--out-json`. The GPIO sequence counter
+starts at 1; `lost_before` is the unsigned 32-bit gap before this edge, including initial losses.
+`initial_level: null` means no initial level was measured. CAN timestamps are kernel software
+receive times on the realtime clock, not hardware bus timings. Neither source is a waveform.
 
 ## Determinism
 

@@ -54,7 +54,7 @@ public:
     void setCapture(const lt::CaptureBuffer& buffer, const QString& triggerDescription, lt::SetupInfo setup = {},
                     std::vector<std::string> warnings = {}, std::string deviceVersion = {}, std::string board = {},
                     std::optional<lt::SegmentLayout> segments = {});
-    // Loads a saved lossless .json or .vcd capture into the viewer.
+    // Loads a sampled capture into the waveform viewer, or opens a discrete recording in the event viewer.
     bool openCaptureFile(const QString& path, QString* error = nullptr);
     // The text "Copy for AI" puts on the clipboard: the report for the current view and cursors.
     [[nodiscard]] QString aiReport() const;

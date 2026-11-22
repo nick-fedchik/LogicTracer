@@ -111,6 +111,23 @@ class GuiTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void nativeRecordingOpensWithoutCreatingAWaveform()
+    {
+        MainWindow win;
+        QTemporaryDir tmp;
+        QFile file(tmp.filePath("edges.json"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(R"({"format":"logictracer-events-v1","schema_version":1,"source":{"kind":"gpio","chip":"/dev/gpiochip1","line":7,"clock":"hte","initial_level":null},"events":[{"timestamp_ns":9007199254740993,"sequence":3,"lost_before":2,"edge":"falling"}]})");
+        file.close();
+        QString err;
+        QVERIFY2(win.openCaptureFile(file.fileName(), &err), qPrintable(err));
+        auto* rows = win.findChild<QPlainTextEdit*>("nativeEventsText");
+        QVERIFY(rows);
+        QVERIFY(rows->toPlainText().contains("9007199254740993 ns  falling"));
+        QVERIFY(rows->toPlainText().contains("gap: 2") && rows->toPlainText().contains("initial level: unknown"));
+        QVERIFY(!win.waveform()->hasCapture());
+    }
+
     void viewFitsAndNeverScrollsPastTheCapture()
     {
         ViewTransform v;

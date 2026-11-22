@@ -3,6 +3,12 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.10.0] - 2026-11-22
+
+### Added
+- Record native Linux SocketCAN frames and GPIO v2 input edges from the CLI or GUI, without a Pico.
+  Event recordings retain the kernel clock and individual timestamps, not synthetic waveform samples (#32, #34).
+
 ## [0.9.1] - 2026-11-21
 
 ### Fixed

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Successful logictracer-cli events --json result",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "command", "status", "warnings", "recording"],
+  "properties": {
+    "schema_version": {"const": 1}, "command": {"const": "events"}, "status": {"const": "OK"},
+    "warnings": {"type": "array", "items": {"type": "string"}}, "recording": {"$ref": "eventfile.schema.json"}
+  }
+}
