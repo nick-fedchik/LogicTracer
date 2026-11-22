@@ -219,7 +219,7 @@ private Q_SLOTS:
         const auto unchanged = profiles::load(a, error);
         QVERIFY(unchanged);
         comparePlan(unchanged->fields, i2c);
-        const QString external = QDir::home().filePath(a);
+        const QString external = QDir::current().filePath(a);
         QVERIFY(QFile::copy(dir.filePath(a), external));
         selector.findChild<QPushButton*>("loadProfile")->click();
         auto* dialog = selector.findChild<QInputDialog*>();
@@ -342,7 +342,7 @@ private Q_SLOTS:
         QString error;
         QVERIFY(profiles::save("I2C", i2c, error));
         QVERIFY(profiles::save("UART", uart, error));
-        const QDir home = QDir::home();
+        const QDir home = QDir::current();
         QVERIFY(QDir().mkpath(home.filePath("bench")));
         QVERIFY(QFile::copy(QDir(profiles::directory()).filePath("UART.ltprofile"), home.filePath("bench/I2C.ltprofile")));
         QVERIFY(write(home.filePath("tiny.vcd"),
@@ -391,13 +391,17 @@ int main(int argc, char** argv)
     QTemporaryDir home(QDir::current().filePath(QStringLiteral("profiles-home-XXXXXX")));
     if (!home.isValid())
         return 1;
+    const QDir profileHome(home.filePath("profile-store"));
+    if (!profileHome.mkpath("."))
+        return 1;
     const QByteArray path = QFile::encodeName(home.path());
     for (const char* key : {"HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP"})
         qputenv(key, path);
     qputenv("LOGICTRACER_DENY_HARDWARE", "1");
+    qputenv("LOGICTRACER_TEST_PROFILE_HOME", QFile::encodeName(profileHome.path()));
     qputenv("QT_FORCE_STDERR_LOGGING", "1");
     QApplication app(argc, argv);
-    if (QDir::home() != QDir(home.path()) || !QDir::setCurrent(home.path()))
+    if (profiles::directory() != profileHome.filePath(".logictracer/profiles") || !QDir::setCurrent(home.path()))
         qFatal("Refusing to run profile tests outside their temporary home");
     ProfileTests tests;
     const int status = QTest::qExec(&tests, argc, argv);

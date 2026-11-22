@@ -15,6 +15,9 @@ add_library(logictracer_gui STATIC
     WaveformWidget.cpp WaveformWidget.hpp
 )
 add_library(LogicTracer::Gui ALIAS logictracer_gui)
+if(BUILD_TESTING)
+    target_compile_definitions(logictracer_gui PRIVATE LT_TEST_PROFILE_HOME)
+endif()
 target_link_libraries(logictracer_gui
     PUBLIC LogicTracer::Services Qt6::Widgets
     PRIVATE LogicTracer::Options Qt6::Concurrent)

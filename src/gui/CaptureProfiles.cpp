@@ -25,6 +25,19 @@ constexpr QLatin1StringView suffix(".ltprofile");
 constexpr std::size_t listLimit = 100;
 constexpr qint64 maxProfileBytes = 1 << 20; // room for four JSON-escaped QLineEdit values
 
+QDir profileHome()
+{
+#ifdef LT_TEST_PROFILE_HOME
+    // On Windows QDir::home() uses the process token, not the test's USERPROFILE.
+    if (qEnvironmentVariableIntValue("LOGICTRACER_DENY_HARDWARE") == 1) {
+        const QString home = qEnvironmentVariable("LOGICTRACER_TEST_PROFILE_HOME");
+        if (!home.isEmpty() && QDir::isAbsolutePath(home))
+            return QDir(home);
+    }
+#endif
+    return QDir::home();
+}
+
 bool fileName(const QString& name)
 {
     return !name.isEmpty() && name != "." && name != ".." && !QDir::fromNativeSeparators(name).contains('/')
@@ -37,7 +50,7 @@ bool fileName(const QString& name)
 // Do not create through (or later delete through) a redirected application/profiles directory.
 bool checkDirectory(bool create, QString& error)
 {
-    QDir parent = QDir::home();
+    QDir parent = profileHome();
     for (const auto& part : {QStringLiteral(".logictracer"), QStringLiteral("profiles")}) {
         const QFileInfo info(parent.filePath(part));
         if (create && !info.exists() && !info.isSymLink())
@@ -87,7 +100,7 @@ bool validFields(const CaptureFields& f, QString& error)
 
 QString directory()
 {
-    return QDir::home().filePath(QStringLiteral(".logictracer/profiles"));
+    return profileHome().filePath(QStringLiteral(".logictracer/profiles"));
 }
 
 QString savePath(const QString& name, QString& error)
@@ -118,7 +131,7 @@ bool save(const QString& name, const CaptureFields& f, QString& error)
                              {"trigger", f.trigger.toStdString()}, {"windows", f.windows}, {"timeout_ms", f.timeout}};
     std::string why;
     // Resolve the home itself (which can legitimately be a symlink), not the managed subdirectories.
-    const QDir home(QDir::home().canonicalPath());
+    const QDir home(profileHome().canonicalPath());
     const QString confinedPath = home.filePath(".logictracer/profiles/" + target.fileName());
     if (!writeJsonFile(confinedPath.toStdString(), doc, &why, true)) {
         error = QString::fromStdString(why);
