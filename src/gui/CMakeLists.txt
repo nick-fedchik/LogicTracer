@@ -28,7 +28,14 @@ target_link_libraries(logictracer-gui PRIVATE LogicTracer::Gui LogicTracer::Opti
 install(TARGETS logictracer-gui
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     BUNDLE DESTINATION .)
+set(icon_theme_dir "${CMAKE_INSTALL_DATADIR}/icons/hicolor")
+install(FILES ${PROJECT_SOURCE_DIR}/packaging/logictracer.svg
+    DESTINATION "${icon_theme_dir}/scalable/apps")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Running desktops check the theme root's mtime, not that of scalable/apps.
+    install(CODE "
+        get_filename_component(theme_root \"${icon_theme_dir}\" ABSOLUTE BASE_DIR \"\${CMAKE_INSTALL_PREFIX}\")
+        file(TOUCH_NOCREATE \"\$ENV{DESTDIR}\${theme_root}\")")
+endif()
 install(FILES ${PROJECT_SOURCE_DIR}/packaging/logictracer-gui.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES ${PROJECT_SOURCE_DIR}/packaging/logictracer.svg
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)

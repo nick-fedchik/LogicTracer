@@ -3,6 +3,12 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.9.1] - 2026-11-21
+
+### Fixed
+- Installing the GUI on Linux refreshes the `hicolor` theme so an already running GNOME Dock can find
+  the LogicTracer icon instead of showing a generic application icon.
+
 ## [0.9.0] - 2026-11-21
 
 ### Added
@@ -259,6 +265,7 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.9.1]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.9.1
 [0.9.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.9.0
 [0.8.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.8.0
 [0.7.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.7.0
