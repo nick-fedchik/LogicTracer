@@ -65,15 +65,6 @@ QPushButton* addApply(QVBoxLayout* layout, QFrame* frame, const std::function<vo
     return ok;
 }
 
-// A channel name goes into "n:name" tokens, so separators and blanks are not allowed.
-QString sanitizeName(QString name)
-{
-    name = name.trimmed();
-    for (const QChar bad : {QChar(','), QChar(':'), QChar(' '), QChar('\t')})
-        name.replace(bad, '_');
-    return name;
-}
-
 QComboBox* edgeCombo(bool falling)
 {
     auto* c = new QComboBox;
@@ -83,11 +74,9 @@ QComboBox* edgeCombo(bool falling)
     return c;
 }
 
-QComboBox* channelCombo(const std::vector<int>& channels, int current, bool allowNone)
+QComboBox* channelCombo(const std::vector<int>& channels, int current)
 {
     auto* c = new QComboBox;
-    if (allowNone)
-        c->addItem(QObject::tr("Immediate (none)"), kNoChannel);
     for (const int ch : channels)
         c->addItem(QString("CH%1").arg(ch), ch);
     const int idx = c->findData(current);
@@ -98,10 +87,8 @@ QComboBox* channelCombo(const std::vector<int>& channels, int current, bool allo
 
 }  // namespace
 
-QString composeChannelList(const std::vector<std::pair<int, QString>>& input)
+QString composeChannelList(const std::vector<std::pair<int, QString>>& channels)
 {
-    auto channels = input;
-    std::sort(channels.begin(), channels.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     QStringList tokens;
     for (std::size_t i = 0; i < channels.size();) {
         if (!channels[i].second.isEmpty()) {
@@ -167,6 +154,7 @@ QFrame* showChannelsBuilder(QWidget* anchor, QLineEdit* target, const std::strin
         auto* name = new QLineEdit(initial.count(n) ? initial[n] : QString{});
         name->setObjectName(QString("name%1").arg(n));
         name->setPlaceholderText(QObject::tr("name"));
+        name->setToolTip(QString::fromLatin1(kChannelNameRule.data()));
         name->setMaximumWidth(90);
         name->setEnabled(box->isChecked());
         QObject::connect(box, &QCheckBox::toggled, name, &QWidget::setEnabled);
@@ -195,53 +183,34 @@ QFrame* showChannelsBuilder(QWidget* anchor, QLineEdit* target, const std::strin
     });
 
     const QPointer<QLineEdit> field(target);
-    addApply(layout, frame, [field, boxes, names] {
+    auto* hint = new QLabel(QString::fromLatin1(kChannelNameRule.data()));
+    layout->addWidget(hint);
+    auto* apply = addApply(layout, frame, [field, boxes, names] {
         std::vector<std::pair<int, QString>> picked;
         for (std::size_t i = 0; i < boxes.size(); ++i)
             if (boxes[i]->isChecked())
-                picked.emplace_back(static_cast<int>(i) + 1, sanitizeName(names[i]->text()));
+                picked.emplace_back(static_cast<int>(i) + 1, names[i]->text());
         if (field && !picked.empty())
             field->setText(composeChannelList(picked));
     });
-    placeBelow(frame, anchor);
-    return frame;
-}
-
-QFrame* showTriggerBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels)
-{
-    auto* frame = makePopup(anchor, "triggerBuilder");
-    auto* layout = new QVBoxLayout(frame);
-
-    int channel = kNoChannel;
-    bool falling = false;
-    if (const auto parsed = lt::cli::parseTrigger(target->text().toStdString(), 32, nullptr); parsed && !parsed->none) {
-        channel = parsed->trigger.channel + 1;
-        falling = parsed->trigger.inverted;
+    const auto validate = [apply, boxes, names] {
+        bool any = false;
+        for (std::size_t i = 0; i < names.size(); ++i) {
+            if (!boxes[i]->isChecked())
+                continue;
+            any = true;
+            if (!validChannelName(names[i]->text().toStdString())) {
+                apply->setEnabled(false);
+                return;
+            }
+        }
+        apply->setEnabled(any);
+    };
+    for (std::size_t i = 0; i < boxes.size(); ++i) {
+        QObject::connect(boxes[i], &QCheckBox::toggled, frame, validate);
+        QObject::connect(names[i], &QLineEdit::textChanged, frame, validate);
     }
-    auto* row = new QHBoxLayout;
-    auto* ch = channelCombo(channels, channel, true);
-    ch->setObjectName("channel");
-    auto* edge = edgeCombo(falling);
-    edge->setObjectName("edge");
-    edge->setEnabled(ch->currentData().toInt() != kNoChannel);
-    QObject::connect(ch, &QComboBox::currentIndexChanged, edge,
-                     [ch, edge](int) { edge->setEnabled(ch->currentData().toInt() != kNoChannel); });
-    row->addWidget(new QLabel(QObject::tr("Trigger on")));
-    row->addWidget(ch);
-    row->addWidget(edge);
-    layout->addLayout(row);
-    auto* note = new QLabel(QObject::tr("LogicTracer firmware fires only on a real edge. Older firmware is level "
-                                        "sensitive: if the line is already at the target level when armed, it fires "
-                                        "immediately."));
-    note->setWordWrap(true);
-    note->setMaximumWidth(360);
-    layout->addWidget(note);
-
-    const QPointer<QLineEdit> field(target);
-    addApply(layout, frame, [field, ch, edge] {
-        if (field)
-            field->setText(composeTrigger(ch->currentData().toInt(), edge->currentData().toBool()));
-    });
+    validate();
     placeBelow(frame, anchor);
     return frame;
 }
@@ -261,11 +230,11 @@ QFrame* showLatencyBuilder(QWidget* anchor, QLineEdit* target, const std::vector
         reactFalling = parsed->reactFalling;
     }
     auto* grid = new QGridLayout;
-    auto* stimCh = channelCombo(channels, stim, false);
+    auto* stimCh = channelCombo(channels, stim);
     stimCh->setObjectName("stimChannel");
     auto* stimEdge = edgeCombo(stimFalling);
     stimEdge->setObjectName("stimEdge");
-    auto* reactCh = channelCombo(channels, react, false);
+    auto* reactCh = channelCombo(channels, react);
     reactCh->setObjectName("reactChannel");
     auto* reactEdge = edgeCombo(reactFalling);
     reactEdge->setObjectName("reactEdge");

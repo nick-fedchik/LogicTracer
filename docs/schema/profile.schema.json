@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nick-fedchik/LogicTracer/docs/schema/profile.schema.json",
+  "title": "LogicTracer next-capture profile (.ltprofile)",
+  "description": "A saved plan, not a recording. Channels and trigger use the CLI syntax; quantities retain their display units. The active device determines which plans can be captured.",
+  "type": "object",
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "channels": { "type": "string", "description": "Ordered, one-based channels with optional aliases." },
+    "rate": { "type": "string", "description": "Sample rate in Hz." },
+    "samples": { "type": "string", "description": "Samples in the first window (pre + post)." },
+    "trigger": { "type": "string", "description": "Immediate, edge, or a contiguous pattern of levels." },
+    "windows": { "type": "integer", "minimum": 1, "maximum": 65536 },
+    "timeout_ms": { "type": "integer", "minimum": 0, "maximum": 600000 }
+  },
+  "required": ["schema_version", "channels", "rate", "samples", "trigger", "windows", "timeout_ms"],
+  "additionalProperties": false,
+  "examples": [
+    { "schema_version": 1, "channels": "4:SCL,3:SDA", "rate": "2M", "samples": "300", "trigger": "4:rising", "windows": 3, "timeout_ms": 1200 }
+  ]
+}

@@ -1,6 +1,6 @@
 # Backlog
 
-Updated: 2026-11-17.
+Updated: 2026-11-21.
 
 ## Scope (decision 2026-11-17)
 The value of this project is the **RP2040 firmware** and the **analyzer application** (CLI, GUI, MCP), and
@@ -29,6 +29,126 @@ open-source tools only (no Vivado). Markers: `[x]` done, `[ ]` open, `[-]` not p
       holds the port; verified on the Pico through the GUI, CLI and MCP.
 - Pico 2: the generator builds for it but has never run on one (no board; not planned). The Turbo image
   has not been run through the self-test either (see B-02).
+
+## B-12. Hide and restore the Ask AI panel
+- [x] `_` hides only **Ask AI**. **Show Ask AI** in the status bar restores the default panel size, not the
+      last dragged size, and keeps the note and report.
+
+## B-13. Device-specific capture setup
+- [x] **Setup** opens **Pico pinout and wiring → Next capture setup** for a Pico or a demo. **Channels**,
+      **Rate**, **Samples**, **Windows**, **Trigger** and **Timeout** configure the next capture without
+      modifying the displayed recording. Disconnecting disables Setup; viewing a saved Pico capture does
+      not enable it. File replay without a known header retains generic capture fields, not a guessed pin map.
+      **Metadata** in the Ask AI panel remains a separate report editor.
+
+## B-14. Choose the trigger directly on the Pico pinout
+- [x] In **Next capture setup**, replace the Trigger text field and `…` popup with controls beside the pins.
+      Keep the trigger independent of the selected capture pins: changing what fires the trigger must not change
+      what gets recorded. Clearing the trigger returns to immediate capture.
+      For an edge, select `↑` or `↓` on one input; selecting another replaces it. Include `EXT TRIG` on a
+      physical Pico. For a pattern, select `0` or `1` on consecutive channels within CH1–CH16: all levels
+      must match at once. Flag gaps and `Windows > 1`; show the GP0–GP1 jumper requirement on physical Pico.
+      Acceptance: with the demo recording CH1 and CH2, set `CH3 ↑`, switch to `CH3=0 AND CH4=1`, then clear
+      the trigger. Each capture must use the chosen condition and return only CH1 and CH2, without typing
+      or opening a popup. No change to the firmware or CLI/MCP syntax.
+
+## B-15. Validate capture settings before enabling Capture
+- [x] In **Next capture setup**, check the plan against the active device's limits whenever the device,
+      Channels, Rate, Samples, Windows or Trigger changes. Use the same limits as capture, including Pico
+      buffer capacity and replay's available samples at the selected rate. Show the requested value and
+      the allowed limit beside the offending field, not only in a tooltip or after a failed capture.
+      Disable **Capture** while the plan is invalid; re-enable it when corrected and the device is idle.
+      Invalid capture-only settings must not disable **Probe**.
+      Acceptance: on a connected **Demo Pico**, with no trigger and one window, `Rate=500k, Samples=3000`
+      must show “requested 3000; maximum 2000 at 500k (4 ms)” before any request is sent. Changing Samples
+      to `2000` must clear the error and allow capture. On an emulated Pico, also check an out-of-range rate
+      and a single triggered window too large for the selected channels.
+
+## B-16. Reset capture setup to device defaults
+- [x] Add **Reset** to **Next capture setup**. One click restores **Channels, Rate, Samples, Windows,
+      Trigger and Timeout** to the active device's defaults, even when the current input is invalid.
+      Update the selected pins, channel names and validation immediately, without a separate **Apply**.
+      Reset affects only the next capture plan: it does not start a capture, change the displayed
+      recording or history, or overwrite the other device's plan.
+      Acceptance: change all six fields and leave one invalid. After **Reset**, all six must match a
+      fresh setup for the same device and the error must clear. Check both **Demo Pico** (four named
+      channels, `Samples=1k`) and an emulated standard Pico (`Channels=1-8`, `Samples=10k`).
+
+## B-17. Save and switch named experiment profiles
+- [x] In **Next capture setup**, let the operator save the current plan under a name and select a saved
+      profile from a **Profile** list. Keep profiles across application restarts and independent of
+      port or board identity, so two Picos used on the same USB port can have different setups.
+      Save and restore every setup field: channel numbers in capture order with their user-assigned
+      names, Rate, Samples, Windows, Timeout and the complete Trigger (none, edge with source and
+      polarity, or pattern with channels and levels). Selecting a profile updates the pin map and checks
+      the plan against the connected device without starting a capture or changing the displayed recording.
+      Editing fields or pressing **Reset** changes only the working plan; overwriting a profile requires
+      an explicit save.
+- **Storage:** save one `<name>.ltprofile` file per profile in `~/.logictracer/profiles/` under the
+  current user's home; create the directory on first save. No separate registry or application limit
+  on the number of files stored. Profiles outside the dropdown remain loadable by name or path.
+- **Dropdown:** list at most the 100 most recently modified `.ltprofile` files, newest first (filesystem
+  modification time; break ties by full filename). Show at most five rows at once, with a vertical
+  scrollbar only when there are more than five. Display the filename without its extension, capped at
+  32 user-visible characters including `…` when shortened. Keep the full filename for loading and deletion.
+  Build the list from directory metadata without opening profile files. An unordered directory may need
+  a full metadata scan to find the newest 100; do that off the GUI thread and retain at most 100 candidates
+  rather than collecting and sorting every filename.
+- **Deletion:** provide **Delete profile** beside the selector. Show the selected profile's name and
+  file path for confirmation. On confirmation remove only that file and refresh the list; on failure
+  show the error. Cancelling makes no changes.
+- **Startup:** accept an optional positional argument. `logictracer-gui I2C` or `logictracer-gui I2C.ltprofile`
+  looks in the profiles directory. An explicit relative or absolute path, e.g.
+  `logictracer-gui ./bench/UART.ltprofile`, loads that file even outside the directory. This selects the
+  next capture setup without starting a capture; `--open` still opens a recording. Report a missing or
+  invalid profile instead of silently falling back to defaults.
+- **Acceptance:** save `I2C` (`4:SCL,3:SDA`, CH4 rising, three windows) and `UART` (`1:TX,2:RX`,
+  `1=0,2=1` pattern, one window) with different rates, sample counts and timeouts. Restart the GUI,
+  reconnect an emulated Pico on the same port and switch profiles: the channel order, names and all
+  other settings must match each saved setup. Copy, rename or remove a profile in the filesystem: reopening the list
+  reflects the change and ignores unrelated files. Launch by name and by explicit path and verify the
+  same settings as when the profile is selected in Setup. Cancel deleting `UART`: both profiles remain.
+  Confirm deletion: `UART.ltprofile` is gone from disk and the list after restart; `I2C` still loads unchanged.
+- **Dropdown check:** with five profiles there is no scrollbar; adding a sixth enables scrolling.
+  With 101 matching files whose modification times differ from creation order, scrolling must reach the
+  100th newest but not the oldest; the oldest must still load by name. Two long names sharing a 32-character
+  prefix must have labels of at most 32 characters and still open and delete the correct files.
+
+## B-18. Give LogicTracer a digital strobe icon
+- [x] Redesign the [application icon](../packaging/logictracer.svg) around one short digital
+      pulse: a low baseline, a rising edge, a brief high level and a falling edge back to low. Use the
+      same artwork for the GUI and the installed launcher; keep the Linux desktop icon name `logictracer`.
+      Acceptance: both edges remain distinct at 16×16 and 32×32 px. After installation, the launcher
+      and the running application in the desktop app switcher show the same strobe icon.
+
+## B-19. Make GUI setup errors copyable and show how to fix them
+- [x] With **Demo Pico** connected, set `Windows=3` and `Trigger=none`, then close Setup. The main window
+      previously showed only “Error: a segmented capture needs a trigger (every window starts on a trigger
+      edge)”, with no way to copy it or find the conflicting settings.
+- **Expected:** name the conflicting fields and their values, then explain the valid corrections in the
+  message itself, not only in a tooltip. Let the operator copy the full diagnosis and guidance as plain
+  text from the main window or Setup. Provide an **Open Setup** action beside the main-window error
+  that opens **Next capture setup**, focuses the relevant field and identifies any related field.
+  This complements [B-15](#b-15-validate-capture-settings-before-enabling-capture); the validation rules do not change.
+- **Acceptance:** in the example above, copy the message to the clipboard and verify it gives both options:
+  set **Windows** to `1` for an immediate capture, or keep `3` and select a rising or falling edge on a
+  channel under **Trigger**. **Open Setup** must lead directly to those controls without changing the plan
+  or starting a capture. Trying each correction separately must clear the error in both views.
+
+## B-20. Share recent GUI stderr with Copilot on request
+- [x] Keep a bounded in-memory tail of `logictracer-gui`'s own stderr from startup, including Qt
+      platform messages and direct stderr writes. Preserve normal terminal output. Keep the Qt
+      category and severity when available; a diagnostic is not a failed capture just because it was
+      written to stderr. Limit both lines and bytes and indicate when older text was omitted.
+- **Access:** let the operator preview the diagnostics and opt in to sharing them from **Ask AI** or
+  through a read-only GUI-session/MCP tool. Share only the current GUI session's diagnostics, not the
+  terminal history or the stderr of Copilot or the MCP server. Mask credentials and process addresses
+  in the shared text; do not append raw logs to every AI report or write them to MCP protocol stdout.
+- **Acceptance:** an offscreen test emits a synthetic `qt.qpa.wayland.textinput` focus warning and a
+  direct stderr marker. Both still reach the terminal. With sharing off, neither is exposed to Copilot;
+  with sharing on, both appear in the preview and tool response, with sample addresses and tokens masked.
+  Exceeding the buffer limit returns only the marked tail and does not change capture status. No Pico or
+  real Wayland focus fault is needed for the test.
 
 ## Done recently
 - Independent audit by four models plus a re-audit (`docs/audit/`): all confirmed P0/P1 findings fixed

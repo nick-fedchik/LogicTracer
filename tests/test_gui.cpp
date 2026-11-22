@@ -15,14 +15,20 @@
 #include <QFrame>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QTabBar>
 #include <QTableWidget>
 #include <QWheelEvent>
 #include <QToolButton>
 #include <QMenu>
 #include <QLineEdit>
+#include <QProcess>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QSerialPort>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QSplitter>
+#include <QStatusBar>
 #include <QTemporaryDir>
 #include <QMessageBox>
 #include <QTimer>
@@ -83,6 +89,21 @@ QLineEdit* field(MainWindow& w, const char* name)  // channels, rate, samples, t
 {
     return w.findChild<QLineEdit*>(name);
 }
+
+#ifdef Q_OS_LINUX
+bool holdPort(QProcess& holder, const QString& port)
+{
+    holder.setChildProcessModifier([path = QFile::encodeName(port)] {
+        const int fd = ::open(path.constData(), O_RDONLY | O_NOCTTY);
+        if (fd < 0 || ::dup2(fd, STDIN_FILENO) < 0)
+            ::_exit(1);
+        if (fd != STDIN_FILENO)
+            ::close(fd);
+    });
+    holder.start("sleep", {"60"});
+    return holder.waitForStarted();
+}
+#endif
 
 }  // namespace
 
@@ -379,6 +400,203 @@ private Q_SLOTS:
         QVERIFY(coloured > 500);
     }
 
+    void askAiRestoresTheDefaultSplitWithoutLosingTheNote()
+    {
+        MainWindow win;
+        win.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&win));
+        auto* split = win.findChild<QSplitter*>();
+        auto* pane = split->widget(1);
+        auto* hide = pane->findChild<QToolButton*>("hideAskAi");
+        QVERIFY(hide && hide->text() == "_");
+        auto* restore = button(win, "Show Ask AI");
+        QVERIFY(restore && win.statusBar()->isAncestorOf(restore));
+        auto* note = field(win, "aiNote");
+        note->setText("keep this question");
+        const auto original = split->sizes();
+        split->setSizes({300, 600});
+        QVERIFY(split->sizes() != original);
+        QTest::mouseClick(hide, Qt::LeftButton);
+        QVERIFY(!pane->isVisible() && win.waveform()->isVisible() && restore->isVisible());
+        QTest::mouseClick(restore, Qt::LeftButton);
+        QVERIFY(pane->isVisible() && !restore->isVisible());
+        QTRY_COMPARE(split->sizes(), original);
+        QCOMPARE(note->text(), QString("keep this question"));
+    }
+
+    void demoSetupConfiguresTheNextCaptureNotTheRecording()
+    {
+        MainWindow win;
+        win.show();
+        auto* setup = button(win, "Setup");
+        QVERIFY(setup && !setup->isEnabled());
+        win.setCapture(toggling(), {}, {}, {}, {}, "PICO");
+        QVERIFY(!setup->isEnabled());  // an imported Pico recording is not a connected device
+        win.loadDemo();
+        const auto preview = win.captureId();
+        QVERIFY(setup->isEnabled() && !win.device().isConnected());
+        win.findChild<QAction*>("showPinout")->trigger();
+        auto* dialog = win.findChild<QDialog*>("picoPinout");
+        auto* source = dialog->findChild<QTabBar*>("pinoutSource");
+        QVERIFY(source);
+        QCOMPARE(source->currentIndex(), 1);
+        setup->click();
+        QCOMPARE(source->currentIndex(), 0);
+        for (const auto* name : {"channels", "rate", "samples", "windows", "triggerSummary", "timeout"}) {
+            auto* editor = dialog->findChild<QWidget*>(name);
+            QVERIFY2(editor && editor->isVisible() && editor->isEnabled(), name);
+            QVERIFY(!win.centralWidget()->findChild<QWidget*>(name));
+        }
+        field(win, "channels")->setText("2:ECHO_RX,1:CLK");
+        field(win, "rate")->setText("500k");
+        field(win, "samples")->setText("50");
+        field(win, "trigger")->setText("1:rising");
+        dialog->findChild<QSpinBox*>("windows")->setValue(2);
+        dialog->findChild<QSpinBox*>("timeout")->setValue(1234);
+        source->setCurrentIndex(1);
+        QVERIFY(!field(win, "rate")->isVisible());
+        QCOMPARE(win.captureId(), preview);
+        QCOMPARE(win.waveform()->capture().frequency(), 1'000'000u);
+        QCOMPARE(win.waveform()->capture().channels()[0].name, std::string("CLK"));
+        dialog->close();
+
+        button(win, "Connect")->click();  // explicitly connect to the selected simulator
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        QVERIFY(win.device().info().version.family == lt::FirmwareFamily::Replay);
+        setup->click();
+        QCOMPARE(source->currentIndex(), 0);
+        QCOMPARE(dialog->findChild<QSpinBox*>("timeout")->value(), 1234);
+        dialog->close();
+        button(win, "Capture")->click();
+        QTRY_VERIFY_WITH_TIMEOUT(win.captureId() != preview, 5000);
+        const auto& buf = win.waveform()->capture();
+        QCOMPARE(buf.frequency(), 500'000u);
+        QCOMPARE(buf.channels().size(), std::size_t{2});
+        QCOMPARE(buf.channels()[0].name, std::string("ECHO_RX"));
+        QCOMPARE(buf.channels()[0].number, 1);
+        QCOMPARE(buf.size(), std::size_t{95});  // 5 pre + 2 windows of 45 post
+        QCOMPARE(win.waveform()->segmentStarts().size(), std::size_t{2});
+        button(win, "Disconnect")->click();
+        QTRY_VERIFY(!setup->isEnabled());
+        QCOMPARE(field(win, "channels")->text(), QString("1-8"));  // not the simulator's plan
+    }
+
+    void triggerPinsChooseWhatFiresNotWhatIsRecorded()
+    {
+        MainWindow win;
+        win.show();
+        win.loadDemo();
+        button(win, "Connect")->click();
+        QTRY_VERIFY(win.device().isConnected());
+        button(win, "Setup")->click();
+        field(win, "channels")->setText("1:CLK,2:ECHO");
+        field(win, "samples")->setText("50");
+        auto* capture = button(win, "Capture");
+        auto* notice = win.findChild<QLabel*>("preflight");
+        auto* ch3Rise = win.findChild<QToolButton*>("pinTrigger3_0");
+        auto* ch3Low = win.findChild<QToolButton*>("pinTrigger3_2");
+        auto* ch4High = win.findChild<QToolButton*>("pinTrigger4_3");
+        auto* ext = win.findChild<QToolButton*>("pinTrigger25_0");
+        QVERIFY(ch3Rise && ch3Low && ch4High && ext && !ext->isVisible());
+        auto* outsideDemo = win.findChild<QPushButton*>("pinPad32");
+        QVERIFY(outsideDemo && !outsideDemo->isEnabled());
+        QSignalSpy completed(&win.device(), &lt::AsyncDevice::captureFinished);
+        auto run = [&](const QString& trigger) {
+            QVERIFY(capture->isEnabled());
+            capture->click();
+            QTRY_COMPARE(completed.count(), 1);
+            const auto r = completed.takeFirst().at(0).value<lt::CaptureResult>();
+            QVERIFY2(r.buffer.has_value(), r.error.c_str());
+            QCOMPARE(r.triggerUsed ? QString::fromStdString(r.triggerUsed->describe()) : QString{}, trigger);
+            QCOMPARE(r.buffer->channels().size(), std::size_t{2});
+            QCOMPARE(r.buffer->channels()[0].number, 0);
+            QCOMPARE(r.buffer->channels()[1].number, 1);
+        };
+        ch3Rise->click();
+        run("CH3 rising");
+        ch3Low->click();
+        ch4High->click();
+        QVERIFY(!ch3Rise->isChecked());
+        auto* gap = win.findChild<QToolButton*>("pinTrigger1_2");
+        gap->click();
+        QVERIFY(!capture->isEnabled() && notice->text().contains("gap"));
+        gap->click();
+        run("CH3-CH4==01");
+        win.findChild<QPushButton*>("clearTrigger")->click();
+        run({});
+    }
+
+    void setupGuidesOperatorAndResetsAnInvalidDemoPlan()
+    {
+        MainWindow win;
+        win.show();
+        field(win, "channels")->setText("5:OTHER_PICO");
+        win.loadDemo();
+        const auto preview = win.captureId();
+        button(win, "Connect")->click();
+        QTRY_VERIFY(win.device().isConnected());
+        button(win, "Setup")->click();
+        auto* dialog = win.findChild<QDialog*>("picoPinout");
+        auto* windows = win.findChild<QSpinBox*>("windows");
+        auto* timeout = win.findChild<QSpinBox*>("timeout");
+        auto* capture = button(win, "Capture");
+        auto* error = win.findChild<QLabel*>("preflight");
+        auto* fix = win.findChild<QPushButton*>("fixCaptureSetup");
+        field(win, "rate")->setText("500k");
+        field(win, "samples")->setText("3000");
+        QVERIFY(!capture->isEnabled() && button(win, "Probe")->isEnabled());
+        QVERIFY(error->text().contains("3000") && error->text().contains("maximum 2000") && error->text().contains("4 ms"));
+        QVERIFY(dialog->findChild<QLabel*>("samplesError")->isVisible());
+        field(win, "samples")->setText("50k");
+        QVERIFY(error->text().contains("maximum 2000"));  // not the simulated device's larger byte buffer
+        field(win, "samples")->setText("2000");
+        QVERIFY(capture->isEnabled());
+        field(win, "samples")->setText("50");
+        windows->setValue(3);
+        dialog->close();
+        QVERIFY(fix->isVisible() && !capture->isEnabled());
+        QVERIFY(error->text().contains("Windows to 1") && error->text().contains("rising or falling"));
+        error->setSelection(0, static_cast<int>(error->text().size()));
+        QTest::keySequence(error, QKeySequence::Copy);
+        QCOMPARE(QApplication::clipboard()->text(), error->text());
+        fix->click();
+        auto* edge = win.findChild<QToolButton*>("pinTrigger1_0");
+        QTRY_VERIFY(edge->hasFocus());
+        auto* setupError = dialog->findChild<QLabel*>("setupPreflight");
+        QVERIFY(setupError && setupError->isVisible());
+        QCOMPARE(setupError->text(), error->text());
+        QApplication::clipboard()->clear();
+        setupError->setSelection(0, static_cast<int>(setupError->text().size()));
+        QTest::keySequence(setupError, QKeySequence::Copy);
+        QCOMPARE(QApplication::clipboard()->text(), setupError->text());
+        edge->click();
+        QVERIFY(capture->isEnabled() && !fix->isVisible());
+        QVERIFY(!error->text().contains("Open Setup") && !setupError->text().contains("Open Setup"));
+        win.findChild<QPushButton*>("clearTrigger")->click();
+        windows->setValue(1);
+        QVERIFY(capture->isEnabled());
+        QCOMPARE(setupError->text(), error->text());
+        QVERIFY(!setupError->text().contains("Open Setup"));
+
+        field(win, "channels")->setText("2:OTHER");
+        win.findChild<QToolButton*>("pinTrigger2_1")->click();
+        windows->setValue(2);
+        timeout->setValue(7);
+        field(win, "rate")->setText("invalid");
+        win.findChild<QPushButton*>("resetCaptureSetup")->click();
+        QCOMPARE(field(win, "channels")->text(), QString("1:CLK,2:ECHO,3:BURST,4:IDLE_HI"));
+        QCOMPARE(field(win, "rate")->text(), QString("1M"));
+        QCOMPARE(field(win, "samples")->text(), QString("1k"));
+        QCOMPARE(field(win, "trigger")->text(), QString("none"));
+        QCOMPARE(windows->value(), 1);
+        QCOMPARE(timeout->value(), 5000);
+        QCOMPARE(field(win, "pinName5")->text(), QString("ECHO"));
+        QVERIFY(capture->isEnabled() && !fix->isVisible());
+        QCOMPARE(win.captureId(), preview);
+        win.connectOrDisconnect();
+        QTRY_COMPARE(field(win, "channels")->text(), QString("5:OTHER_PICO"));
+    }
+
     void capturesThroughTheUiAgainstAnEmulatedDevice()
     {
         fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
@@ -398,14 +616,17 @@ private Q_SLOTS:
         win.setPortText(QString::fromStdString(dev.port()));
         auto* connect = button(win, "Connect");
         auto* capture = button(win, "Capture");
+        auto* setup = button(win, "Setup");
         QVERIFY(connect && capture);
-        QVERIFY(!capture->isEnabled());
+        QVERIFY(setup && !setup->isEnabled() && !capture->isEnabled());
 
         QTest::mouseClick(connect, Qt::LeftButton);
         QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
         QTRY_VERIFY(capture->isEnabled());
         QCOMPARE(connect->text(), QString("Disconnect"));
-
+        QVERIFY(setup->isEnabled());
+        setup->click();
+        QVERIFY(field(win, "channels")->isVisible());
         field(win, "channels")->setText("1,2");
         field(win, "samples")->setText("200");
         QTest::mouseClick(capture, Qt::LeftButton);
@@ -423,6 +644,131 @@ private Q_SLOTS:
 
         QTest::mouseClick(connect, Qt::LeftButton);  // disconnect
         QTRY_VERIFY(!win.device().isConnected());
+        QVERIFY(!setup->isEnabled() && !field(win, "channels")->isVisible());
+    }
+
+#ifdef Q_OS_LINUX
+    void occupiedPortIsIdentifiedAndRefreshAllowsReconnection()
+    {
+        std::atomic<int> handshakes{0};
+        fake::Device dev([&](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload.front() == 0) {
+                ++handshakes;
+                d.send(fake::idReply("V6_5", true));
+            }
+        });
+        const auto port = QString::fromStdString(dev.port());
+        QProcess holder;
+        QVERIFY(holdPort(holder, port));
+        const auto cleanup = qScopeGuard([&] {
+            if (holder.state() != QProcess::NotRunning) {
+                holder.terminate();
+                holder.waitForFinished();
+            }
+        });
+        const auto pid = QString::number(holder.processId());
+        MainWindow win;
+        win.show();
+        auto* ports = win.findChild<QComboBox*>("port");
+        auto* connect = button(win, "Connect");
+        ports->addItem("Emulated Pico", port);
+        ports->setCurrentIndex(ports->count() - 1);
+        QTRY_VERIFY_WITH_TIMEOUT(ports->currentText().contains("in use", Qt::CaseInsensitive), 2000);
+        auto* info = win.findChild<QLabel*>("deviceInfo");
+        QVERIFY(info && info->text().contains(port) && info->text().contains(pid));
+        QVERIFY(info->text().contains("sleep") && info->text().contains("Refresh"));
+        QVERIFY(!connect->isEnabled());
+        QCOMPARE(handshakes.load(), 0);
+
+        QTemporaryDir aliases;
+        const auto alias = aliases.filePath("pico");
+        QVERIFY(QFile::link(port, alias));
+        win.setPortText(alias);
+        QTRY_VERIFY(info->text().contains(alias) && info->text().contains(pid));
+        ports->setCurrentIndex(ports->findData("demo:pico"));
+        QVERIFY(connect->isEnabled() && !info->text().contains(pid));
+        win.setPortText(port);
+        holder.terminate();
+        QVERIFY(holder.waitForFinished());
+        button(win, "Refresh")->click();
+        QCOMPARE(ports->currentText(), port);  // Refresh must preserve a manually entered path.
+        QTRY_VERIFY(connect->isEnabled() && !info->text().contains(pid));
+        QCOMPARE(handshakes.load(), 0);
+        connect->click();
+        QTRY_VERIFY(win.device().isConnected());
+        QCOMPARE(handshakes.load(), 1);
+    }
+
+    void connectRechecksHolderBeforeSendingTheHandshake()
+    {
+        std::atomic<int> handshakes{0};
+        fake::Device dev([&](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload.front() == 0) {
+                ++handshakes;
+                d.send(fake::idReply("V6_5", true));
+            }
+        });
+        const auto port = QString::fromStdString(dev.port());
+        MainWindow win;
+        win.setPortText(port);
+        QProcess holder;
+        QVERIFY(holdPort(holder, port));
+        const QString pid = QString::number(holder.processId());
+        QSignalSpy opened(&win.device(), &lt::AsyncDevice::opened);
+        win.connectOrDisconnect();  // Same path as --port, without waiting for a picker scan.
+        QTRY_COMPARE(opened.count(), 1);
+        holder.terminate();
+        QVERIFY(holder.waitForFinished());
+        QVERIFY(!win.device().isConnected());
+        QVERIFY(opened.takeFirst().at(1).toString().contains(pid));
+        QCOMPARE(handshakes.load(), 0);
+        QCOMPARE(dev.cancelCount(), 0);
+
+        win.setPortText("/dev/pts/nonexistent-logictracer");
+        win.connectOrDisconnect();
+        QTRY_COMPARE(opened.count(), 1);
+        const QString error = opened.takeFirst().at(1).toString();
+        QVERIFY(error.contains("cannot open") && !error.contains("in use", Qt::CaseInsensitive));
+    }
+
+    void portPermissionErrorIsNotAnOccupancyReport()
+    {
+        if (::geteuid() == 0)
+            QSKIP("root can open a PTY even with all permission bits cleared");
+        fake::Device dev([](fake::Device&, const auto&) {});
+        const auto port = QString::fromStdString(dev.port());
+        const auto permissions = QFile::permissions(port);
+        QVERIFY(QFile::setPermissions(port, {}));
+        const auto restore = qScopeGuard([&] { QFile::setPermissions(port, permissions); });
+        QSerialPort native(port);
+        QVERIFY(!native.open(QIODevice::ReadWrite));
+        QCOMPARE(native.error(), QSerialPort::PermissionError);
+        MainWindow win;
+        win.setPortText(port);
+        QSignalSpy opened(&win.device(), &lt::AsyncDevice::opened);
+        win.connectOrDisconnect();
+        QTRY_COMPARE(opened.count(), 1);
+        QCOMPARE(opened.takeFirst().at(1).toString(), QString("cannot open %1: %2").arg(port, native.errorString()));
+        QVERIFY(button(win, "Connect")->isEnabled());
+    }
+#endif
+
+    void unsupportedDeviceNeverOffersPicoWiring()
+    {
+        fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
+            if (payload[0] == 0)
+                d.send("LOGIC_ANALYZER_ZERO_V6_5\nFREQ:100000000\nBLASTFREQ:200000000\nBUFFER:131072\nCHANNELS:24\n");
+        });
+        LT_REQUIRE_PTY(dev);
+        MainWindow win;
+        win.show();
+        win.setPortText(QString::fromStdString(dev.port()));
+        win.connectOrDisconnect();
+        QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        QVERIFY(!button(win, "Setup")->isEnabled());
+        win.findChild<QAction*>("showPinout")->trigger();
+        QVERIFY(!win.findChild<QWidget*>("picoBoard")->isVisible());
+        QVERIFY(field(win, "rate")->isVisible());  // generic capture settings remain accessible
     }
 
     void preflightShowsWindowAndValidatesFieldsInline()
@@ -430,6 +776,8 @@ private Q_SLOTS:
         fake::Device dev([](fake::Device& d, const std::vector<uint8_t>& payload) {
             if (payload[0] == 0)
                 d.send(fake::idReply("V6_5", true));
+            else if (payload[0] == 1)
+                d.recordRequest(fake::parseRequest(payload));
         });
         LT_REQUIRE_PTY(dev);
         MainWindow win;
@@ -456,6 +804,29 @@ private Q_SLOTS:
         field(win, "channels")->setText("99");
         QVERIFY(!field(win, "channels")->styleSheet().isEmpty());
         field(win, "channels")->setText("1,2");
+        button(win, "Setup")->click();
+        field(win, "rate")->setText("101M");
+        QVERIFY(!button(win, "Capture")->isEnabled());
+        QVERIFY(preflight->text().contains("100000000"));
+        field(win, "rate")->setText("1M");
+        field(win, "channels")->setText("24");
+        field(win, "samples")->setText("40k");
+        QVERIFY(!button(win, "Capture")->isEnabled());
+        QVERIFY(preflight->text().contains("32768"));
+        QVERIFY(button(win, "Probe")->isEnabled());
+        button(win, "Capture")->click();
+        QVERIFY(!win.device().isBusy());
+        QCOMPARE(dev.requests().size(), std::size_t{0});
+        auto* ext = win.findChild<QToolButton*>("pinTrigger25_1");
+        QVERIFY(ext->isVisible());
+        ext->click();
+        QCOMPARE(field(win, "trigger")->text(), QString("25:falling"));
+        win.findChild<QPushButton*>("resetCaptureSetup")->click();
+        QCOMPARE(field(win, "channels")->text(), QString("1-8"));
+        QCOMPARE(field(win, "samples")->text(), QString("10k"));
+        QVERIFY(button(win, "Capture")->isEnabled());
+        win.findChild<QToolButton*>("pinTrigger2_2")->click();
+        QVERIFY(preflight->text().contains("GP0") && preflight->text().contains("GP1"));
 
         // A latency pair naming a channel that is not on screen is flagged.
         win.loadDemo();
@@ -724,6 +1095,9 @@ private Q_SLOTS:
         win.setPortText("replay:" + file);
         QTest::mouseClick(button(win, "Connect"), Qt::LeftButton);
         QTRY_VERIFY_WITH_TIMEOUT(win.device().isConnected(), 5000);
+        button(win, "Setup")->click();
+        QVERIFY(field(win, "channels")->isVisible());
+        QVERIFY(!field(win, "pinName4")->isVisible());  // no board provenance in this recording
         field(win, "channels")->setText("1,2");
         field(win, "samples")->setText("50");
         field(win, "trigger")->setText("1:rising");
@@ -916,9 +1290,12 @@ private Q_SLOTS:
         win.resize(1200, 700);
         win.show();
         QVERIFY(QTest::qWaitForWindowExposed(&win));
+        win.loadDemo();
+        button(win, "Setup")->click();
         auto* channels = win.findChild<QLineEdit*>("channels");
         auto* trigger = win.findChild<QLineEdit*>("trigger");
         auto* latency = win.findChild<QLineEdit*>("latencySpec");
+        channels->setText("1-4");
 
         QTest::mouseClick(win.findChild<QToolButton*>("channelsBuilderButton"), Qt::LeftButton);
         auto* cb = win.findChild<QFrame*>("channelsBuilder");
@@ -927,18 +1304,16 @@ private Q_SLOTS:
             box->setChecked(false);
         cb->findChild<QCheckBox*>("ch1")->setChecked(true);
         cb->findChild<QCheckBox*>("ch2")->setChecked(true);
+        cb->findChild<QLineEdit*>("name1")->setText("STIM,2:BAD");
+        QVERIFY(!cb->findChild<QPushButton*>("apply")->isEnabled());
         cb->findChild<QLineEdit*>("name1")->setText("STIM");
         cb->findChild<QPushButton*>("apply")->click();
         QCOMPARE(channels->text(), QString("1:STIM,2"));
 
-        QTest::mouseClick(win.findChild<QToolButton*>("triggerBuilderButton"), Qt::LeftButton);
-        auto* tb = win.findChild<QFrame*>("triggerBuilder");
-        QVERIFY(tb);
-        tb->findChild<QComboBox*>("channel")->setCurrentIndex(tb->findChild<QComboBox*>("channel")->findData(2));
-        tb->findChild<QComboBox*>("edge")->setCurrentIndex(1);
-        tb->findChild<QPushButton*>("apply")->click();
+        win.findChild<QToolButton*>("pinTrigger2_1")->click();
         QCOMPARE(trigger->text(), QString("2:falling"));
 
+        win.findChild<QDialog*>("picoPinout")->close();
         QTest::mouseClick(win.findChild<QToolButton*>("latencyBuilderButton"), Qt::LeftButton);
         auto* lb = win.findChild<QFrame*>("latencyBuilder");
         QVERIFY(lb);
@@ -947,6 +1322,90 @@ private Q_SLOTS:
         QCOMPARE(latency->text(), QString("1..2"));
         QTest::qWait(50);
         QVERIFY(latency->styleSheet().isEmpty());
+    }
+
+    void pinoutEditsPlansAndCapturesIndependently()
+    {
+        MainWindow win;
+        win.show();
+        auto* channels = field(win, "channels");
+        channels->setText("24:OLD,1");
+        win.findChild<QAction*>("showPinout")->trigger();
+        auto* pinout = win.findChild<QDialog*>("picoPinout");
+        QVERIFY(pinout && pinout->isVisible() && !pinout->isModal());
+        QVERIFY(QTest::qWaitForWindowExposed(pinout));
+        auto* source = pinout->findChild<QTabBar*>("pinoutSource");
+        QVERIFY(source && source->isVisible());
+        QVERIFY(source->rect().contains(source->tabRect(0)));
+        QVERIFY(source->rect().contains(source->tabRect(1)));
+        auto* name = field(win, "pinName34");  // pin 34, GP28, CH24
+        auto* apply = pinout->findChild<QPushButton*>("applyWiring");
+        auto* copy = pinout->findChild<QPushButton*>("copyWiring");
+        QCOMPARE(name->text(), QString("OLD"));
+        QVERIFY(!field(win, "pinName40"));  // VBUS isn't a capture input
+        QVERIFY(!field(win, "pinName2"));   // neither is EXT TRIG
+        name->setText("BAD\nLABEL");
+        QVERIFY(!apply->isEnabled() && !copy->isEnabled());
+        QCOMPARE(channels->text(), QString("24:OLD,1"));
+        name->setText("CAN_RX");
+        auto* left = pinout->findChild<QPushButton*>("pinPad9");
+        auto* right = pinout->findChild<QPushButton*>("pinPad32");
+        QVERIFY(left && right);
+        QCOMPARE(left->text(), QString("9 | GP6"));
+        QCOMPARE(right->text(), QString("GP27 | 32"));
+        QVERIFY(!pinout->findChild<QAbstractButton*>("pinPad40"));  // VBUS is never a capture input
+        QVERIFY(!pinout->findChild<QAbstractButton*>("pinPad2"));   // EXT TRIG isn't one either
+        const auto hitPin = [&](QPushButton* pin) {
+            const auto point = pin->mapTo(pinout, pin->rect().center());
+            QCOMPARE(pinout->childAt(point), static_cast<QWidget*>(pin));
+            QTest::mouseClick(pin, Qt::LeftButton);
+        };
+        const auto padFill = [](QPushButton* pin) {
+            const QImage image = pin->grab().toImage();
+            return image.pixelColor(qRound(5 * image.devicePixelRatio()), image.height() / 2);
+        };
+        const auto unselected = padFill(right);
+        hitPin(left);
+        hitPin(right);
+        QVERIFY(left->isChecked() && right->isChecked());
+        QVERIFY(padFill(right) != unselected);
+        QVERIFY(field(win, "pinName32")->isEnabled());
+        hitPin(right);
+        QVERIFY(!right->isChecked() && !field(win, "pinName32")->isEnabled());
+        QCOMPARE(padFill(right), unselected);
+        right->setFocus();
+        QTest::keyClick(right, Qt::Key_Space);
+        apply->click();
+        QCOMPARE(channels->text(), QString("24:CAN_RX,1,5,23"));  // retain selection order
+        copy->click();
+        const QString note = QApplication::clipboard()->text();
+        QVERIFY(note.contains("Offline Pico reference") && note.contains("Pin 34 | GP28 | CH24 | CAN_RX"));
+        QVERIFY(note.contains("GND") && note.contains("3.3 V"));
+
+        const lt::CaptureBuffer sparse({{23, "MISO"}, {0, "CLK"}}, 1'000'000, 1, {0, 1, 3, 2, 0});
+        win.setCapture(sparse, {}, {}, {}, {}, "PICO");
+        win.waveform()->setCursorA(1);
+        QTest::mouseClick(source, Qt::LeftButton, {}, source->tabRect(1).center());
+        QCOMPARE(name->text(), QString("MISO"));
+        auto* recorded = pinout->findChild<QPushButton*>("pinPad34");
+        QVERIFY(recorded && recorded->isChecked() && !recorded->isEnabled());  // recorded set is immutable
+        QVERIFY(!left->isChecked() && !right->isChecked());
+        name->setText("BUS.MISO-1");
+        apply->click();
+        QCOMPARE(win.waveform()->capture().channels()[0].name, std::string("BUS.MISO-1"));
+        QCOMPARE(win.waveform()->capture().samples(), sparse.samples());
+        QCOMPARE(win.waveform()->cursorA(), std::optional<std::size_t>(1));
+        QVERIFY(win.aiReport().contains("BUS.MISO-1"));
+        QCOMPARE(channels->text(), QString("24:CAN_RX,1,5,23"));
+        win.setCapture(sparse, {}, {}, {}, {}, "ZERO");
+        QVERIFY(!name->isVisible() && !copy->isEnabled());
+        win.showPreviousCapture();
+        QCOMPARE(name->text(), QString("BUS.MISO-1"));
+        QTest::mouseClick(source, Qt::LeftButton, {}, source->tabRect(0).center());
+        channels->setText("1:new:bad");
+        QVERIFY(!name->isVisible() && !copy->isEnabled());
+        channels->setText("24:CIPO");
+        QCOMPARE(name->text(), QString("CIPO"));  // live sync with direct Channels edits
     }
 
     // Cursors, annotations, the trigger and edges share one x for the same sample (no half-sample offset).
@@ -1025,9 +1484,9 @@ private Q_SLOTS:
         win.resize(1200, 700);
         win.show();
         win.loadDemo();
-        auto* btn = win.findChild<QPushButton*>("setupButton");
+        auto* btn = win.findChild<QPushButton*>("metadataButton");
         QVERIFY(btn);
-        QCOMPARE(btn->text(), QString("Setup (0)"));
+        QCOMPARE(btn->text(), QString("Metadata (0)"));
         QTest::mouseClick(btn, Qt::LeftButton);
         auto* ed = win.findChild<QFrame*>("setupEditor");
         QVERIFY(ed && ed->isVisible());
@@ -1047,11 +1506,11 @@ private Q_SLOTS:
         ed->findChild<QPushButton*>("apply")->click();
 
         QCOMPARE(win.setup().size(), std::size_t{2});
-        QCOMPARE(btn->text(), QString("Setup (2)"));
+        QCOMPARE(btn->text(), QString("Metadata (2)"));
         QTest::qWait(250);
         QVERIFY(win.findChild<QPlainTextEdit*>() ? win.findChild<QPlainTextEdit*>()->toPlainText().contains("ESP32") : false);
         win.clearSetupMetadata();
-        QCOMPARE(btn->text(), QString("Setup (0)"));
+        QCOMPARE(btn->text(), QString("Metadata (0)"));
     }
 
     void shiftWheelScrollsRowsWhileHeaderStaysPinned()

@@ -22,7 +22,7 @@ namespace lt::gui {
 // writes the canonical string into `target` on Apply; the field itself stays directly editable.
 // The popups delete themselves when closed. Channel numbers are 1-based.
 
-// "1:CLK,2,4-6" from (channel, optional name) pairs; unnamed runs of 3+ become ranges.
+// "1:CLK,2,4-6" from ordered (channel, optional name) pairs; unnamed runs of 3+ become ranges.
 [[nodiscard]] QString composeChannelList(const std::vector<std::pair<int, QString>>& channels);
 // "none" (channel 0) or "<ch>:rising|falling".
 [[nodiscard]] QString composeTrigger(int channel, bool falling);
@@ -31,7 +31,6 @@ namespace lt::gui {
 
 // `board` (e.g. "PICO") adds the GPIO behind each channel; empty = no pin hints.
 QFrame* showChannelsBuilder(QWidget* anchor, QLineEdit* target, const std::string& board, int maxChannels);
-QFrame* showTriggerBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels);
 QFrame* showLatencyBuilder(QWidget* anchor, QLineEdit* target, const std::vector<int>& channels);
 
 // Non-modal key/value editor for the test-setup metadata. Apply validates every row and calls `apply`

@@ -3,7 +3,36 @@
 All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.9.0] - 2026-11-21
+
+### Added
+- On Linux the GUI marks serial ports held by another visible process and shows its name and PID.
+  Refresh checks without opening the port; Connect checks again before sending the Pico handshake (#28).
+
+## [0.8.0] - 2026-11-21
+
+### Added
+- Interactive Pico header view with pin numbers, GPIOs and signal names. Plan the next capture or rename
+  the channels of a displayed recording without changing its samples. The read-only MCP tool
+  `lt_get_pinout` gives agents the same wiring map and distinguishes a disconnected reference from a device.
+- The Ask AI panel can be hidden with `_` and restored at its default size from the status bar.
+- **Setup** opens the connected Pico's capture fields alongside its pin map. The built-in **Demo Pico**
+  (`demo:pico`) replays the four demo signals without hardware; its settings do not replace the physical
+  device's plan.
+- Pin-level edge and pattern triggers, device-aware capture validation with copyable corrective
+  guidance, and Reset for the active setup. Named experiment profiles can be selected in Setup
+  or passed to the GUI at startup.
+- Ask AI can preview recent GUI stderr without transmitting it. Operators may copy a sanitized
+  snapshot with the report or explicitly share that snapshot through `lt_get_gui_diagnostics`.
+
+### Changed
+- The installed launcher and GUI use the same single-pulse strobe icon.
+- New channel aliases in GUI, CLI and MCP are limited to 16 ASCII letters, digits, `_`, `.` and `-`.
+  Invalid aliases are rejected rather than truncated. Existing capture files remain readable.
+
+### Fixed
+- The GUI sets its desktop ID before Qt initializes the platform plugin, so reading desktop settings
+  at startup no longer prevents registration with the host portal on Wayland.
 
 ## [0.7.0] - 2026-11-21
 
@@ -230,6 +259,8 @@ First public release, migrated from a private prototype.
 - Firmware with fast completion polling, derived from LogicAnalyzer V6_5 (identified then as
   `LOGIC_ANALYZER_<BOARD>_V6_6`; renamed in 0.2.0).
 
+[0.9.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.9.0
+[0.8.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.8.0
 [0.7.0]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.7.0
 [0.6.2]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.2
 [0.6.1]: https://github.com/nick-fedchik/LogicTracer/releases/tag/v0.6.1

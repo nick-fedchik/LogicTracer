@@ -3,24 +3,127 @@
 
 #include "FakeDevice.hpp"
 #include "core/Exporters.hpp"
+#include "gui/GuiDiagnostics.hpp"
 #include "gui/MainWindow.hpp"
 #include "mcp/McpServer.hpp"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTest>
 
 #include <chrono>
+#include <cerrno>
+#include <cstdio>
 #include <set>
 #include <sstream>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 using namespace std::chrono_literals;
 using json = nlohmann::json;
 
 namespace {
+
+using lt::gui::GuiDiagnostics;
+
+bool descriptorWrite(QByteArrayView bytes)
+{
+    while (!bytes.empty()) {
+#ifdef _WIN32
+        const auto n = ::_write(2, bytes.data(), static_cast<unsigned>(bytes.size()));
+#else
+        const auto n = ::write(2, bytes.data(), static_cast<size_t>(bytes.size()));
+#endif
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            return false;
+        bytes = bytes.sliced(n);
+    }
+    return true;
+}
+
+void focusWarning()
+{
+    QMessageLogger(__FILE__, __LINE__, Q_FUNC_INFO, "qt.qpa.wayland.textinput")
+        .warning("synthetic focus warning at 0x1234abcd");
+}
+
+// Runs before QtTest installs its own logger. The parent observes the real stderr terminal
+// channel separately from the child's JSON snapshots; no diagnostics go to disk.
+int diagnosticsFixture(int argc, char** argv)
+{
+    json snapshots;
+    const auto take = [&](const char* name, const GuiDiagnostics& diagnostics) {
+        const auto p = diagnostics.preview();
+        snapshots[name] = {{"text", p.text.toStdString()}, {"omitted", p.omitted}};
+    };
+    {
+        GuiDiagnostics diagnostics;
+        if (!descriptorWrite("startup-direct api_token=\"synthetic only\"\n"))
+            return 2;
+        focusWarning();
+        QApplication app(argc, argv);
+        descriptorWrite("fragmented Authorization: Bear");
+        descriptorWrite("er fake-split-value\nURI https://fixture:not-a-password@example.invalid/test\n");
+        descriptorWrite("standalone ghp_");
+        descriptorWrite("SYNTHETICVALUE\nBearer\tfake-tab-value\nunfinished marker");
+        take("startup", diagnostics);
+        descriptorWrite("\n");
+        for (int i = 0; i < GuiDiagnostics::MaxLines + 20; ++i)
+            descriptorWrite("sample-line-" + QByteArray::number(i) + '\n');
+        take("lines", diagnostics);
+        for (int i = 0; i < 8; ++i)
+            descriptorWrite(QByteArray(GuiDiagnostics::MaxBytes / 4, 'x') + QByteArray::number(i) + '\n');
+        take("bytes", diagnostics);
+        descriptorWrite("oversized token=");
+        descriptorWrite(QByteArray(3 * GuiDiagnostics::MaxBytes, 'z'));
+        descriptorWrite("never-share-this-suffix");
+        take("oversized", diagnostics);
+        descriptorWrite("\nrecovered marker\n");
+        // Each ill-formed byte expands to three UTF-8 bytes in a shared QString.
+        descriptorWrite(QByteArray(GuiDiagnostics::MaxBytes / 2, '\xff') + "\nlatest marker\n");
+        take("recovered", diagnostics);
+        descriptorWrite("-----BEGIN PRIVATE KEY-----\n");
+        for (int i = 0; i <= GuiDiagnostics::MaxLines; ++i)
+            descriptorWrite("synthetic-wrapped-private-material\n");
+        descriptorWrite("partial-key-line");
+        take("key", diagnostics);
+        descriptorWrite("\n-----END PRIVATE KEY-----\nordinary output resumes\n");
+        take("afterKey", diagnostics);
+    }
+    descriptorWrite("restored direct stderr\n");
+    qWarning("restored Qt handler");
+    {
+        GuiDiagnostics fresh;
+        take("fresh", fresh);
+    }
+#ifndef _WIN32
+    ::close(2);
+    {
+        GuiDiagnostics detached;
+        if (!descriptorWrite("detached marker\n"))
+            return 3;
+        take("detached", detached);
+    }
+    if (::fcntl(2, F_GETFD) >= 0 || errno != EBADF)
+        return 4;
+#endif
+    std::puts(snapshots.dump().c_str());
+    return 0;
+}
 
 // Drives logictracer-mcp over stdio. Keeps spinning the event loop so an in-process GUI stays alive.
 class McpClient {
@@ -49,6 +152,8 @@ public:
                 const auto line = m_buffer.left(m_buffer.indexOf('\n'));
                 m_buffer.remove(0, line.size() + 1);
                 const json msg = json::parse(line.toStdString(), nullptr, false);
+                if (!msg.is_object() || msg.value("jsonrpc", std::string{}) != "2.0")
+                    protocolOnly = false;
                 if (msg.is_object() && msg.value("id", -1) == id)
                     return msg;
             }
@@ -63,6 +168,7 @@ public:
     }
 
     void send(const json& message) { m_process.write(QByteArray::fromStdString(message.dump()) + '\n'); }
+    bool protocolOnly = true;
 
 private:
     QProcess m_process;
@@ -124,6 +230,11 @@ private Q_SLOTS:
             names.insert(t["name"].get<std::string>());
             QCOMPARE(t["inputSchema"]["type"].get<std::string>(), std::string("object"));
             QVERIFY(!t["description"].get<std::string>().empty());
+            if (t["name"] == "lt_get_gui_diagnostics") {
+                QVERIFY(t["annotations"]["readOnlyHint"].get<bool>());
+                QVERIFY(!t["inputSchema"]["additionalProperties"].get<bool>());
+                QVERIFY(t["inputSchema"]["properties"].empty());
+            }
         }
         const std::set<std::string> expected{"lt_detect_devices",
                                              "lt_probe_inputs",
@@ -131,6 +242,8 @@ private Q_SLOTS:
                                              "lt_analyze_file",
                                              "lt_diff_captures",
                                              "lt_add_annotation",
+                                             "lt_get_pinout",
+                                             "lt_get_gui_diagnostics",
                                              "lt_get_view",
                                              "lt_clear_annotations",
                                              "lt_set_view",
@@ -167,6 +280,126 @@ private Q_SLOTS:
         QCOMPARE(json::parse(a)["error"]["code"].get<int>(), -32700);
         QCOMPARE(json::parse(b)["id"].get<int>(), 9);
         QCOMPARE(json::parse(c)["error"]["code"].get<int>(), -32600);
+    }
+
+    void guiStderrTeesFromStartupAndBoundsSanitizedFragments()
+    {
+        QProcess child;
+        auto env = QProcessEnvironment::systemEnvironment();
+        env.insert("QT_FORCE_STDERR_LOGGING", "1");
+        env.insert("QT_MESSAGE_PATTERN", "terminal:%{category}: %{message}");
+        child.setProcessEnvironment(env);
+        child.start(QCoreApplication::applicationFilePath(), {"--diagnostics-fixture"});
+        QVERIFY(child.waitForFinished(10000));
+        QCOMPARE(child.exitStatus(), QProcess::NormalExit);
+        QCOMPARE(child.exitCode(), 0);
+        const auto terminal = child.readAllStandardError();
+        QCOMPARE(terminal.count("startup-direct api_token=\"synthetic only\""), 1);
+        QCOMPARE(terminal.count("terminal:qt.qpa.wayland.textinput: synthetic focus warning at 0x1234abcd"), 1);
+        QVERIFY(terminal.contains("Bearer fake-split-value"));
+        QVERIFY(terminal.contains("never-share-this-suffix"));
+        QVERIFY(terminal.contains("restored direct stderr"));
+        QVERIFY(terminal.contains("terminal:default: restored Qt handler"));
+        const auto doc = json::parse(child.readAllStandardOutput().toStdString(), nullptr, false);
+        QVERIFY(doc.is_object());
+        const auto text = [&](const char* key) { return QString::fromStdString(doc.at(key).at("text").get<std::string>()); };
+        const QString startup = text("startup");
+        QVERIFY(startup.contains("startup-direct api_token=[redacted]"));
+        QCOMPARE(startup.count("synthetic focus warning"), 1);
+        QVERIFY(startup.contains("warning qt.qpa.wayland.textinput: synthetic focus warning at [address]"));
+        QVERIFY(startup.contains("https://[redacted]@example.invalid"));
+        QVERIFY(startup.endsWith("unfinished marker"));
+        for (const char* secret : {"synthetic only", "0x1234abcd", "fake-split-value", "not-a-password",
+                                   "SYNTHETICVALUE", "fake-tab-value"})
+            QVERIFY(!startup.contains(secret));
+        for (const char* key : {"lines", "bytes", "oversized", "recovered"}) {
+            QVERIFY(doc.at(key).at("omitted").get<bool>());
+            QVERIFY(text(key).startsWith("[older or oversized diagnostics omitted]"));
+            QVERIFY(text(key).count('\n') + 1 <= GuiDiagnostics::MaxLines);
+            QVERIFY(text(key).toUtf8().size() <= GuiDiagnostics::MaxBytes);
+        }
+        QVERIFY(!text("lines").contains("sample-line-0\n"));
+        QVERIFY(text("lines").endsWith("sample-line-" + QString::number(GuiDiagnostics::MaxLines + 19)));
+        QVERIFY(text("bytes").endsWith("xxx7"));
+        QVERIFY(!text("bytes").contains("xxx0"));
+        QVERIFY(!text("oversized").contains("never-share-this-suffix"));
+        QVERIFY(text("recovered").endsWith("latest marker"));
+        QVERIFY(!text("key").contains("synthetic-wrapped") && !text("key").contains("partial-key-line"));
+        QVERIFY(text("afterKey").endsWith("ordinary output resumes"));
+        QVERIFY(text("fresh").isEmpty());
+#ifndef _WIN32
+        QCOMPARE(text("detached"), QString("detached marker"));
+#endif
+    }
+
+    void onlyTheReviewedGuiDiagnosticsSnapshotCanBeShared()
+    {
+        GuiDiagnostics diagnostics;
+        lt::gui::MainWindow win(nullptr, &diagnostics);
+        win.loadDemo();
+        const auto capture = win.captureId();
+        const auto state = win.displayState();
+        QTemporaryDir dir;
+        const QString socket = dir.filePath("diag.sock");
+        QVERIFY(win.startSession(socket));
+        McpClient client({"--socket", socket});
+        const auto init = client.request("initialize", {{"protocolVersion", "2025-06-18"}});
+        QVERIFY(init["result"]["protocolVersion"] == "2025-06-18");
+        client.send({{"jsonrpc", "2.0"}, {"method", "notifications/initialized"}});
+        const auto get = [&] { return client.tool("lt_get_gui_diagnostics", json::object()).at("result"); };
+        const auto denied = [&] {
+            const auto result = get();
+            return result.at("isError").get<bool>() && result.dump().find("private") != std::string::npos
+                && result.dump().find("direct-diag") == std::string::npos;
+        };
+        const QByteArray oversized(GuiDiagnostics::MaxBytes + 1, 'x');
+        QTest::ignoreMessage(QtWarningMsg, oversized.constData());  // synthetic flood; don't spam the test runner
+        qWarning("%s", oversized.constData());
+        focusWarning();
+        QVERIFY(descriptorWrite("direct-diag password=synthetic-password\n"));
+        QVERIFY(denied());
+        QVERIFY(client.tool("lt_get_gui_diagnostics", {{"share", true}})["result"]["isError"].get<bool>());
+        auto* open = win.findChild<QPushButton*>("showGuiDiagnostics");
+        QVERIFY(open);
+        open->click();
+        auto* preview = win.findChild<QPlainTextEdit*>("guiDiagnosticsPreview");
+        auto* share = win.findChild<QCheckBox*>("shareGuiDiagnostics");
+        auto* copy = win.findChild<QPushButton*>("copyReportWithDiagnostics");
+        auto* refresh = win.findChild<QPushButton*>("refreshGuiDiagnostics");
+        QVERIFY(preview && preview->isReadOnly() && share && copy && refresh);
+        const QString reviewed = preview->toPlainText();
+        QVERIFY(reviewed.contains("direct-diag password=[redacted]"));
+        QVERIFY(reviewed.contains("warning qt.qpa.wayland.textinput: synthetic focus warning at [address]"));
+        QVERIFY(!reviewed.contains("synthetic-password") && !reviewed.contains("0x1234abcd"));
+        QVERIFY(!reviewed.contains("ready (stdio)"));  // MCP's own stderr is a different stream
+        QVERIFY(!share->isChecked() && denied());     // a private preview does not grant consent
+        copy->click();
+        QVERIFY(QApplication::clipboard()->text().endsWith(reviewed));
+        QVERIFY(denied());
+        share->setChecked(true);
+        QVERIFY(descriptorWrite("later-unreviewed-diagnostic\n"));
+        const auto result = get();
+        QVERIFY(!result.at("isError").get<bool>());
+        const auto& payload = result.at("structuredContent");
+        QVERIFY(payload.at("source") == "gui_stderr" && payload.at("omitted").get<bool>());
+        QCOMPARE(QString::fromStdString(payload.at("text").get<std::string>()), reviewed);
+        QCOMPARE(json::parse(result.at("content").at(0).at("text").get<std::string>()), payload);
+        QVERIFY(result.dump().find("later-unreviewed") == std::string::npos);
+        win.copyForAi();
+        QCOMPARE(QApplication::clipboard()->text(), win.aiReport());
+        QVERIFY(!win.aiReport().contains("direct-diag"));
+        const auto normal = client.tool("lt_get_view", json::object());
+        QVERIFY(!normal["result"]["isError"].get<bool>() && normal.dump().find("direct-diag") == std::string::npos);
+        McpClient disabled({"--no-session", "--socket", socket});
+        QVERIFY(disabled.tool("lt_get_gui_diagnostics", json::object())["result"]["isError"].get<bool>());
+        refresh->click();
+        QVERIFY(!share->isChecked() && denied());
+        QVERIFY(preview->toPlainText().contains("later-unreviewed-diagnostic"));
+        share->setChecked(true);
+        share->setChecked(false);
+        QVERIFY(denied() && client.protocolOnly);
+        QCOMPARE(win.captureId(), capture);
+        QCOMPARE(win.displayState(), state);
     }
 
     void directDeviceAccessOverStdio()
@@ -240,6 +473,15 @@ private Q_SLOTS:
 
         McpClient client({"--socket", socket});
         client.request("initialize", {{"protocolVersion", "2025-06-18"}});
+        const auto plan = client.tool("lt_get_pinout", {});
+        QVERIFY2(!plan["result"]["isError"].get<bool>(), plan.dump().c_str());
+        const auto& wiring = plan["result"]["structuredContent"];
+        QCOMPARE(wiring["source"].get<std::string>(), std::string("setup"));
+        QCOMPARE(wiring["pins"].size(), std::size_t{40});
+        QCOMPARE(wiring["pins"][3]["channel"].get<int>(), 1);
+        QCOMPARE(wiring["pins"][3]["gpio"].get<int>(), 2);
+        QVERIFY(!wiring["pins"][39].contains("channel"));
+        QVERIFY(dev.requests().empty());  // guidance reads state; never probes or captures
 
         // The agent captures through the GUI: the device stays with the window, the engineer sees the result.
         const auto cap = client.tool("lt_configure_and_capture", {{"channels", "1:STIM,2:REACT"}, {"samples", 400}});
@@ -265,6 +507,10 @@ private Q_SLOTS:
 
         const auto id = state["result"]["structuredContent"]["capture_id"].get<std::uint64_t>();
         QVERIFY(id > 0);
+        const auto recorded = client.tool("lt_get_pinout", {{"source", "capture"}, {"capture_id", id}});
+        QCOMPARE(recorded["result"]["structuredContent"]["pins"][4]["name"].get<std::string>(), std::string("REACT"));
+        QVERIFY(client.tool("lt_get_pinout", {{"source", "capture"}, {"capture_id", id + 1}}).dump()
+                    .find("StaleCapture") != std::string::npos);
         const auto stale = client.tool("lt_add_annotation", {{"time_us", 5}, {"text", "x"}, {"capture_id", id + 1}});
         QVERIFY(stale["result"]["isError"].get<bool>());
         QVERIFY(stale.dump().find("StaleCapture") != std::string::npos);
@@ -389,6 +635,8 @@ private Q_SLOTS:
 int main(int argc, char** argv)
 {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    if (argc == 2 && QByteArrayView(argv[1]) == "--diagnostics-fixture")
+        return diagnosticsFixture(argc, argv);
     QApplication app(argc, argv);
     McpTests t;
     return QTest::qExec(&t, argc, argv);

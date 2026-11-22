@@ -42,6 +42,13 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 if(TARGET LogicTracer::Gui)
+    logictracer_add_test(logictracer-profile-tests
+        SOURCES test_profiles.cpp FakeDevice.hpp
+        LIBS LogicTracer::Gui
+        DEFINES LT_GUI_PATH="$<TARGET_FILE:logictracer-gui>"
+        ENV "QT_QPA_PLATFORM=offscreen")
+    add_dependencies(logictracer-profile-tests logictracer-gui)
+
     logictracer_add_test(logictracer-gui-tests
         SOURCES test_gui.cpp FakeDevice.hpp
         LIBS LogicTracer::Gui

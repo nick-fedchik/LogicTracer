@@ -59,6 +59,11 @@ public:
     void setCapture(const lt::CaptureBuffer& buffer);
     void clearCapture();
     [[nodiscard]] const lt::CaptureBuffer& capture() const noexcept { return m_buffer; }
+    void renameChannel(std::size_t index, const std::string& name)
+    {
+        if (m_buffer.setChannelName(index, name))
+            update();
+    }
     [[nodiscard]] bool hasCapture() const noexcept { return m_buffer.size() > 0; }
 
     [[nodiscard]] std::size_t visibleFirst() const { return m_view.firstVisible(); }
