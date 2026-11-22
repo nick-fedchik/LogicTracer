@@ -43,8 +43,8 @@ All notable changes are documented here. The format follows
 ## [0.7.0] - 2026-11-21
 
 ### Added
-- Session JSON contracts (`#23`, `B-10`): `logictracer-cli view --json` and `annotate --json` now include
-  the standard `schema_version` and `warnings` envelope fields and are validated against
+- Session JSON contracts ([#23](https://github.com/nick-fedchik/LogicTracer/issues/23)): `logictracer-cli view --json`
+  and `annotate --json` now include the standard `schema_version` and `warnings` envelope fields and are validated against
   `docs/schema/view.schema.json` and `docs/schema/annotate.schema.json`.
 - Offline MCP tools (`#24`): `lt_analyze_file` (with `channels`, `measure_latency`, `expect`, `invariant`,
   `decode` and `exact_timing`) and `lt_diff_captures` (with `measure_latency` and `strict`) analyze and

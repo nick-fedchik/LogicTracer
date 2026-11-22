@@ -129,7 +129,9 @@ SocketCAN USB–CAN adapter (`candump can0`).
 | `src/mcp` | `logictracer-mcp`: Model Context Protocol server (JSON-RPC over stdio) |
 | `firmware/rp2040` | LogicTracer firmware for RP2040, derived from LogicAnalyzer (GPL-3.0) |
 | `hdl/` | `lt_capture`: in-design FPGA capture core, exact clock-cycle timing (CERN-OHL-W-2.0) |
-| `docs/` | Specification and backlog |
+| `docs/` | Specification, contracts and JSON schemas |
+
+Track planned work and bugs in [GitHub Issues](https://github.com/nick-fedchik/LogicTracer/issues).
 
 ## Platform support
 

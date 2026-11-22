@@ -215,7 +215,7 @@ complex/fast triggers and the external trigger (which use GP0/GP1) stop it first
 ```text
 logictracer/
 ├── CMakeLists.txt, CMakePresets.json, cmake/LogicTracerOptions.cmake
-├── docs/            # SPECIFICATION.md (this document), BACKLOG.md
+├── docs/            # SPECIFICATION.md (this document), CONTRACTS.md, schema/
 ├── firmware/rp2040/ # LogicTracer firmware, derived from LogicAnalyzer V2 (GPL-3.0)
 ├── hdl/             # lt_capture in-design FPGA capture core (CERN-OHL-W-2.0)
 ├── packaging/       # desktop entry
@@ -389,5 +389,5 @@ version; firmware images are named `LogicTracer-firmware-<version>-<board>-<vari
   turnaround); 100 MHz and 200 MHz Turbo UF2 images via `scripts/build_firmware.sh`; test-signal generator
   and `logictracer-cli selftest` (§2.7) as the firmware regression check.
 * **Hardware validation:** verified live with an RP2040 against a Digilent PYNQ-Z1 (100-transaction
-  burst, stimulus → reaction latency, `--expect` PASS). Pending: NVIDIA Jetson AGX Orin `DO1` →
-  RP2040 `GP28` (needs an external pull-up), see [BACKLOG.md](BACKLOG.md).
+  burst, stimulus → reaction latency, `--expect` PASS). The NVIDIA Jetson AGX Orin `DO1` → RP2040 `GP28`
+  bench check (external pull-up required) is tracked in [#30](https://github.com/nick-fedchik/LogicTracer/issues/30).
