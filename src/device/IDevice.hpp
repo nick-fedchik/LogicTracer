@@ -52,7 +52,9 @@ public:
         return std::nullopt;
     }
 
-    [[nodiscard]] virtual std::optional<std::string> validate(const CaptureConfig& config) const = 0;
+    // On rejection, field identifies the setting an operator can change.
+    [[nodiscard]] virtual std::optional<std::string> validate(const CaptureConfig& config,
+                                                              CaptureField* field = nullptr) const = 0;
     [[nodiscard]] virtual CaptureResult capture(const CaptureConfig& config) = 0;
     // Short untriggered snapshot of the current pin levels.
     [[nodiscard]] virtual ProbeResult probe(const std::vector<ChannelInfo>& channels,
@@ -65,6 +67,7 @@ protected:
 
 // Port syntax selects the implementation:
 //   "replay:<file>"   ReplayDevice: a saved capture (.json, .vcd, .lac) acting as a device
+//   "demo:pico"       ReplayDevice: the built-in four-channel Pico simulation
 //   "pynq://host[:port]"  PynqConnection: the in-design FPGA core through the board agent
 //   anything else     PicoConnection: RP2040/RP2350 serial device (e.g. /dev/ttyACM0)
 [[nodiscard]] bool isReplayPort(std::string_view port) noexcept;

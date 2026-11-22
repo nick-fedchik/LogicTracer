@@ -8,9 +8,18 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace lt {
+
+inline constexpr std::string_view kChannelNameRule = "Use up to 16 ASCII characters: A-Z, a-z, 0-9, _, . or -";
+// An empty alias means "use CHn". Imported recordings keep their original labels until explicitly renamed.
+[[nodiscard]] constexpr bool validChannelName(std::string_view name) noexcept
+{
+    return name.size() <= 16 && name.find_first_not_of(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-") == std::string_view::npos;
+}
 
 struct ChannelInfo {
     uint8_t number = 0;  // 0-based hardware channel
@@ -34,10 +43,12 @@ public:
                                  CaptureMode mode, std::span<const uint8_t> raw);
 
     [[nodiscard]] const std::vector<ChannelInfo>& channels() const noexcept { return m_channels; }
-    void setChannelName(std::size_t channelIndex, std::string name)
+    bool setChannelName(std::size_t channelIndex, std::string name)
     {
-        if (channelIndex < m_channels.size())
-            m_channels[channelIndex].name = std::move(name);
+        if (channelIndex >= m_channels.size() || !validChannelName(name))
+            return false;
+        m_channels[channelIndex].name = std::move(name);
+        return true;
     }
     [[nodiscard]] const std::vector<uint32_t>& samples() const noexcept { return m_samples; }
     [[nodiscard]] std::size_t size() const noexcept { return m_samples.size(); }

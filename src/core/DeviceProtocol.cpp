@@ -25,6 +25,12 @@ void putU32(std::vector<uint8_t>& buf, std::size_t off, uint32_t v)
 
 bool needsEscape(uint8_t b) noexcept { return b == 0xAA || b == 0x55 || b == 0xF0; }
 
+bool hasPicoHeader(std::string_view board) noexcept
+{
+    return board == "PICO" || board == "PICO_2" || board == "W" || board == "WIFI" || board == "2_W" ||
+           board == "2_WIFI";
+}
+
 }  // namespace
 
 std::size_t requestSize(ProtocolGeneration gen) noexcept
@@ -153,8 +159,7 @@ std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) n
     static constexpr uint8_t kInterceptorMap[] = {
         6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 2, 3, 4, 5, 1};
 
-    if (board == "PICO" || board == "PICO_2" || board == "W" || board == "WIFI" || board == "2_W" ||
-        board == "2_WIFI") {
+    if (hasPicoHeader(board)) {
         if (channel < std::size(kPicoMap))
             return kPicoMap[channel];
         return std::nullopt;
@@ -170,6 +175,35 @@ std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) n
         return std::nullopt;
     }
     return std::nullopt;
+}
+
+std::span<const PicoHeaderPin> picoHeaderPins(std::string_view board) noexcept
+{
+    if (!hasPicoHeader(board))
+        return {};
+    // Board header: https://www.raspberrypi.com/documentation/microcontrollers/pico-series.html
+    // Only the board-to-GPIO mapping lives here; capture channels come from the firmware map above.
+    static const auto header = [] {
+        constexpr auto none = std::nullopt;
+        std::array<PicoHeaderPin, 40> pins{{
+            {1, 0, "TRIG OUT"}, {2, 1, "EXT TRIG"}, {3, none, "GND"}, {4, 2, {}}, {5, 3, {}},
+            {6, 4, {}}, {7, 5, {}}, {8, none, "GND"}, {9, 6, {}}, {10, 7, {}},
+            {11, 8, {}}, {12, 9, {}}, {13, none, "GND"}, {14, 10, {}}, {15, 11, {}},
+            {16, 12, {}}, {17, 13, {}}, {18, none, "GND"}, {19, 14, {}}, {20, 15, {}},
+            {21, 16, {}}, {22, 17, {}}, {23, none, "GND"}, {24, 18, {}}, {25, 19, {}},
+            {26, 20, {}}, {27, 21, {}}, {28, none, "GND"}, {29, 22, {}}, {30, none, "RUN"},
+            {31, 26, {}}, {32, 27, {}}, {33, none, "AGND"}, {34, 28, {}}, {35, none, "ADC_VREF"},
+            {36, none, "3V3(OUT)"}, {37, none, "3V3_EN"}, {38, none, "GND"}, {39, none, "VSYS"}, {40, none, "VBUS"}
+        }};
+        for (uint8_t ch = 0; ch < 24; ++ch) {
+            const auto gp = gpioForChannel("PICO", ch);
+            for (auto& pin : pins)
+                if (gp && pin.gpio == gp)
+                    pin.channel = ch;
+        }
+        return pins;
+    }();
+    return header;
 }
 
 std::optional<FirmwareVersion> parseVersionLine(std::string_view line)

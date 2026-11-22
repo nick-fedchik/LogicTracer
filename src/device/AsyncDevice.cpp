@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Mykola Fedchyk
 
 #include "device/AsyncDevice.hpp"
+#include "device/SerialPortOwners.hpp"
 
 #include <QMetaObject>
 #include <QThread>
@@ -26,6 +27,13 @@ public:
 
     std::optional<std::chrono::milliseconds> pollLatencyOverride;
 
+    std::optional<std::string> validate(const CaptureConfig& config, CaptureField* field) const
+    {
+        if (!m_conn)
+            return "device is not connected";
+        return m_conn->validate(config, field);
+    }
+
     // Run on the worker thread; AsyncDevice queues them as type-safe functors (no string-based
     // invokeMethod, so arguments need no metatype registration).
     void doOpen(const QString& port, int handshakeMs)
@@ -40,11 +48,16 @@ public:
                 m_conn->setPollLatency(*pollLatencyOverride);
             m_conn->setProgressCallback([this](CaptureStage s) { Q_EMIT progress(static_cast<int>(s)); });
         }
-        ok = m_conn->open(port.toStdString(), std::chrono::milliseconds(handshakeMs));
-        if (ok)
-            info = m_conn->info();
-        else
-            error = QString::fromStdString(m_conn->lastError());
+        const auto owner = serialPortOwners({port}).value(port);
+        if (!owner.isEmpty()) {
+            error = tr("%1 is in use by %2. Release the port in that application, then retry.").arg(port, owner);
+        } else {
+            ok = m_conn->open(port.toStdString(), std::chrono::milliseconds(handshakeMs));
+            if (ok)
+                info = m_conn->info();
+            else
+                error = QString::fromStdString(m_conn->lastError());
+        }
         Q_EMIT opened(ok, error, info);
     }
 
@@ -156,6 +169,15 @@ void AsyncDevice::close()
     m_connected = false;
     ++m_pendingCloses;
     QMetaObject::invokeMethod(m_worker, &AsyncWorker::doClose, Qt::QueuedConnection);
+}
+
+std::optional<std::string> AsyncDevice::validate(const CaptureConfig& config, CaptureField* field) const
+{
+    if (!m_connected || m_busy)
+        return "device is busy or not connected";
+    std::optional<std::string> error;
+    QMetaObject::invokeMethod(m_worker, [&] { error = m_worker->validate(config, field); }, Qt::BlockingQueuedConnection);
+    return error;
 }
 
 bool AsyncDevice::startCapture(const lt::CaptureConfig& config)

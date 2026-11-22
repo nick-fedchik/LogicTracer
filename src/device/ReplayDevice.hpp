@@ -21,6 +21,8 @@ namespace lt {
 class ReplayDevice final : public IDevice {
 public:
     static constexpr std::string_view kScheme = "replay:";
+    static constexpr std::string_view kDemoPort = "demo:pico";
+    [[nodiscard]] static CaptureBuffer demoRecording();
 
     ReplayDevice() = default;
 
@@ -34,7 +36,7 @@ public:
     void setProgressCallback(ProgressCallback callback) override { m_progress = std::move(callback); }
     bool enterBootloader() override;
 
-    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config) const override;
+    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config, CaptureField* field = nullptr) const override;
     [[nodiscard]] CaptureResult capture(const CaptureConfig& config) override;
     [[nodiscard]] ProbeResult probe(const std::vector<ChannelInfo>& channels, std::chrono::milliseconds window,
                                     uint32_t frequency) override;

@@ -4,6 +4,7 @@
 #include "device/ReplayDevice.hpp"
 
 #include "core/Exporters.hpp"
+#include "core/Format.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -24,19 +25,33 @@ std::string channelList(const CaptureBuffer& b)
 
 }  // namespace
 
+CaptureBuffer ReplayDevice::demoRecording()
+{
+    std::vector<uint32_t> samples(4000);
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const bool clk = (i / 10) % 2;
+        const bool echo = i >= 205 && ((i - 205) / 10) % 2;
+        const bool burst = i >= 1000 && i < 1400 && ((i / 4) % 2);
+        samples[i] = (clk ? 1u : 0u) | (echo ? 2u : 0u) | (burst ? 4u : 0u) | 8u;
+    }
+    return CaptureBuffer({{0, "CLK"}, {1, "ECHO"}, {2, "BURST"}, {3, "IDLE_HI"}}, 1'000'000, 200, std::move(samples));
+}
+
 bool ReplayDevice::open(const std::string& port, milliseconds /*handshakeTimeout*/)
 {
     close();
-    if (!port.starts_with(kScheme)) {
-        m_error = "replay port must look like replay:<capture file>";
+    const bool demo = port == kDemoPort;
+    if (!isReplayPort(port)) {
+        m_error = "use replay:<capture file> or demo:pico";
         return false;
     }
-    const std::string path = port.substr(kScheme.size());
     LoadedCapture loaded;
-    if (!loadCaptureFile(path, loaded, &m_error))
+    if (demo)
+        loaded.buffer = demoRecording();
+    else if (!loadCaptureFile(port.substr(kScheme.size()), loaded, &m_error))
         return false;
     if (loaded.buffer.size() < 4 || loaded.buffer.channels().empty()) {
-        m_error = "recording '" + path + "' holds no samples";
+        m_error = "recording '" + port.substr(kScheme.size()) + "' holds no samples";
         return false;
     }
     m_recording = std::move(loaded.buffer);
@@ -51,7 +66,9 @@ bool ReplayDevice::open(const std::string& port, milliseconds /*handshakeTimeout
 
     m_info = {};
     m_info.port = port;
-    m_info.version.raw = "REPLAY " + path;
+    m_info.version.raw = demo ? "Demo Pico (simulated)" : "REPLAY " + port.substr(kScheme.size());
+    if (demo)
+        m_info.version.board = "PICO";
     m_info.version.family = FirmwareFamily::Replay;
     m_info.generation = ProtocolGeneration::V6;
     m_info.maxFrequency = m_recording.frequency();
@@ -89,8 +106,9 @@ std::optional<std::size_t> ReplayDevice::sourceIndex(uint8_t channelNumber) cons
     return std::nullopt;
 }
 
-std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) const
+std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config, CaptureField* field) const
 {
+    if (field) *field = CaptureField::Channels;
     if (!m_open)
         return "replay device is not open";
     if (config.channels.empty())
@@ -100,6 +118,7 @@ std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) c
             return "channel " + std::to_string(ch.displayNumber()) + " is not in the recording (available: " +
                    channelList(m_recording) + ")";
     }
+    if (field) *field = CaptureField::Trigger;
     if (config.trigger) {
         if (config.trigger->isPattern()) {
             if (config.segments > 1)
@@ -113,11 +132,13 @@ std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) c
             return "trigger channel " + std::to_string(config.trigger->channel + 1) + " is not in the recording";
         }
     }
+    if (field) *field = CaptureField::Rate;
     if (config.frequency == 0 || m_recording.frequency() % config.frequency != 0)
         return "the recording was sampled at " + std::to_string(m_recording.frequency()) +
                " Hz; replay supports that rate or an integer divisor of it";
     const uint64_t step = m_recording.frequency() / config.frequency;
     // An immediate capture returns only the post samples (the device drops the 2 reserved pre-trigger ones).
+    if (field) *field = CaptureField::Windows;
     if (config.segments == 0 || config.segments > 65536)
         return "segments must be 1..65536";
     if (config.segments > 1 && !config.trigger)
@@ -125,10 +146,11 @@ std::optional<std::string> ReplayDevice::validate(const CaptureConfig& config) c
     const uint64_t wanted =
         config.trigger ? static_cast<uint64_t>(config.preSamples) + static_cast<uint64_t>(config.postSamples) * config.segments
                        : static_cast<uint64_t>(config.postSamples);
-    const uint64_t needed = wanted * step;
-    if (needed > m_recording.size())
-        return "requested " + std::to_string(wanted) + " samples, the recording has " +
-               std::to_string(m_recording.size() / step) + " at this rate";
+    if (field) *field = CaptureField::Samples;
+    const auto available = m_recording.size() / step;
+    if (wanted > available)
+        return "requested " + std::to_string(wanted) + " samples; maximum " + std::to_string(available) + " at " +
+               formatHz(config.frequency) + " (" + formatTime(static_cast<double>(available) / config.frequency) + ")";
     return std::nullopt;
 }
 
@@ -312,7 +334,7 @@ ProbeResult ReplayDevice::probe(const std::vector<ChannelInfo>& channels, millis
 
 bool isReplayPort(std::string_view port) noexcept
 {
-    return port.starts_with(ReplayDevice::kScheme);
+    return port == ReplayDevice::kDemoPort || port.starts_with(ReplayDevice::kScheme);
 }
 
 }  // namespace lt

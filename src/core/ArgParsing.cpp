@@ -135,16 +135,17 @@ std::optional<std::vector<ChannelInfo>> parseChannelList(std::string_view text, 
     };
 
     for (auto token : split(text, ',')) {
-        token = trim(token);
-        if (token.empty())
+        if (trim(token).empty())
             return fail("empty channel entry in '" + std::string(text) + "'");
         std::string name;
         if (const auto colon = token.find(':'); colon != std::string_view::npos) {
-            name = std::string(trim(token.substr(colon + 1)));
-            token = trim(token.substr(0, colon));
-            if (name.empty())
-                return fail("empty channel name in '" + std::string(text) + "'");
+            const auto alias = token.substr(colon + 1);
+            if (alias.empty() || !validChannelName(alias))
+                return fail("invalid channel name. " + std::string(kChannelNameRule));
+            name = alias;
+            token = token.substr(0, colon);
         }
+        token = trim(token);
         if (const auto dash = token.find('-'); dash != std::string_view::npos && dash > 0) {
             const auto a = parseInt(token.substr(0, dash));
             const auto b = parseInt(token.substr(dash + 1));

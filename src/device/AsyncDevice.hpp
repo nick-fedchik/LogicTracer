@@ -35,6 +35,8 @@ public:
     [[nodiscard]] bool isConnected() const noexcept { return m_connected; }
     // Handshake data of the connected device (valid while isConnected()).
     [[nodiscard]] const DeviceInfo& info() const noexcept { return m_info; }
+    // Calls the idle device's own validator on its owner thread; no hardware I/O.
+    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config, CaptureField* field) const;
 
     // Applies to connections opened afterwards (see IDevice::setPollLatency).
     void setPollLatency(std::chrono::milliseconds latency) noexcept { m_pollLatencyOverride = latency; }

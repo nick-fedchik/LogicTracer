@@ -191,7 +191,7 @@ std::unique_ptr<IDevice> openDevice(const std::string& port, std::chrono::millis
 }
 
 std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const CaptureRequestSpec& spec,
-                                                std::vector<std::string>& warnings, std::string& error)
+                                                std::vector<std::string>& warnings, std::string& error, CaptureField* field)
 {
     std::vector<uint8_t> numbers;
     for (const auto& ch : spec.channels)
@@ -206,32 +206,45 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
     cfg.probeOnTimeout = spec.probeOnTimeout;
 
     if (spec.segments == 0 || spec.segments > 65536) {
+        if (field) *field = CaptureField::Windows;
         error = "segments must be 1..65536";
         return std::nullopt;
     }
     if (spec.segments > 1 && !spec.trigger) {
+        if (field) *field = CaptureField::Trigger;
         error = "a segmented capture needs a trigger (every window starts on a trigger edge)";
         return std::nullopt;
     }
     if (spec.segments > 1 && spec.trigger->isPattern()) {
+        if (field) *field = CaptureField::Trigger;
         error = "segmented captures are not supported with a pattern trigger (Fast/Complex PIO programs record a single window)";
         return std::nullopt;
     }
     if (info.dutClock) {  // in-design capture (PYNQ lt_capture): one clock, no segments
         if (spec.frequency != info.maxFrequency) {
+            if (field) *field = CaptureField::Rate;
             error = "the in-design capture core samples at the DUT clock: use a rate of " +
                     std::to_string(info.maxFrequency) + " Hz";
             return std::nullopt;
         }
         if (spec.segments > 1) {
+            if (field) *field = CaptureField::Windows;
             error = "segmented captures are not supported by the in-design capture core";
             return std::nullopt;
         }
     }
+    if (field) *field = CaptureField::Samples;
+    if (spec.samples > UINT32_MAX) {
+        error = "requested sample count exceeds " + std::to_string(UINT32_MAX);
+        return std::nullopt;
+    }
+    // Replay validates against the real source length at the requested rate. Its synthetic
+    // device buffer is not an acquisition limit (nor does an immediate replay reserve two samples).
+    const bool replay = info.version.family == FirmwareFamily::Replay;
     if (!spec.trigger) {
         if (spec.preSamples)
             warnings.push_back("--pre-samples ignored for an immediate (untriggered) capture");
-        if (spec.samples > limits.maxPostSamples) {
+        if (!replay && spec.samples > limits.maxPostSamples) {
             error = "immediate capture supports at most " + std::to_string(limits.maxPostSamples) + " samples in " +
                     std::string(toString(mode)) + " mode (the firmware keeps " + std::to_string(limits.minPreSamples) +
                     " pre-trigger samples)";
@@ -255,9 +268,10 @@ std::optional<CaptureConfig> buildCaptureConfig(const DeviceInfo& info, const Ca
     cfg.preSamples = static_cast<uint32_t>(pre);
     cfg.postSamples = static_cast<uint32_t>(spec.samples - pre);
     cfg.segments = spec.segments;
-    if (spec.segments > 1) {
+    if (!replay && spec.segments > 1) {
         const uint64_t total = pre + (spec.samples - pre) * spec.segments;
         if (total > limits.maxTotalSamples) {
+            if (field) *field = CaptureField::Windows;
             const uint64_t fit = (limits.maxTotalSamples - pre) / std::max<uint64_t>(1, spec.samples - pre);
             error = std::to_string(spec.segments) + " windows of " + std::to_string(spec.samples - pre) +
                     " post-trigger samples (+" + std::to_string(pre) + " pre) need " + std::to_string(total) +

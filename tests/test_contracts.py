@@ -158,6 +158,10 @@ class Contracts(unittest.TestCase):
         return os.path.join(self.tmp.name, name)
 
     # -- documents ---------------------------------------------------------------------------------
+    def test_invalid_channel_alias_is_a_usage_error(self):
+        self.json_cli("error.schema.json", 64, "capture", "--port", self.port, "--no-session",
+                      "--channels", "1:" + "x" * 17)
+
     def test_capture_documents(self):
         common = ["capture", "--port", self.port, "--no-session", "--freq", "1M"]
         self.json_cli("capture.schema.json", 0, *common, "--samples", "100", "--channels", "1,2")

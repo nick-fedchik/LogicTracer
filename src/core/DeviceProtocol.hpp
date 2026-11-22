@@ -140,6 +140,15 @@ struct FirmwareVersion {
 [[nodiscard]] std::chrono::milliseconds defaultPollLatencyFor(const FirmwareVersion& v) noexcept;
 // Maps a 0-based channel (or external trigger slot == channels) to the physical RP2040/RP2350 GPIO number.
 [[nodiscard]] std::optional<uint8_t> gpioForChannel(std::string_view board, uint8_t channel) noexcept;
+struct PicoHeaderPin {
+    uint8_t pin;                       // 1..40 on the board, NOT an IC package pin
+    std::optional<uint8_t> gpio;
+    std::string_view function;         // non-capture function, e.g. RUN or GND
+    std::optional<uint8_t> channel{};  // 0-based capture input, never the external trigger slot
+};
+// Component side, USB at the top: 1..20 down the left and 21..40 up the right.
+// Empty for boards without a verified Pico-compatible header (even if their GPIO map is known).
+[[nodiscard]] std::span<const PicoHeaderPin> picoHeaderPins(std::string_view board) noexcept;
 // Parses "KEY:<uint>" lines; returns nullopt if the key does not match.
 [[nodiscard]] std::optional<uint32_t> parseKeyValue(std::string_view line, std::string_view key);
 

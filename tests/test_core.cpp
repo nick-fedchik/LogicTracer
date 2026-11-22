@@ -410,6 +410,49 @@ private Q_SLOTS:
         QVERIFY(!failRes.front().passed);
     }
 
+    void picoHeaderMatchesPhysicalConnectorNotChannelIndex()
+    {
+        const auto header = lt::picoHeaderPins("PICO");
+        QCOMPARE(header.size(), std::size_t{40});
+        constexpr int inputPins[]{4,5,6,7,9,10,11,12,14,15,16,17,19,20,21,22,24,25,26,27,29,31,32,34};
+        std::size_t inputs = 0;
+        for (std::size_t i = 0; i < header.size(); ++i) {
+            const auto& pin = header[i];
+            QCOMPARE(pin.pin, i + 1);
+            if (!pin.channel)
+                continue;
+            QVERIFY(*pin.channel < std::size(inputPins));
+            QCOMPARE(pin.pin, inputPins[*pin.channel]);
+            QCOMPARE(pin.gpio, lt::gpioForChannel("PICO", *pin.channel));
+            ++inputs;
+        }
+        QCOMPARE(inputs, std::size(inputPins));
+        QCOMPARE(header[1].function, std::string_view("EXT TRIG"));
+        QCOMPARE(header[2].function, std::string_view("GND"));
+        QCOMPARE(header[39].function, std::string_view("VBUS"));
+        QVERIFY(lt::picoHeaderPins("UNKNOWN").empty());
+        QVERIFY(lt::picoHeaderPins("ZERO").empty());  // known GPIO map, different physical board
+    }
+
+    void aliasesRejectRatherThanTruncateOrRewrite()
+    {
+        std::string err;
+        const std::string limit = "SPI.MISO_01-ABCD";
+        const auto parsed = lt::cli::parseChannelList("24:" + limit + ",1", 24, &err);
+        QVERIFY2(parsed.has_value(), err.c_str());
+        QCOMPARE(parsed->front().name, limit);
+        auto buf = twoChannelBuffer();
+        QVERIFY(buf.setChannelName(1, limit));
+        for (const auto& bad : std::vector<std::string>{limit + "X", "bad name", "a:b", "a,b", "<b>",
+                                                        "A\nB", " TX", "TX\t", "\xc3\xa9", std::string("A\0B", 3)}) {
+            QVERIFY(!lt::cli::parseChannelList("1:" + bad, 24, &err));
+            QVERIFY(!buf.setChannelName(1, bad));
+            QCOMPARE(buf.channels()[1].name, limit);
+        }
+        QVERIFY(buf.setChannelName(1, {}));  // clear alias, retain CH number
+        QCOMPARE(buf.channels()[1].label(), std::string("CH2"));
+    }
+
     void losslessJsonCsvAndVcdRoundTrip()
     {
         const auto orig = twoChannelBuffer();

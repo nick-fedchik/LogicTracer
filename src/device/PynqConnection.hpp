@@ -38,7 +38,7 @@ public:
     void setProgressCallback(ProgressCallback callback) override { m_progress = std::move(callback); }
     bool enterBootloader() override;
 
-    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config) const override;
+    [[nodiscard]] std::optional<std::string> validate(const CaptureConfig& config, CaptureField* field = nullptr) const override;
     [[nodiscard]] CaptureResult capture(const CaptureConfig& config) override;
     [[nodiscard]] ProbeResult probe(const std::vector<ChannelInfo>& channels, std::chrono::milliseconds window,
                                     uint32_t frequency) override;

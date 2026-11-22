@@ -217,8 +217,9 @@ void PynqConnection::sendCancel()
     }
 }
 
-std::optional<std::string> PynqConnection::validate(const CaptureConfig& c) const
+std::optional<std::string> PynqConnection::validate(const CaptureConfig& c, CaptureField* field) const
 {
+    if (field) *field = CaptureField::Channels;
     if (!isOpen())
         return std::string("device is not open");
     if (c.channels.empty())
@@ -227,16 +228,20 @@ std::optional<std::string> PynqConnection::validate(const CaptureConfig& c) cons
         if (ch.number >= m_info.channels)
             return "channel " + std::to_string(ch.displayNumber()) + " out of range 1.." + std::to_string(m_info.channels) +
                    " (probe bits of the core)";
+    if (field) *field = CaptureField::Trigger;
     if (c.trigger && c.trigger->isPattern())
         return "pattern triggers are not supported by the in-design capture core";
     if (c.trigger && c.trigger->channel > m_info.channels)
         return std::string("trigger channel out of range (") + std::to_string(m_info.channels + 1) +
                " = the core's external trigger input)";
+    if (field) *field = CaptureField::Rate;
     if (c.frequency != m_info.maxFrequency)
         return "the PL core samples at the DUT clock: use --freq " + std::to_string(m_info.maxFrequency) +
                " (requested " + std::to_string(c.frequency) + " Hz)";
+    if (field) *field = CaptureField::Windows;
     if (c.segments != 1)
         return std::string("segmented captures are not supported by the PL core (record a longer window instead)");
+    if (field) *field = CaptureField::Samples;
     if ((c.trigger ? static_cast<uint64_t>(c.preSamples) : 0ull) + c.postSamples > kMaxSamples)
         return "at most " + std::to_string(kMaxSamples) + " samples per capture";
     return std::nullopt;
