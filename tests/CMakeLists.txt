@@ -20,6 +20,11 @@ logictracer_add_test(logictracer-core-tests
     SOURCES test_core.cpp
     LIBS LogicTracer::Services)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    logictracer_add_test(logictracer-native-events-tests
+        SOURCES test_native_events.cpp LIBS LogicTracer::Services)
+endif()
+
 # Protocol/timeout tests against a pty-based firmware emulator, plus end-to-end CLI tests.
 logictracer_add_test(logictracer-connection-tests
     SOURCES test_connection.cpp FakeDevice.hpp

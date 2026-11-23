@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LogicTracer discrete event recording (not a sampled waveform)",
+  "type": "object", "additionalProperties": false,
+  "required": ["format", "schema_version", "source", "events"],
+  "properties": {
+    "format": {"const": "logictracer-events-v1"}, "schema_version": {"const": 1},
+    "source": {"type": "object"}, "events": {"type": "array", "maxItems": 10000}
+  },
+  "oneOf": [
+    {"properties": {"source": {"$ref": "#/$defs/canSource"}, "events": {"items": {"$ref": "#/$defs/frame"}}}},
+    {"properties": {"source": {"$ref": "#/$defs/gpioSource"}, "events": {"items": {"$ref": "#/$defs/edge"}}}}
+  ],
+  "$defs": {
+    "ns": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615},
+    "u32": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+    "canSource": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "interface", "clock"],
+      "properties": {"kind": {"const": "socketcan"}, "interface": {"type": "string", "minLength": 1}, "clock": {"const": "socket-software-realtime"}}
+    },
+    "gpioSource": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "chip", "line", "clock", "initial_level"],
+      "properties": {
+        "kind": {"const": "gpio"}, "chip": {"type": "string", "minLength": 1}, "line": {"$ref": "#/$defs/u32"},
+        "clock": {"enum": ["hte", "monotonic"]}, "initial_level": {"enum": [0, 1, null]}
+      }
+    },
+    "frame": {
+      "type": "object", "additionalProperties": false,
+      "required": ["timestamp_ns", "id", "extended", "fd", "brs", "esi", "rtr", "length", "data_hex"],
+      "properties": {
+        "timestamp_ns": {"$ref": "#/$defs/ns"}, "id": {"type": "integer", "minimum": 0, "maximum": 536870911},
+        "extended": {"type": "boolean"}, "fd": {"type": "boolean"}, "brs": {"type": "boolean"},
+        "esi": {"type": "boolean"}, "rtr": {"type": "boolean"}, "length": {"type": "integer", "minimum": 0, "maximum": 64},
+        "data_hex": {"type": "string", "pattern": "^([0-9a-fA-F]{2}){0,64}$"}
+      }
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false, "required": ["timestamp_ns", "edge", "sequence", "lost_before"],
+      "properties": {"timestamp_ns": {"$ref": "#/$defs/ns"}, "edge": {"enum": ["rising", "falling"]},
+                     "sequence": {"$ref": "#/$defs/u32"}, "lost_before": {"$ref": "#/$defs/u32"}}
+    }
+  }
+}

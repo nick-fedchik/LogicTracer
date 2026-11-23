@@ -13,6 +13,7 @@
 #include "core/Invariants.hpp"
 #include "core/ArgParsing.hpp"
 #include "services/Clipboard.hpp"
+#include "services/EventRecording.hpp"
 #include "core/Exporters.hpp"
 #include "core/Format.hpp"
 #include "core/Paths.hpp"
@@ -29,6 +30,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <csignal>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -1748,6 +1750,75 @@ int cmdView(const QStringList& args, Output o)
     });
 }
 
+volatile std::sig_atomic_t eventsInterrupted = 0;
+void interruptEvents(int) { eventsInterrupted = 1; }
+
+int cmdEvents(const QStringList& args, const Output& o)
+{
+    namespace ev = lt::events;
+    QCommandLineParser p;
+    p.setApplicationDescription("Receive timestamped CAN frames or GPIO edges on Linux, or reopen an event recording.");
+    p.addOptions({{"can", "Receive from this already configured CAN interface. Does not set bus listen-only mode.", "interface"},
+                  {"gpio", "Request one verified input on this GPIO chip, without changing pinmux.", "/dev/gpiochipN"},
+                  {"line", "Zero-based line offset on the selected GPIO chip (required with --gpio).", "offset"},
+                  {"clock", "GPIO event clock: monotonic (software) or hte (hardware, no fallback).", "clock", "monotonic"},
+                  {"duration-ms", "Stop after this duration; no received events gives exit 2.", "ms", "1000"},
+                  {"limit", "Stop after this many events (1..10000).", "count", "1000"},
+                  {"open", "Read a saved LogicTracer event recording instead of accessing hardware.", "file"},
+                  {"out-json", "Atomically save the event recording (.ltevents).", "file"},
+                  {"json", "Machine-readable JSON output."}});
+    if (auto rc = parse(p, args, o))
+        return *rc;
+    if (int(p.isSet("can")) + int(p.isSet("gpio")) + int(p.isSet("open")) != 1)
+        return report(o, ExitUsage, "select exactly one of --can, --gpio and --open");
+    if ((!p.isSet("gpio") && (p.isSet("line") || p.isSet("clock"))) || (p.isSet("gpio") && !p.isSet("line")))
+        return report(o, ExitUsage, "--gpio requires --line; --line and --clock are GPIO-only");
+    if (p.isSet("open") && (p.isSet("duration-ms") || p.isSet("limit")))
+        return report(o, ExitUsage, "--duration-ms and --limit are capture options, not file filters");
+    json doc;
+    QString error;
+    if (p.isSet("open")) {
+        if (!ev::load(p.value("open"), doc, error))
+            return report(o, ExitError, str(error));
+    } else {
+        ev::Request r;
+        r.source = p.isSet("gpio") ? ev::Source::Gpio : ev::Source::Can;
+        r.device = str(p.value(p.isSet("gpio") ? "gpio" : "can"));
+        if (p.isSet("gpio")) {
+            bool ok = false;
+            r.line = p.value("line").toUInt(&ok);
+            if (!ok || p.value("line").trimmed().startsWith('-'))
+                return report(o, ExitUsage, "--line must be a nonnegative GPIO offset");
+            r.hte = p.value("clock") == "hte";
+            if (!r.hte && p.value("clock") != "monotonic")
+                return report(o, ExitUsage, "--clock must be monotonic or hte");
+        }
+        r.durationMs = p.value("duration-ms").toInt();
+        r.limit = p.value("limit").toInt();
+        if (const auto why = ev::validate(r); !why.empty())
+            return report(o, ExitUsage, why);
+        eventsInterrupted = 0;
+        auto old = std::signal(SIGINT, interruptEvents);
+        auto result = ev::record(r, [] { return eventsInterrupted != 0; });
+        if (old != SIG_ERR)
+            std::signal(SIGINT, old);
+        if (result.status == ev::Status::Cancelled)
+            return report(o, ExitError, result.message, {{"status", "CANCELLED"}, {"error_kind", "Cancelled"}});
+        if (result.status != ev::Status::Ok)
+            return report(o, result.status == ev::Status::Timeout ? ExitTimeout : ExitError, result.message,
+                          {{"error_kind", result.status == ev::Status::Timeout ? "Timeout" : result.kind}});
+        doc = std::move(result.recording);
+    }
+    if (p.isSet("out-json") && !ev::save(p.value("out-json"), doc, error))
+        return report(o, ExitError, "cannot write requested event recording: " + str(error));
+    if (o.json)
+        std::cout << json({{"schema_version", 1}, {"command", "events"}, {"status", "OK"},
+                           {"warnings", json::array()}, {"recording", std::move(doc)}}).dump(2) << '\n';
+    else
+        std::cout << ev::describe(doc);
+    return ExitOk;
+}
+
 void printUsage()
 {
     std::cout << "logictracer-cli " LT_VERSION " - headless logic analysis for scripts and AI agents\n\n"
@@ -1756,6 +1827,7 @@ void printUsage()
                  "  detect      List connected devices and their capabilities\n"
                  "  probe       Snapshot current pin levels without a trigger (pull-up / stuck-at-0 check)\n"
                  "  capture     Capture with trigger, latency analysis, --expect assertions, and exports\n"
+                 "  events      Record native SocketCAN frames / GPIO edges, or inspect a saved event recording\n"
                  "  analyze     Analyze, verify (--expect), or convert saved .json / .vcd / .lac files\n"
                  "  diff        Compare two saved captures (latency shift, drops, anomalies; --strict for CI)\n"
                  "  annotate    Place a marker on the timeline of the running GUI (--list / --clear)\n"
@@ -1790,6 +1862,8 @@ int main(int argc, char* argv[])
         return cmdProbe(args, o);
     if (command == "capture")
         return cmdCapture(args, o);
+    if (command == "events")
+        return cmdEvents(args, o);
     if (command == "analyze")
         return cmdAnalyze(args, o);
     if (command == "diff")
@@ -1815,7 +1889,7 @@ int main(int argc, char* argv[])
     if (o.json) {
         return report(o, ExitUsage,
                       "missing or unknown command '" + str(command) +
-                          "' (expected detect|probe|capture|analyze|diff|annotate|view|selftest|bootloader|about)");
+                          "' (expected detect|probe|capture|events|analyze|diff|annotate|view|selftest|bootloader|about)");
     }
     std::cerr << "logictracer-cli: unknown command '" << str(command) << "'\n\n";
     printUsage();

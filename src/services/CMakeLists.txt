@@ -3,6 +3,7 @@
 
 add_library(logictracer_services STATIC
     Clipboard.cpp Clipboard.hpp
+    EventRecording.cpp EventRecording.hpp NativeEvents.cpp NativeEvents.hpp
     Operations.cpp Operations.hpp
     SelfTest.cpp SelfTest.hpp
     Session.cpp Session.hpp

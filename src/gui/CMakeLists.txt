@@ -5,6 +5,7 @@
 add_library(logictracer_gui STATIC
     Builders.cpp Builders.hpp
     DiagnosticsDialog.cpp DiagnosticsDialog.hpp
+    EventRecorder.cpp EventRecorder.hpp
     GuiDiagnostics.cpp GuiDiagnostics.hpp
     CaptureFields.hpp CaptureProfiles.cpp CaptureProfiles.hpp
     MainWindow.cpp MainWindow.hpp

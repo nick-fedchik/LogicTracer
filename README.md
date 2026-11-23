@@ -114,8 +114,23 @@ build/src/cli/logictracer-cli capture --port /dev/ttyACM0 --freq 10M --samples 5
     --expect "can:frames>=1,can:errors==0,can:nacks==0" --ai
 ```
 
-It does not read SocketCAN interfaces directly; for continuous OS-level bus logging on Linux, use a
-SocketCAN USB–CAN adapter (`candump can0`).
+To record **frames** instead of sampling a waveform, select **File → Record native CAN / GPIO events**
+in the Linux GUI, or run:
+
+```bash
+logictracer-cli events --can can0 --duration-ms 5000 --out-json bus.ltevents
+logictracer-cli events --open bus.ltevents
+```
+
+Use an already configured CAN interface. LogicTracer receives only: it does not send frames, bring
+the link up, or put the controller in listen-only mode. The recording preserves CAN / CAN FD frames,
+not electrical edges. Open `.ltevents` in the GUI to inspect the frames on any platform.
+
+For GPIO, explicitly select a **verified, free input** by chip and line offset, e.g.
+`logictracer-cli events --gpio /dev/gpiochipN --line OFFSET --clock hte --out-json edges.ltevents`
+(replace both placeholders with the verified mapping). `hte` requires kernel and pin support and
+never falls back to software; `monotonic` explicitly uses software timestamps. An event recording
+has individual edge times and loss counts, not a sample rate. No Jetson carrier pin is assumed.
 
 ## Components
 
@@ -139,7 +154,8 @@ Track planned work and bugs in [GitHub Issues](https://github.com/nick-fedchik/L
 |---|---|---|
 | **Ubuntu 24.04 LTS** (x86_64) | ✅ Supported, tested in CI | Qt 6.4, GCC 13 |
 | **Ubuntu 26.04 LTS** (x86_64) | ✅ Supported, tested on hardware | Qt 6.10, GCC 15 |
-| Other Linux (Debian 12+, Fedora 39+, aarch64 / NVIDIA Jetson) | ⚠️ Expected to work, not tested | needs Qt ≥ 6.4 and a C++20 compiler |
+| NVIDIA Jetson AGX Orin (aarch64, L4T R36.4.7) | Native software tested headlessly; physical display and capture wiring unverified | Ubuntu 22.04, isolated Qt 6.7.3, GCC 11 |
+| Other Linux (Debian 12+, Fedora 39+, aarch64) | ⚠️ Expected to work, not tested | needs Qt ≥ 6.4 and a C++20 compiler |
 | **macOS** (Apple silicon, `macos-latest`) | ✅ Built and tested in CI (no hardware run yet) | Homebrew Qt 6; device appears as `/dev/cu.usbmodem*` |
 | **Windows** 10/11 (x64) | ✅ Built and tested in CI (not tested with a device; `selftest` checks one) | MSVC 2022, Qt 6.8; device appears as `COMn`; emulator-based tests are skipped (no pseudo-terminals) |
 

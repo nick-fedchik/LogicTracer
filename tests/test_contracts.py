@@ -55,6 +55,9 @@ class Validator:
             target, target_file = self.resolve(schema["$ref"], file)
             yield from self.errors(value, target, target_file, path)
             return
+        if "oneOf" in schema:
+            if sum(not list(self.errors(value, branch, file, path)) for branch in schema["oneOf"]) != 1:
+                yield f"{path}: does not match exactly one schema alternative"
         if "const" in schema and value != schema["const"]:
             yield f"{path}: expected {schema['const']!r}, got {value!r}"
         if "enum" in schema and value not in schema["enum"]:
@@ -158,6 +161,38 @@ class Contracts(unittest.TestCase):
         return os.path.join(self.tmp.name, name)
 
     # -- documents ---------------------------------------------------------------------------------
+    def test_discrete_event_recordings(self):
+        timestamp = 1_700_000_000_000_000_007
+        for source, entry in [
+                ({"kind": "socketcan", "interface": "vcan0", "clock": "socket-software-realtime"},
+                 {"id": 0x1abcd, "extended": True, "fd": True, "brs": True, "esi": False,
+                  "rtr": False, "length": 2, "data_hex": "01fe"}),
+                ({"kind": "gpio", "chip": "/dev/gpiochip1", "line": 4, "clock": "hte", "initial_level": None},
+                 {"edge": "falling", "sequence": 3, "lost_before": 2})]:
+            entry["timestamp_ns"] = timestamp
+            rec = {"format": "logictracer-events-v1", "schema_version": 1, "source": source, "events": [entry]}
+            path, saved = self.out("input.ltevents"), self.out("output.ltevents")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(rec, f)
+            doc = self.json_cli("events.schema.json", 0, "events", "--open", path, "--out-json", saved)
+            self.assertEqual(doc["recording"], rec)
+            with open(saved, encoding="utf-8") as f:
+                self.assertEqual(json.load(f), rec)
+            self.json_cli("error.schema.json", 1, "events", "--open", path, "--out-json", self.tmp.name)
+            self.json_cli("error.schema.json", 64, "events", "--open", path, "--limit", "2")
+        rec["events"][0]["lost_before"] = 0
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(rec, f)
+        self.json_cli("error.schema.json", 1, "events", "--open", path)
+        for args in [[], ["--gpio", "/dev/gpiochip1"], ["--can", "can0", "--clock", "hte"],
+                     ["--gpio", "/dev/gpiochip1", "--line", "1", "--clock", "auto"],
+                     ["--can", "can0", "--freq", "1M"], ["--can", "can0", "--limit", "0"]]:
+            self.json_cli("error.schema.json", 64, "events", *args)
+        denied = self.json_cli("error.schema.json", 1, "events", "--can", "can0", "--out-json", saved)
+        self.assertEqual(denied["error_kind"], "PermissionDenied")
+        with open(saved, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["events"][0]["lost_before"], 2)
+
     def test_invalid_channel_alias_is_a_usage_error(self):
         self.json_cli("error.schema.json", 64, "capture", "--port", self.port, "--no-session",
                       "--channels", "1:" + "x" * 17)

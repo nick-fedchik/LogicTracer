@@ -10,6 +10,7 @@
 #include "device/ReplayDevice.hpp"
 #include "gui/Builders.hpp"
 #include "gui/DiagnosticsDialog.hpp"
+#include "gui/EventRecorder.hpp"
 #include "gui/PicoPinout.hpp"
 #include "gui/ProfileSelector.hpp"
 #include "gui/SerialPortPicker.hpp"
@@ -427,6 +428,9 @@ void MainWindow::buildMenus()
 {
     auto* file = menuBar()->addMenu(tr("&File"));
     file->addAction(tr("&Open Capture..."), QKeySequence::Open, this, &MainWindow::openCapture);
+#ifdef Q_OS_LINUX
+    file->addAction(tr("Record native CAN / GPIO &events..."), this, [this] { showEventRecorder(this); });
+#endif
     file->addAction(tr("Load &Demo Capture"), QKeySequence(Qt::CTRL | Qt::Key_D), this, &MainWindow::loadDemo);
     file->addSeparator();
     auto* vcd = file->addAction(tr("Save &VCD..."), this, &MainWindow::saveVcd);
@@ -1711,7 +1715,18 @@ bool MainWindow::openCaptureFile(const QString& path, QString* error)
 {
     lt::LoadedCapture loaded;
     std::string err;
-    if (!lt::loadCaptureFile(str(path), loaded, &err)) {
+    const bool eventFile = path.endsWith(".ltevents", Qt::CaseInsensitive);
+    if (eventFile || !lt::loadCaptureFile(str(path), loaded, &err)) {
+        if (eventFile || path.endsWith(".json", Qt::CaseInsensitive)) {
+            nlohmann::json recording;
+            QString eventError;
+            if (events::load(path, recording, eventError)) {
+                showEventRecorder(this, std::move(recording));
+                return true;
+            }
+            if (eventFile)
+                err = str(eventError);
+        }
         if (error)
             *error = QString::fromStdString(err);
         showStatus(QString::fromStdString(err), true);
@@ -1756,7 +1771,7 @@ void MainWindow::askFile(bool save, const QString& title, const QString& name, c
 void MainWindow::openCapture()
 {
     askFile(false, tr("Open Capture"), {},
-            tr("Captures (*.json *.vcd *.lac);;JSON (*.json);;VCD (*.vcd);;Legacy LAC (*.lac);;All files (*)"),
+            tr("Captures (*.json *.vcd *.lac *.ltevents);;Event recordings (*.ltevents);;JSON (*.json);;VCD (*.vcd);;Legacy LAC (*.lac);;All files (*)"),
             [this](const QString& path) { openCaptureFile(path); });
 }
 

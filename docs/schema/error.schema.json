@@ -30,7 +30,8 @@
     "status": {
       "enum": [
         "ERROR",
-        "TIMEOUT"
+        "TIMEOUT",
+        "CANCELLED"
       ]
     },
     "schema_version": {
